@@ -25,4 +25,4 @@ Here you can find the DLpisoFoam solvers and a test case where those can be used
   ```sh
   $ docker run -it --rm <image_name> bash
   ```
-  This will create a Docker container and launch a shell. Inside the /home/foam directory, you'll find the solvers and a test case.
+  This will create a Docker container and launch a shell.
