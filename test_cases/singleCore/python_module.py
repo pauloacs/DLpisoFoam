@@ -1,7 +1,3 @@
-#f = open('python_log_file','w')
-# f.write('Starting python module from OpenFOAM')
-# f.close()
-
 import time
 import traceback
 import sys
@@ -95,8 +91,8 @@ def domain_dist(top_boundary, obst_boundary, xy0):
 #LOADING THE PCA mapping:
 
 print('Loading the PCA mapping')
-pcainput = pk.load(open("ipca_input_more.pkl",'rb'))
-pcap = pk.load(open("ipca_p_more.pkl",'rb'))
+pcainput = pk.load(open("ipca_input.pkl",'rb'))
+pcap = pk.load(open("ipca_output.pkl",'rb'))
 
 maxs = np.loadtxt('maxs')
 maxs_PCA = np.loadtxt('maxs_PCA')
@@ -140,11 +136,7 @@ def interp_weights(xyz, uvw):
 model = DENSE_PCA()
 model.load_weights('weights.h5')
 
-def init_func(array, top_boundary, obst_boundary, placeholder):
-
-		array_concat = array
-		top = top_boundary
-		obst = obst_boundary
+def init_func(array_concat, top, obst):
 
 		global indices, sdfunct, vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF, grid_shape_y, grid_shape_x
 
@@ -161,6 +153,8 @@ def init_func(array, top_boundary, obst_boundary, placeholder):
 		xy0 = np.concatenate((np.expand_dims(X0, axis=1),np.expand_dims(Y0, axis=1)), axis=-1)
 		points = array_concat[...,2:4] #coordinates
 
+		ux = array_concat[...,0:1] #values
+		del array_concat 
 
 		#print( 'Calculating verts and weights' )
 		vert_OFtoNP, weights_OFtoNP = interp_weights(points, xy0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
@@ -183,7 +177,6 @@ def init_func(array, top_boundary, obst_boundary, placeholder):
 		sdfunct = np.zeros((grid_shape_y,grid_shape_x,1))
 
 		#to compute bool 
-		ux = array_concat[...,0:1] #values
 		ux_interp = interpolate_fill(ux, vert_OFtoNP, weights_OFtoNP) 
 
 		for (step, x_y) in enumerate(np.c_[X0, Y0]):  
@@ -202,14 +195,9 @@ def init_func(array, top_boundary, obst_boundary, placeholder):
 	#sys.stdout.flush()
 		return 0
 
-def py_func(array_in, placeholder):
+def py_func(array):
 
-		tot_m, used_m, free_m = map(int, os.popen('free -t -m').readlines()[-1].split()[1:])
-		print(used_m)
-		
 		t0_py_func = time.time() #start timing
-
-		array = array_in
 
 		t0 = time.time()
 		p_prev = array[...,4]
@@ -219,6 +207,8 @@ def py_func(array_in, placeholder):
 
 		Ux_adim = array[...,0:1]/U_max_norm 
 		Uy_adim = array[...,1:2]/U_max_norm 
+
+		del array
 
 		t1 = time.time()
 		#print( "Data pre-processing:" + str(t1-t0) + " s")
@@ -249,7 +239,7 @@ def py_func(array_in, placeholder):
 		indices_list = []
 
 		shape = 128
-		avance = int(0.1*shape)
+		avance = int(0.5*shape)
 
 		n_x = int((grid.shape[2]-shape)/(shape - avance ))  
 		n_y = int((grid.shape[1]-shape)/(shape - avance ))
@@ -420,7 +410,7 @@ def py_func(array_in, placeholder):
 		result_array = result_array[0,:,:,0]
 
 		t0 = time.time()
-		#result_array = ndimage.gaussian_filter(result_array, sigma=(5, 5), order=0)
+		result_array = ndimage.gaussian_filter(result_array, sigma=(5, 5), order=0)
 		t1 = time.time()
 		#print( "Smoothing took:" + str(t1-t0) + " s")
 
@@ -436,19 +426,16 @@ def py_func(array_in, placeholder):
 
 		p = p_interp * max_abs_p * pow(U_max_norm, 2.0)
 
-		sdf_mesh = interpolate_fill(sdfunct[:,:,0], vert_NPtoOF, weights_NPtoOF)
+		#sdf_mesh = interpolate_fill(sdfunct[:,:,0], vert_NPtoOF, weights_NPtoOF)
 
-		p[sdf_mesh < 0.05] = p_prev[sdf_mesh < 0.05]
+		#p[sdf_mesh < 0.05] = p_prev[sdf_mesh < 0.05]
 		
 		p[np.isnan(p_interp)] = p_prev[np.isnan(p_interp)]
 
 		t1_py_func = time.time()
 		#print( "The whole python function took : " + str(t1_py_func-t0_py_func) + " s")
 
-		tot_m, used_m, free_m = map(int, os.popen('free -t -m').readlines()[-1].split()[1:])
-		print(used_m)
 		return p
 
 if __name__ == '__main__':
     print('This is the Python module for DLPoissonFOam')
-

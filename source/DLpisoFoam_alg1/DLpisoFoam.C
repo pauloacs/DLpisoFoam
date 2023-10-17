@@ -105,11 +105,11 @@ int main(int argc, char *argv[])
 
             clock_gettime(CLOCK_MONOTONIC, &tw1); // POSIX
             // Talk to Python
-	    #include "PythonComm.H"
+            #include "PythonComm.H"
             clock_gettime(CLOCK_MONOTONIC, &tw2); // POSIX
             posix_wall = 1000.0*tw2.tv_sec + 1e-6*tw2.tv_nsec - (1000.0*tw1.tv_sec + 1e-6*tw1.tv_nsec);
             printf("DL pressure prediction & data transport: %.2f ms\n", posix_wall);
-            //runTime.write();
+
             #include "UEqn.H"
 
 		    // --- PISO loop

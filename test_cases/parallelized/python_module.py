@@ -100,8 +100,8 @@ def domain_dist(top_boundary, obst_boundary, xy0):
 
 #LOADING THE PCA mapping:
 
-pcainput = pk.load(open("ipca_input_more.pkl",'rb'))
-pcap = pk.load(open("ipca_p_more.pkl",'rb'))
+pcainput = pk.load(open("ipca_input.pkl",'rb'))
+pcap = pk.load(open("ipca_output.pkl",'rb'))
 
 maxs = np.loadtxt('maxs')
 maxs_PCA = np.loadtxt('maxs_PCA')
@@ -169,7 +169,7 @@ if rank == 0:
 	model = DENSE_PCA()
 	model.load_weights('weights.h5')
 
-def init_func(array, top_boundary, obst_boundary, placeholder):
+def init_func(array, top_boundary, obst_boundary):
 
 
 	#comm = MPI.COMM_WORLD
@@ -246,7 +246,7 @@ def init_func(array, top_boundary, obst_boundary, placeholder):
 	#sys.stdout.flush()
 	return 0
 
-def py_func(array_in, placeholder):
+def py_func(array_in):
 
 	if rank ==0:
 		print(memory())

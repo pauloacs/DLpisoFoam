@@ -9,9 +9,19 @@ conda activate python39
 
 # This compiles the solver
 source /opt/openfoam8/etc/bashrc 
-cd /home/repo/DLPoissonSolver
+cd /home/repo/source
+#
+echo "Installing DLpisoFoam - algorithm 1 version" 
+cd DLpisoFoam_alg1
 wclean
 wmake
+cd ..
+#
+echo "Installing DLpisoFoam - algorithm 2 version"
+cd DLpisoFoam_alg2
+wclean
+wmake
+cd /home/repo
 
 # Run extra commands
 exec "$@"

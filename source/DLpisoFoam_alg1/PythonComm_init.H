@@ -13,10 +13,10 @@ PyObject *pModule = PyImport_Import(pName);
 Py_DECREF(pName);
 
 PyObject *py_func = PyObject_GetAttrString(pModule, "py_func");
-PyObject *py_args = PyTuple_New(2);
+PyObject *py_args = PyTuple_New(1);
 
 PyObject *init_func = PyObject_GetAttrString(pModule, "init_func");
-PyObject *init_args = PyTuple_New(4);
+PyObject *init_args = PyTuple_New(3);
 
 Py_DECREF(pModule);
 
@@ -24,8 +24,6 @@ PyObject *array_2d(nullptr);
 PyObject *array_2d_top(nullptr);
 PyObject *array_2d_obst(nullptr);
 //PyArrayObject *pValue;
-
-PyObject *rank_val = PyLong_FromLong(Pstream::myProcNo());
 
 /*// Placeholder to grab data before sending to Python*/
 int num_cells = mesh.cells().size();
@@ -48,7 +46,6 @@ const int col_top = 2;
 
 const int row_obst = num_cells_obstacle;
 const int col_obst = 2; 
-
 
 double(*input_vals)[col]{ new double[row][col] };
 double(*input_vals_top)[col_top]{ new double[row_top][col_top] };
@@ -89,7 +86,6 @@ array_2d_obst = PyArray_SimpleNewFromData(2, dim_obstacle, NPY_DOUBLE, reinterpr
 PyTuple_SetItem(init_args, 0, array_2d);
 PyTuple_SetItem(init_args, 1, array_2d_top);
 PyTuple_SetItem(init_args, 2, array_2d_obst);
-PyTuple_SetItem(init_args, 3, rank_val);
 
 (void) PyObject_CallObject(init_func, init_args);
 
@@ -97,3 +93,4 @@ Py_DECREF(array_2d);
 Py_DECREF(array_2d_top);
 Py_DECREF(array_2d_obst);
 
+// Py_DECREF(init_args);
