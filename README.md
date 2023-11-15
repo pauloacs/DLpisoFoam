@@ -23,6 +23,6 @@ Here you can find the DLpisoFoam solvers and a test case where those can be used
   Using 
   
   ```sh
-  $ docker run -it --rm <image_name> bash
+  $ docker run -it -v $(pwd):/home/repo --rm <image_name> bash
   ```
   This will create a Docker container and launch a shell.
