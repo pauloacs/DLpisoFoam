@@ -1,8 +1,10 @@
 # Start from the official Ubuntu Bionic (18.04 LTS) image
 FROM ubuntu:bionic
 
-COPY environment.yml /usr/bin/environment.yml
+# Copy local files into the image
+COPY . /home/repo
 
+COPY environment.yml /usr/bin/environment.yml
 COPY entrypoint.sh /usr/bin/entrypoint.sh
 
 # Create a new user called user
@@ -48,8 +50,6 @@ RUN sh -c "wget -O - http://dl.openfoam.org/gpg.key | apt-key add -" && \
         rm -rf /var/lib/apt/lists/* && \
         echo "source /opt/openfoam8/etc/bashrc" >> ~user/.bashrc && \
         echo "export OMPI_MCA_btl_vader_single_copy_mechanism=none" >>  ~user/.bashrc
-
-COPY . /home/repo
 
 #Giving enough permissions to the user
 RUN chown -R user:user /home/repo
