@@ -3,20 +3,25 @@
 Py_Initialize();
 PyRun_SimpleString("import sys");
 PyRun_SimpleString("sys.path.append(\".\")");
+Info<< ">>> Python Initialized <<<" << endl;
 
 // initialize numpy array library
 import_array1(-1);
 //init_numpy();
+Info<< ">>> Numpy lib initialized <<<\n" << endl;
 
+Info<< ">>> Decoding and importing Python module <<<" << endl;
 PyObject *pName = PyUnicode_DecodeFSDefault("python_module"); // Python filename
 PyObject *pModule = PyImport_Import(pName);
 Py_DECREF(pName);
 
+PyObject *init_func = PyObject_GetAttrString(pModule, "init_func");
+PyObject *init_args = PyTuple_New(3);
+
 PyObject *py_func = PyObject_GetAttrString(pModule, "py_func");
 PyObject *py_args = PyTuple_New(1);
 
-PyObject *init_func = PyObject_GetAttrString(pModule, "init_func");
-PyObject *init_args = PyTuple_New(3);
+Info<< ">>> Python functions defined <<<" << endl;
 
 Py_DECREF(pModule);
 
