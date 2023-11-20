@@ -4,8 +4,8 @@ FROM ubuntu:bionic
 # Copy local files into the image
 COPY . /home/repo
 
-COPY environment.yml /usr/bin/environment.yml
-COPY entrypoint.sh /usr/bin/entrypoint.sh
+COPY env_311.yml /usr/bin/environment.yml
+COPY entrypoint_311.sh /usr/bin/entrypoint.sh
 
 # Create a new user called user
 RUN useradd -ms /bin/bash user
@@ -30,15 +30,6 @@ RUN apt-get update \
                 software-properties-common ;\
                 rm -rf /var/lib/apt/lists/*
 
-# Install miniconda
-ENV CONDA_DIR /opt/conda
-RUN wget  https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
-  /bin/bash ~/miniconda.sh -b -p /opt/conda
-
-
-ENV PATH=$CONDA_DIR/bin:$PATH
-RUN conda env create -f /usr/bin/environment.yml
-
 
 # Install OpenFOAM v8 (without ParaView)
 # including configuring for use by user=foam
@@ -51,7 +42,19 @@ RUN sh -c "wget -O - http://dl.openfoam.org/gpg.key | apt-key add -" && \
         echo "source /opt/openfoam8/etc/bashrc" >> ~user/.bashrc && \
         echo "export OMPI_MCA_btl_vader_single_copy_mechanism=none" >>  ~user/.bashrc
 
-#Giving enough permissions to the user
+# Install miniconda
+ENV CONDA_DIR /opt/conda
+RUN wget  https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
+  /bin/bash ~/miniconda.sh -b -p /opt/conda
+
+
+ENV PATH=$CONDA_DIR/bin:$PATH
+RUN conda env create -f /usr/bin/environment.yml
+#RUN conda activate python39 && conda install mpi4py
+
+
+# Giving enough permissions to the user
+# If more permissions are required the user can chown itself (user) with sudo inside the container
 RUN chown -R user:user /home/repo
 
 WORKDIR /home/repo/
