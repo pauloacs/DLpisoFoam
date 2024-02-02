@@ -1,4 +1,4 @@
-# How to run the solver 
+## How to run the solver 
 
 To run just select a test case and run:
 
@@ -14,7 +14,7 @@ To run with multiple processor run the 'run-parallel' scripts:
 or
 '' . run_parallel_alg2.sh"
 
-# Debugging
+## Debugging
 
 Run 
 
