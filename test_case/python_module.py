@@ -14,81 +14,12 @@ mpi4py.rc.initialize = True
 mpi4py.rc.finalize = False
 from mpi4py import MPI
 
-import matplotlib.pyplot as plt
-import tensorflow as tf
-from tensorflow.keras.models import load_model
-from tensorflow.keras import Model
-from tensorflow.keras.layers import ZeroPadding2D, concatenate, Conv2D, MaxPooling2D, Conv2DTranspose
-from tensorflow.keras.utils import plot_model
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.layers import Conv2D, BatchNormalization, Activation, MaxPool2D, Conv2DTranspose, concatenate, Input
-import math
-
 import pickle as pk
 from sklearn.decomposition import PCA
-import scipy.spatial.qhull as qhull
-from scipy.spatial import cKDTree as KDTree
-
-from scipy.spatial import distance
-import matplotlib.path as mpltPath
-from shapely.geometry import MultiPoint
-
 import matplotlib.pyplot as plt
 import scipy.ndimage as ndimage
 
-
-def create_uniform_grid(x_min, x_max,y_min,y_max, delta): #creates a uniform quadrangular grid envolving every cell of the mesh
-
-  X0 = np.linspace(x_min + delta/2 , x_max - delta/2 , num = int(round( (x_max - x_min)/delta )) )
-  Y0 = np.linspace(y_min + delta/2 , y_max - delta/2 , num = int(round( (y_max - y_min)/delta )) )
-
-  XX0, YY0 = np.meshgrid(X0,Y0)
-  return XX0.flatten(), YY0.flatten()
-
-d = 2 #2d interpolation
-
-def interp_weights(xyz, uvw):
-    print('calculate DELAUNAY')
-    tri = qhull.Delaunay(xyz)
-    print('calculate simplex')
-    simplex = tri.find_simplex(uvw)
-    print('calculate vertices')
-    vertices = np.take(tri.simplices, simplex, axis=0)
-    temp = np.take(tri.transform, simplex, axis=0)
-    delta = uvw - temp[:, d]
-    bary = np.einsum('njk,nk->nj', temp[:, :d, :], delta)
-    return vertices, np.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))
-
-def interpolate(values, vtx, wts):
-    return np.einsum('nj,nj->n', np.take(values, vtx), wts)
-
-def interpolate_fill(values, vtx, wts, fill_value=np.nan):
-    ret = np.einsum('nj,nj->n', np.take(values, vtx), wts)
-    ret[np.any(wts < 0, axis=1)] = fill_value
-    return ret
-
-def domain_dist(top_boundary, obst_boundary, xy0):
-
-  # boundaries index
-  top = top_boundary
-  max_x, max_y, min_x, min_y = np.max(top[:,0]), np.max(top[:,1]) , np.min(top[:,0]) , np.min(top[:,1])
-  is_inside_domain = ( xy0[:,0] <= max_x)  * ( xy0[:,0] >= min_x ) * ( xy0[:,1] <= max_y ) * ( xy0[:,1] >= min_y ) #rhis is just for simplification
-
-  obst = obst_boundary
-  obst_points =  MultiPoint(obst)
-  hull = obst_points.convex_hull       #only works for convex geometries
-  hull_pts = hull.exterior.coords.xy    #have a code for any geometry . enven concave https://stackoverflow.com/questions/14263284/create-non-intersecting-polygon-passing-through-all-given-points/47410079
-  hull_pts = np.c_[hull_pts[0], hull_pts[1]]
-
-  path = mpltPath.Path(hull_pts)
-  is_inside_obst = path.contains_points(xy0)
-  domain_bool = is_inside_domain * ~is_inside_obst
-  top = top[0:top.shape[0]:10,:]   #if this has too many values, using cdist can crash the memmory since it needs to evaluate the distance between ~1M points with thousands of points of top
-  obst = obst[0:obst.shape[0]:10,:]
-  sdf = np.minimum( distance.cdist(xy0,obst).min(axis=1) , distance.cdist(xy0,top).min(axis=1) ) * domain_bool
-
-  return domain_bool, sdf
+from utils import *
 
 print('Loading the PCA mapping')
 
@@ -109,52 +40,8 @@ pca_mean_p = pcap.mean_
 comp_input = pcainput.components_[:PC_input,:]
 pca_mean_input = pcainput.mean_
 
-
-def DENSE_PCA(input_shape = (PC_input)):
-
-    inputs = Input(input_shape)
-
-    x = tf.keras.layers.Dense(512, activation='relu')(inputs)
-    x = tf.keras.layers.Dense(512, activation='relu')(x)
-    x = tf.keras.layers.Dense(512, activation='relu')(x)
-
-    outputs = tf.keras.layers.Dense(PC_p)(x)
-
-    model = Model(inputs, outputs, name="U-Net")
-    #print(model.summary())
-
-    return model
-
-def memory():
-    """
-    Get node total memory and memory usage
-    """
-    with open('/proc/meminfo', 'r') as mem:
-        ret = {}
-        tmp = 0
-        for i in mem:
-            sline = i.split()
-            if str(sline[0]) == 'MemTotal:':
-                ret['total'] = int(sline[1])
-            elif str(sline[0]) in ('MemFree:', 'Buffers:', 'Cached:'):
-                tmp += int(sline[1])
-        ret['free'] = tmp
-        ret['used'] = int(ret['total']) - int(ret['free'])
-    return ret
-
-
-def interp_weights(xyz, uvw):
-    tri = qhull.Delaunay(xyz)
-    simplex = tri.find_simplex(uvw)
-    vertices = np.take(tri.simplices, simplex, axis=0)
-    temp = np.take(tri.transform, simplex, axis=0)
-    delta = uvw - temp[:, d]
-    bary = np.einsum('njk,nk->nj', temp[:, :d, :], delta)
-    return vertices, np.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))	
-
-
 print('Initializing NN')
-model = DENSE_PCA()
+model = DENSE_PCA((PC_input), PC_p)
 model.load_weights('weights.h5')
 
 print('Initializing MPI communication in Python')
@@ -163,7 +50,15 @@ rank = comm.Get_rank()
 nprocs = comm.Get_size()
 
 def init_func(array, top_boundary, obst_boundary):
+	"""
+	Initialization function. It is called at the beggining of a simulation to compute everything that is static,
+	including interpolation weights and vertices
 
+	Args:
+		array: Ux, Uy, and coordinates at each mesh cell center.
+		top_boundary: 
+		obst_boundary:
+	"""
 	print('Running init function... This may take a while! ')
 
 	array_global = comm.gather(array, root = 0)
@@ -180,8 +75,13 @@ def init_func(array, top_boundary, obst_boundary):
 		top = np.concatenate(top_global)
 		obst = np.concatenate(obst_global)
 
+		np.save('top.npy', top)
+		np.save('obst.npy', obst)
+		np.save('array.npy', array_concat)
+		
 		global indices, sdfunct, vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF, grid_shape_y, grid_shape_x
 
+		# Uniform grid resolution
 		delta = 5e-3 
 
 		x_min = round(np.min(array_concat[...,2]),2)
@@ -235,12 +135,19 @@ def init_func(array, top_boundary, obst_boundary):
 		#sys.stdout.flush()
 	return 0
 
-def py_func(array_in):
+def py_func(array_in, verbose=True):
+	"""
+	Method called at each simulation time step to compute the pressure field based on an input velocity field.
+
+	Args:
+		array_in: 
+	"""
 
 	# if rank ==0:
 	# 	print(memory())
 
 	# Gathering all the inputs in 1 thread
+
 	array_global = comm.gather(array_in, root = 0)
 
 	if rank == 0: #running all calculations at rank 0 
@@ -259,7 +166,8 @@ def py_func(array_in):
 		Uy_adim = array[...,1:2]/U_max_norm 
 
 		t1 = time.time()
-		#print( "Data pre-processing:" + str(t1-t0) + " s")
+		if verbose: 
+			print( "Data pre-processing:" + str(t1-t0) + " s")
 
 		t0 = time.time()
 
@@ -267,7 +175,8 @@ def py_func(array_in):
 		Uy_interp = interpolate(Uy_adim, vert_OFtoNP, weights_OFtoNP)
 
 		t1 = time.time()
-		#print( "1st interpolation took:" + str(t1-t0) + " s")
+		if verbose:
+			print( "1st interpolation took:" + str(t1-t0) + " s")
 
 		t0 = time.time()
 		grid = np.zeros(shape=(1, grid_shape_y, grid_shape_x, 3))
@@ -277,9 +186,11 @@ def py_func(array_in):
 		grid[0,:,:,2:3] = sdfunct
 
 		t1 = time.time()
-		#print( "2nd interpolation took:" + str(t1-t0) + " s")
+		if verbose:
+			print( "2nd interpolation took:" + str(t1-t0) + " s")
 
-		grid[np.isnan(grid)] = 0 #set any nan value to 0
+		# Setting any nan value to 0 to avoid issues
+		grid[np.isnan(grid)] = 0
 
 		x_list = []
 		obst_list = []
@@ -294,12 +205,14 @@ def py_func(array_in):
 
 		t0 = time.time()
 
-		for i in range ( n_y + 2 ): #+1 b
-				for j in range ( n_x +1 ):
+		# Sampling blocks of size [shape X shape] from the input fields (Ux, Uy and sdf)
+		# In the indices_list, the indices corresponding to each sampled block is stored to enable domain reconstruction later.
+		for i in range (n_y + 2):
+				for j in range (n_x +1):
 
 					if i == (n_y + 1 ):
 						x_list.append(grid[0:1, (grid.shape[1]-shape):grid.shape[1] , ((grid.shape[2]-shape)-j*shape+j*avance):(grid.shape[2]-j*shape +j*avance) ,0:3])
-						indices_list.append([i, n_x - j  ])
+						indices_list.append([i, n_x - j])
 
 					else:
 						x_list.append(grid[0:1,(i*shape - i*avance):(shape*(i+1) - i*avance),((grid.shape[2]-shape)-j*shape+j*avance):(grid.shape[2]-j*shape +j*avance),0:3])
@@ -339,19 +252,21 @@ def py_func(array_in):
 		result_array = np.empty(grid[...,0:1].shape)
 		t0 = time.time()
 
-		res_concat = np.array(model(x_input)) #if necessary could be done in batches
+		# Calling the NN to predict the principal components (PC) of the pressure field:
+		# PC_input -> PC_p (if necessary could be done in batches)
+		res_concat = np.array(model(x_input)) 
 		t1 = time.time()
 		#print( "Model prediction time : " + str(t1-t0) + " s")
 
+		# PCA inverse transformation:
+		# PC_p -> p
 		t0 = time.time()
 		res_flat_inv = np.dot(res_concat*max_abs_p_PCA, comp_p) + pca_mean_p	
 		res_concat = res_flat_inv.reshape((res_concat.shape[0], shape, shape, 1))
 		t1 = time.time()
 		#print( "PCA inverse transform : " + str(t1-t0) + " s")
 
-
-		#correction
-
+		## Domain reassembly method
 		flow_bool_ant = np.ones((shape,shape))
 		BC_up = 0
 		BC_ant = 0
@@ -374,7 +289,6 @@ def py_func(array_in):
 						res -= BC_coor
 						BC_ups[idx[1]] = np.mean(res[(shape-avance):shape,(shape-avance):shape][flow_bool[(shape-avance):shape,(shape-avance):shape] !=0])	
 
-						
 					elif idx[1] == -1:
 						p_j = (grid.shape[2]-shape)-n_x*shape+n_x*avance
 						BC_coor = np.mean(res[:, p_j:p_j + avance][flow_bool[:, p_j:p_j + avance] !=0] ) - BC_ant_0 #middle ones are corrected by the right side
@@ -401,7 +315,6 @@ def py_func(array_in):
 						else:
 							BC_coor = np.mean(res[shape - p -avance: shape - p,:][flow_bool[shape - p -avance: shape - p,:] !=0]) - BC_ups[idx[1]]
 
-			
 						res -= BC_coor	
 
 				else:
@@ -423,66 +336,69 @@ def py_func(array_in):
 						BC_ups[idx[1]] = np.mean(res[(shape-avance):shape,:][flow_bool[(shape-avance):shape,:] !=0])	
 						
 
-
-				BC_alter = np.mean(res[:,0:avance][flow_bool[:,0:avance] !=0]) #BC alternative : lado direito para quando nao dá +para corrigir por cima
-
-
+				#BC alternative: when it is not possible to apply the correction based on the right side 
+				# when it is not possible to correct based on the block above
+				BC_alter = np.mean(res[:,0:avance][flow_bool[:,0:avance] !=0]) 
 
 				if idx == [n_y +1, -1]:
 					result_array[0,(grid.shape[1]-(shape-avance)):grid.shape[1] , 0:(grid.shape[2] - (n_x+1)*(shape-avance) -avance) ,0] = res[avance:shape , 0:grid.shape[2] - (n_x+1)*(shape-avance) -avance]
 
 				elif idx[1] == -1:
-
-
 					result_array[0,(idx[0]*shape - idx[0]*avance):(1+idx[0])*shape - idx[0]*avance, 0:shape,0] = res
 
 
 				elif idx[0] == (n_y + 1):
 					j = n_x - idx[1]
-
 					result_array[0,(grid.shape[1]-(shape-avance)):grid.shape[1], grid.shape[2] -shape - j*(shape-avance) : grid.shape[2] - j*(shape-avance) ,0] = res[avance:shape,:]
 
 				else:
-
 					j = n_x - idx[1]
-
 					result_array[0,(idx[0]*shape - idx[0]*avance):(1+idx[0])*shape - idx[0]*avance, grid.shape[2] -shape - j*(shape-avance) : grid.shape[2] - j*(shape-avance) ,0] = res
 
 		t1 = time.time()
-		#print( "Correction algorithm took:" + str(t1-t0) + " s")
+		if verbose:
+			print( "Reassembly algorithm took:" + str(t1-t0) + " s")
 
+		# Ensuring the constant pressure boundary condition to be ensured at the right-most cell center
+		# instead of doing that at the boundary patch, brings bias to the domain, removing it below:
 		result_array -= np.mean( 3* result_array[0,:,-1,0] - result_array[0,:,-2,0] )/3
 		result_array = result_array[0,:,:,0]
 
 		t0 = time.time()
+		# Apply Gaussian filter to correct the attained pressure field (and remove artifacts) (OPTIONAL)
 		#result_array = ndimage.gaussian_filter(result_array, sigma=(5, 5), order=0)
 		t1 = time.time()
-		#print( "Smoothing took:" + str(t1-t0) + " s")
+		if verbose:
+			print( "Applying Gaussian filter took:" + str(t1-t0) + " s")
 
-		#rearrange data to OF
-		p_adim_unif = result_array[tuple(indices.T)]  #get it in the 1D array
-		#now it is necessary to inpolate to the original grid
+		# Rearrange the prediction into a 1D array that it can be sent to OF
+		p_adim_unif = result_array[tuple(indices.T)]
 
 		t0 = time.time()
-		p_interp = interpolate_fill(p_adim_unif, vert_NPtoOF, weights_NPtoOF)#takes virtually no time  because "vert" and "weigths" where already calculated
+		# Interpolation into the orginal grid
+		# Takes virtually no time because "vert" and "weigths" where already calculated on the init_func
+		p_interp = interpolate_fill(p_adim_unif, vert_NPtoOF, weights_NPtoOF)
 		#p_interp[np.isnan(p_interp)] = 0
 		t1 = time.time()
-		#print( "Final Interpolation took:" + str(t1-t0) + " s")
+		if verbose:
+			print( "Final Interpolation took:" + str(t1-t0) + " s")
 
+		# Finally redimensionalizing the predicted pressure field
 		p = p_interp * max_abs_p * pow(U_max_norm, 2.0)
 
+		# Using the last time step pressure field for the near wall locations
+		# Because we know that the model underperforms at the grid elements near walls
 		sdf_mesh = interpolate_fill(sdfunct[:,:,0], vert_NPtoOF, weights_NPtoOF)
-
 		p[sdf_mesh < 0.05] = p_prev[sdf_mesh < 0.05]
-		
 		p[np.isnan(p_interp)] = p_prev[np.isnan(p_interp)]
 
 		t1_py_func = time.time()
-		#print( "The whole python function took : " + str(t1_py_func-t0_py_func) + " s")
+		if verbose:
+			print( "The whole python function took : " + str(t1_py_func-t0_py_func) + " s")
 
 		init = 0
-		#dividing p into a list of n elements (consistent with the C++ domain decomposition)
-
+		# Dividing p into a list of n elements (consistent with the OF domain decomposition)
+		# This is necessary to enable parallelization in OF
 		p_rankwise = [] 
 		for length in len_rankwise:
 		    end = init + length
@@ -546,7 +462,7 @@ if __name__ == '__main__':
 	#plt.scatter(array[:,2],array[:,3], c = array[:,1])
 	#plt.show()
 
-	#py_func1(array, top_boundary, obst_boundary)
+	#init_func(array, top_boundary, obst_boundary)
 	#p = py_func(array)
 
 	#plt.scatter(array[:,2], array[:,3], c=p, cmap = 'jet')

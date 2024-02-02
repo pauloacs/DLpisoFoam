@@ -47,7 +47,7 @@ ENV CONDA_DIR /opt/conda
 RUN wget  https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
   /bin/bash ~/miniconda.sh -b -p /opt/conda
 
-
+# Creating python virtual environment
 ENV PATH=$CONDA_DIR/bin:$PATH
 RUN conda env create -f /usr/bin/environment.yml
 #RUN conda activate python39 && conda install mpi4py
