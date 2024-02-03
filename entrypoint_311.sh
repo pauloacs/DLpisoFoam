@@ -22,6 +22,9 @@ cd DLpisoFoam_alg2
 wclean
 wmake
 cd /home/repo
-
+#
+echo "Installing surrogate_model Python modules"
+pip install .
+#
 # Run extra commands
 exec "$@"

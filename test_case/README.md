@@ -22,12 +22,13 @@ or
   $ . run_parallel_alg2.sh
 ```
 
-## Debugging
+## Debugging the surrogate model python code
 
 Run 
 
 ```sh
-  $ python test_module.py
+  § pip install pytest
+  $ python -m pytest surrogate_model/
 ```
 
 for debugging the surrogate model code without running OF. 
