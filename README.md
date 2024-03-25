@@ -12,8 +12,6 @@ This repository contains the solvers and test cases for the **DLpisoFoam** solve
 
 1 - **DLpisoFoam-alg1 and DLpisoFoam-alg2**:
  the solvers developed in https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications. These solvers use the **U_to_p surrogate model** in surrogate_models/u_to_p/.
-  
-  The dissertation can be found at FEUP repository: https://sigarra.up.pt/feup/en/pub_geral.pub_view?pi_pub_base_id=547360
 
 2 - **DLpisoFoam-deltas**:
   this solver is currently implemented, but the **deltau_to_delta surrogate models** are yet being developed in https://github.com/pauloacs/Solving-Poisson-Equation-with-DL-pt2. An example of the surrogate model can be found at surrogate_models/deltau_to_deltap/. 
