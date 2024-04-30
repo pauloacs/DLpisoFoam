@@ -23,7 +23,7 @@ maxs_fn = "maxs"
 max_PCA_fn = "maxs_PCA"
 weights_fn = "weights.h5"
 
-load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, max_PCA_fn, weights_fn)
+load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn)
 
 #from surrogate_models.deltau_to_deltap.main import init_func, py_func
 from surrogate_models.deltau_to_deltap.main import init_func, py_func

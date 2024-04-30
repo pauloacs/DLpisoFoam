@@ -1,7 +1,3 @@
-#f = open('python_log_file','w')
-# f.write('Starting python module from OpenFOAM')
-# f.close()
-
 import time
 import traceback
 import sys
@@ -21,20 +17,56 @@ import scipy.ndimage as ndimage
 
 from surrogate_models.deltau_to_deltap.utils import *
 
+########
+# TODO: Find ways to optimize performance:
+# Ideas:
+# 1 - Use numba jit to optimize the code.
+# 2 - Improve the reassembly method.
+# 3 - Identify and fix any inefficiencies in the code.
 
-def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, max_PCA_fn, weights_fn):
+## Typical running times 
+## (from running python tests/test_module.py):
+
+# Data pre-processing: 7.7009e-05 s
+# 1st interpolation took: 0.0406 s
+# 2nd interpolation took: 0.0285 s
+# Reassembly algorithm took: 0.0242 s
+# Applying Gaussian filter took: 4.7684e-07 s
+# Final Interpolation took: 0.0017 s
+# The whole python function took: 0.2002 s
+
+#########
+
+def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn):
+	"""
+	Load PCA mapping and initialize the trained neural network model.
+
+	Parameters:
+	ipca_input_fn (str): File path to the input PCA model.
+	ipca_output_fn (str): File path to the output PCA model.
+	maxs_fn (str): File path to the maximum values file.
+	max_PCA_fn (str): File path to the maximum PCA values file.
+	weights_fn (str): File path to the neural network model weights.
+
+	Returns:
+	None
+	"""
 	print('Loading the PCA mapping')
 
 	pcainput = pk.load(open(ipca_input_fn, 'rb'))
 	pcap = pk.load(open(ipca_output_fn, 'rb'))
 
+	## Loading values for blocks normalization
 	maxs = np.loadtxt(maxs_fn)
-	maxs_PCA = np.loadtxt(max_PCA_fn)
+	global max_abs_ux, masx_abs_uy, max_abs_dist, max_abs_p
+	max_abs_ux, max_abs_uy, max_abs_dist, max_abs_p = maxs
 
-	global max_abs_Ux, max_abs_Uy, max_abs_dist, max_abs_p
-	max_abs_Ux, max_abs_Uy, max_abs_dist, max_abs_p = maxs[0], maxs[1], maxs[2], maxs[3]
-	global max_abs_input_PCA, max_abs_p_PCA
-	max_abs_input_PCA, max_abs_p_PCA = maxs_PCA[0], maxs_PCA[1]
+	# Loading values for PCA standardization
+	data = np.load(PCA_std_vals_fn)
+	mean_in = data['mean_in']
+	std_in = data['std_in']
+	mean_out = data['mean_out']
+	std_out = data['std_out']
 
 	PC_p = int(np.argmax(pcap.explained_variance_ratio_.cumsum() > 0.95))
 	PC_input = int(np.argmax(pcainput.explained_variance_ratio_.cumsum() > 0.995))
@@ -59,13 +91,24 @@ def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, max_PCA_fn, weights_
 
 def init_func(array, top_boundary, obst_boundary):
 	"""
-	Initialization function. It is called at the beggining of a simulation to compute everything that is static,
-	including interpolation weights and vertices
+	Initialization function for the simulation.
+
+	This function is called at the beginning of a simulation to compute everything that is static, including interpolation weights and vertices.
 
 	Args:
-		array: Ux, Uy, and coordinates at each mesh cell center.
-		top_boundary: 
-		obst_boundary:
+		array (ndarray): Ux, Uy, and coordinates at each mesh cell center.
+		top_boundary (ndarray): Top boundary.
+		obst_boundary (ndarray): Obstacle boundary.
+
+	Returns:
+		int: Returns 0 after successful initialization.
+
+	Notes:
+		- This function may take a while to run.
+		- The function gathers data from all ranks and performs computations on rank 0.
+		- The function calculates interpolation weights and vertices for both OFtoNP and NPtoOF.
+		- The function calculates the domain boolean and signed distance function.
+		- The function initializes indices, sdfunct, vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF, grid_shape_y, and grid_shape_x.
 	"""
 	print('Running init function... This may take a while! ')
 
@@ -148,14 +191,15 @@ def py_func(array_in, U_max_norm, verbose=True):
 	Method called at each simulation time step to compute the pressure field based on an input velocity field.
 
 	Args:
-		array_in: 
+		array_in (ndarray): Input velocity field.
+		U_max_norm (float): Maximum normalized velocity.
+		verbose (bool, optional): Whether to print verbose output. Defaults to True.
+
+	Returns:
+		ndarray: Predicted pressure field.
 	"""
 
-	# if rank ==0:
-	# 	print(memory())
-
 	# Gathering all the inputs in 1 thread
-
 	array_global = comm.gather(array_in, root = 0)
 
 	if rank == 0: #running all calculations at rank 0 
@@ -169,8 +213,8 @@ def py_func(array_in, U_max_norm, verbose=True):
 		#np.save('array.npy', array)
 		#U_max_norm = np.max( np.sqrt( np.square(array[...,0:1]) + np.square(array[...,1:2]) ) )
 
-		Ux_adim = array[...,0:1]/U_max_norm 
-		Uy_adim = array[...,1:2]/U_max_norm 
+		deltaUx_adim = array[...,0:1]/U_max_norm 
+		deltaUy_adim = array[...,1:2]/U_max_norm 
 
 		t1 = time.time()
 		if verbose: 
@@ -178,8 +222,8 @@ def py_func(array_in, U_max_norm, verbose=True):
 
 		t0 = time.time()
 
-		Ux_interp = interpolate(Ux_adim, vert_OFtoNP, weights_OFtoNP)
-		Uy_interp = interpolate(Uy_adim, vert_OFtoNP, weights_OFtoNP)
+		deltaUx_interp = interpolate(deltaUx_adim, vert_OFtoNP, weights_OFtoNP)
+		deltaUy_interp = interpolate(deltaUy_adim, vert_OFtoNP, weights_OFtoNP)
 
 		t1 = time.time()
 		if verbose:
@@ -188,9 +232,15 @@ def py_func(array_in, U_max_norm, verbose=True):
 		t0 = time.time()
 		grid = np.zeros(shape=(1, grid_shape_y, grid_shape_x, 3))
 
-		grid[0,:,:,0:1][tuple(indices.T)] = Ux_interp.reshape(Ux_interp.shape[0],1)/max_abs_Ux
-		grid[0,:,:,1:2][tuple(indices.T)] = Uy_interp.reshape(Uy_interp.shape[0],1)/max_abs_Uy
-		grid[0,:,:,2:3] = sdfunct
+		# Rearrange interpolated 1D arrays into 2D arrays
+		grid[0, :, :, 0:1][tuple(indices.T)] = deltaUx_interp.reshape(deltaUx_interp.shape[0], 1)
+		grid[0, :, :, 1:2][tuple(indices.T)] = deltaUy_interp.reshape(deltaUy_interp.shape[0], 1)
+		grid[0, :, :, 2:3] = sdfunct
+
+		## Rescale input variables to [0,1]
+		grid[0,:,:,0:1] = grid[0,:,:,0:1] * max_abs_ux
+		grid[0,:,:,1:2] = grid[0,:,:,1:2] * max_abs_uy
+		grid[0,:,:,2:3] = grid[0,:,:,2:3] * max_abs_dist
 
 		t1 = time.time()
 		if verbose:
@@ -237,7 +287,8 @@ def py_func(array_in, U_max_norm, verbose=True):
 		x_array = np.concatenate(x_list)
 
 		t1 = time.time()
-		#print( "Data extraction loop took:" + str(t1-t0) + " s")
+		if verbose:
+			print( "Data extraction loop took:" + str(t1-t0) + " s")
 
 		t0 = time.time()
 		N = x_array.shape[0]
@@ -250,11 +301,12 @@ def py_func(array_in, U_max_norm, verbose=True):
 
 		input_transformed = np.dot(input_flat - pca_mean_input, comp_input.T)
 
-		x_input = input_transformed/max_abs_input_PCA
-		x_input = np.array(x_input)
+		# Standardize input PCs
+		x_input = (input_transformed - mean_in) / std_in
 
 		t1 = time.time()
-		#print( "PCA transform : " + str(t1-t0) + " s")
+		if verbose:
+			print( "PCA transform : " + str(t1-t0) + " s")
 
 		result_array = np.empty(grid[...,0:1].shape)
 		t0 = time.time()
@@ -263,15 +315,21 @@ def py_func(array_in, U_max_norm, verbose=True):
 		# PC_input -> PC_p (if necessary could be done in batches)
 		res_concat = np.array(model(x_input)) 
 		t1 = time.time()
-		#print( "Model prediction time : " + str(t1-t0) + " s")
+		if verbose:
+			print( "Model prediction time : " + str(t1-t0) + " s")
 
 		# PCA inverse transformation:
 		# PC_p -> p
 		t0 = time.time()
-		res_flat_inv = np.dot(res_concat*max_abs_p_PCA, comp_p) + pca_mean_p	
+
+		# Getting the non-standerdized PCs
+		res_concat = (res_concat * std_out) + mean_out
+
+		res_flat_inv = np.dot(res_concat, comp_p) + pca_mean_p	
 		res_concat = res_flat_inv.reshape((res_concat.shape[0], shape, shape, 1))
 		t1 = time.time()
-		#print( "PCA inverse transform : " + str(t1-t0) + " s")
+		if verbose:
+			print( "PCA inverse transform : " + str(t1-t0) + " s")
 
 		## Domain reassembly method
 		flow_bool_ant = np.ones((shape,shape))

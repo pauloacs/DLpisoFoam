@@ -52,3 +52,7 @@ if __name__=="__main__":
 #indice = index(data[0,0,:,0] , -100.0 )[0]
 #array = data[0,0,:indice,:4]
 #array[:,2:4] = data[0,0,:indice,3:5]
+
+
+
+

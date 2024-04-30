@@ -165,7 +165,7 @@ def py_func(array_in, verbose=True):
 		array = np.concatenate(array_global)
 
 		t0 = time.time()
-		#p_prev = array[...,4]
+		p_prev = array[...,4]
 
 		#np.save('array.npy', array)
 		U_max_norm = np.max( np.sqrt( np.square(array[...,0:1]) + np.square(array[...,1:2]) ) )
