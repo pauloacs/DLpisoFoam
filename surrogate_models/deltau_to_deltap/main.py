@@ -237,10 +237,10 @@ def py_func(array_in, U_max_norm, verbose=True):
 		grid[0, :, :, 1:2][tuple(indices.T)] = deltaUy_interp.reshape(deltaUy_interp.shape[0], 1)
 		grid[0, :, :, 2:3] = sdfunct
 
-		## Rescale input variables to [0,1]
-		grid[0,:,:,0:1] = grid[0,:,:,0:1] * max_abs_ux
-		grid[0,:,:,1:2] = grid[0,:,:,1:2] * max_abs_uy
-		grid[0,:,:,2:3] = grid[0,:,:,2:3] * max_abs_dist
+		## Rescale input variables to [-1,1]
+		grid[0,:,:,0:1] = grid[0,:,:,0:1] / max_abs_ux
+		grid[0,:,:,1:2] = grid[0,:,:,1:2] / max_abs_uy
+		grid[0,:,:,2:3] = grid[0,:,:,2:3] / max_abs_dist
 
 		t1 = time.time()
 		if verbose:
