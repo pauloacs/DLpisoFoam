@@ -1,10 +1,11 @@
 # DLpisoFoam
 
-
 ## Contents
 
 - [Introduction](#introduction)
 - [Running with Docker](#running-with-docker)
+- [Local Setup](#local-setup)
+- [Run your first tutorial](#run-your-first-tutorial)
 
 ## Introduction
 
@@ -25,57 +26,59 @@ Here you can find the DLpisoFoam solvers as well as test cases where those can b
 
 There are two ways to use DLpisoFoam:
 
-1. **Running with Docker**: This is the easiest option as the setup of the environment is automated. To ensure reproducibility, a Docker container with the solver is provided. If you already have Docker installed, you can build your own docker image locally by running:
+#### 1. **Running with Docker**:
 
+This is the easiest option as the setup of the environment is automated. To ensure reproducibility, a Docker container with the solver is provided. If you already have Docker installed, you can build your own docker image locally by running:
 
-  ```sh
+```sh
 
-  $ docker build dlpisofoam .
-  ```
+$ docker build dlpisofoam .
+```
 
-  or pull the container with the following command:
+or pull the container with the following command:
 
-  ```sh
-  $ docker pull pauloacs/dlpisofoam:latest
-  ```
+```sh
+$ docker pull pauloacs/dlpisofoam:latest
+```
 
-  Using
+Using
 
-  ```sh
-  $ docker run -it -v $(pwd):/home/repo --rm <image_name> bash
-  ```
+```sh
+$ docker run -it -v $(pwd):/home/repo --rm <image_name> bash
+```
 
-  This will create a Docker container and launch a shell.
-2. **Local Setup**: This method requires manual setup and installation.
+This will create a Docker container and launch a shell.
+
+#### 2. **Local Setup**: This method requires manual setup and installation.
 
 To set up the environment locally, follow these steps:
 
-  1. Create a Python conda virtual environment by running the following command:
+1. Create a Python conda virtual environment by running the following command:
 
-  ```sh
-  $ conda env create -f env_311.yml
-  ```
+```sh
+$ conda env create -f env_311.yml
+```
 
-  2. Install the surrogate model Python packages:
+2. Install the surrogate model Python packages:
 
-  ```sh
-  $ python -m pip install .
-  ```
+```sh
+$ python -m pip install .
+```
 
-  3. Make sure the required environment variables for the CFD solver are properly set by running:
+3. Make sure the required environment variables for the CFD solver are properly set by running:
 
-  ```sh
-  $ ./prep_env311.sh
-  ```
+```sh
+$ ./prep_env311.sh
+```
 
-    Note: You may need to create your own `prep_env311.sh` file with the correct path to your conda environment.
+Note: You may need to create your own `prep_env311.sh` file with the correct path to your conda environment.
 
-  4. Finally, install the CFD solvers. For example, to install DLpisoFoam_deltas, navigate to the `source/DLpisoFoam_deltas` directory and run the following commands:
+4. Finally, install the CFD solvers. For example, to install DLpisoFoam_deltas, navigate to the `source/DLpisoFoam_deltas` directory and run the following commands:
 
-  ```sh
-  $ wclean
-  $ wmake
-  ```
+```sh
+$ wclean
+$ wmake
+```
 
 ### Run your first tutorial
 
@@ -83,12 +86,12 @@ To run your first tutorial, navigate to the directory of the solver you want to 
 
 1. Change to the `test_case_deltaU_deltaP/` directory:
 
-  ```sh
-  cd test_case_deltaU_deltaP/
-  ```
+```sh
+cd test_case_deltaU_deltaP/
+```
 
 2. Run the DLpisoFoam_deltas solver:
 
-  ```sh
-  DLpisoFoam_deltas
-  ```
+```sh
+DLpisoFoam_deltas
+```
