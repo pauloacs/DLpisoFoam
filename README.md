@@ -52,30 +52,30 @@ To set up the environment locally, follow these steps:
 
   1. Create a Python conda virtual environment by running the following command:
 
-    ```sh
-    conda env create -f env_311.yml
-    ```
+  ```sh
+  $ conda env create -f env_311.yml
+  ```
 
   2. Install the surrogate model Python packages:
 
-    ```sh
-    python -m pip install .
-    ```
+  ```sh
+  $ python -m pip install .
+  ```
 
   3. Make sure the required environment variables for the CFD solver are properly set by running:
 
-    ```sh
-    ./prep_env311.sh
-    ```
+  ```sh
+  $ ./prep_env311.sh
+  ```
 
     Note: You may need to create your own `prep_env311.sh` file with the correct path to your conda environment.
 
   4. Finally, install the CFD solvers. For example, to install DLpisoFoam_deltas, navigate to the `source/DLpisoFoam_deltas` directory and run the following commands:
 
-    ```sh
-    wclean
-    wmake
-    ```
+  ```sh
+  $ wclean
+  $ wmake
+  ```
 
 ### Run your first tutorial
 
