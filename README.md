@@ -87,11 +87,11 @@ To run your first tutorial, navigate to the directory of the solver you want to 
 1. Change to the `test_case_deltaU_deltaP/` directory:
 
 ```sh
-cd test_case_deltaU_deltaP/
+$ cd test_case_deltaU_deltaP/
 ```
 
 2. Run the DLpisoFoam_deltas solver:
 
 ```sh
-DLpisoFoam_deltas
+$ DLpisoFoam_deltas
 ```
