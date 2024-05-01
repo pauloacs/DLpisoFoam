@@ -1,11 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from surrogate_models.deltau_to_deltap.main import load_pca_and_NN, init_func, py_func
-from surrogate_models.deltau_to_deltap.test_data import array, top, obst, ipca_input_fn, ipca_output_fn, maxs_fn, max_PCA_fn, weights_fn
+from surrogate_models.deltau_to_deltap.test_data import array, top, obst, pca_input_fn, pca_output_fn, \
+                                                        maxs_fn, PCA_std_vals_fn, weights_fn
 
 array = np.load(array)
 top_boundary = np.load(top)
 obst_boundary = np.load(obst)
+var = 0.95
 
 def test_whole_module():
 
@@ -15,7 +17,7 @@ def test_whole_module():
     plt.scatter(array[:,2],array[:,3], c = array[:,1])
     plt.savefig('uy.png')
 
-    load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, max_PCA_fn, weights_fn)
+    load_pca_and_NN(pca_input_fn, pca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var)
     init_func(array, top_boundary, obst_boundary)
     p = py_func(array, 1.)
 

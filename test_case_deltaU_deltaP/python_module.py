@@ -17,13 +17,14 @@ from mpi4py import MPI
 #from surrogate_models.deltau_to_deltap.main import load_pca_and_NN
 from surrogate_models.deltau_to_deltap.main import load_pca_and_NN
 
-ipca_input_fn = "ipca_input.pkl"
-ipca_output_fn = "ipca_output.pkl"
+pca_input_fn = "pca_in.pkl"
+pca_output_fn = "pca_p.pkl"
 maxs_fn = "maxs"
-max_PCA_fn = "maxs_PCA"
+PCA_std_vals_fn = "mean_std.npz"
 weights_fn = "weights.h5"
+var = 0.95
 
-load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn)
+load_pca_and_NN(pca_input_fn, pca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var)
 
 #from surrogate_models.deltau_to_deltap.main import init_func, py_func
 from surrogate_models.deltau_to_deltap.main import init_func, py_func

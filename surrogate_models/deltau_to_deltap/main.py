@@ -37,7 +37,7 @@ from surrogate_models.deltau_to_deltap.utils import *
 
 #########
 
-def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn):
+def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var):
 	"""
 	Load PCA mapping and initialize the trained neural network model.
 
@@ -47,6 +47,7 @@ def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, wei
 	maxs_fn (str): File path to the maximum values file.
 	max_PCA_fn (str): File path to the maximum PCA values file.
 	weights_fn (str): File path to the neural network model weights.
+	var (float): Variance to be retained.
 
 	Returns:
 	None
@@ -58,19 +59,22 @@ def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, wei
 
 	## Loading values for blocks normalization
 	maxs = np.loadtxt(maxs_fn)
-	global max_abs_ux, masx_abs_uy, max_abs_dist, max_abs_p
+	global max_abs_ux, max_abs_uy, max_abs_dist, max_abs_p
 	max_abs_ux, max_abs_uy, max_abs_dist, max_abs_p = maxs
 
 	# Loading values for PCA standardization
 	data = np.load(PCA_std_vals_fn)
+	global mean_in, std_in, mean_out, std_out
 	mean_in = data['mean_in']
 	std_in = data['std_in']
 	mean_out = data['mean_out']
 	std_out = data['std_out']
 
-	PC_p = int(np.argmax(pcap.explained_variance_ratio_.cumsum() > 0.95))
-	PC_input = int(np.argmax(pcainput.explained_variance_ratio_.cumsum() > 0.995))
+	# Selecting the number of PCs to be used based on the variance to be retained
+	PC_p = int(np.argmax(pcap.explained_variance_ratio_.cumsum() > var))
+	PC_input = int(np.argmax(pcainput.explained_variance_ratio_.cumsum() > var))
 
+	# Saving the PCA mapping
 	global comp_p, pca_mean_p, comp_input, pca_mean_input, model
 	comp_p = pcap.components_[:PC_p, :]
 	pca_mean_p = pcap.mean_
@@ -341,6 +345,9 @@ def py_func(array_in, U_max_norm, verbose=True):
 
 		t0 = time.time()
 
+		# TODO: Update the reassembly method to match the SM under
+		# https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications/blob/main/Improved_SM/deltaU_to_deltaP/source/pressureSM_deltas/SM_call.py
+		
 		for i in range(len(x_list)):
 
 				idx = indices_list[i]
