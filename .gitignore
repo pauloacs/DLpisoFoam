@@ -1,7 +1,7 @@
 surrogate_models/deltau_to_deltap/tests/manual_test_plate/
 
-source/DLpisoFoam_alg1/Make/linux64GccDPInt32Opt
-source/DLpisoFoam_alg2/Make/linux64GccDPInt32Opt
+source/DLpisoFoam_alg1/Make/linux64GccDPInt32Opt/
+source/DLpisoFoam_alg2/Make/linux64GccDPInt32Opt/
 
 *.png
 */__pychache__
