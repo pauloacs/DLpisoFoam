@@ -27,34 +27,6 @@ volVectorField U
     mesh
 );
 
-/*volVectorField U_non_cons*/
-/*(*/
-/*    IOobject*/
-/*    (*/
-/*        "U_non_cons",*/
-/*        runTime.timeName(),*/
-/*        mesh,*/
-/*        IOobject::NO_READ,*/
-/*        IOobject::AUTO_WRITE*/
-/*    ),*/
-/*    mesh,*/
-/*    dimensionedVector("U_non_cons", dimensionSet(0,1,-1,0,0,0,0), vector::zero)*/
-/*);*/
-
-volScalarField out   // this field is to visualize the output from the surrogate model
-(
-    IOobject
-    (
-        "out",
-        runTime.timeName(),
-        mesh,
-        IOobject::NO_READ,
-        IOobject::AUTO_WRITE
-    ),
-    mesh,
-    dimensionedScalar("out", dimensionSet(0,2,-2,0,0,0,0), 0.0)
-);
-
 volScalarField delta_p
 (
     IOobject
@@ -67,6 +39,48 @@ volScalarField delta_p
     ),
     mesh,
     dimensionedScalar("delta_p", dimensionSet(0,2,-2,0,0,0,0), 0.0)
+);
+
+volVectorField U_prev
+(
+    IOobject
+    (
+        "U_prev",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::AUTO_WRITE
+    ),
+    mesh,
+    dimensionedVector("U_prev", dimensionSet(0,1,-1,0,0,0,0), vector::zero)
+);
+
+volScalarField p_prev
+(
+    IOobject
+    (
+        "p_prev",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::AUTO_WRITE
+    ),
+    mesh,
+    dimensionedScalar("p_prev", dimensionSet(0,2,-2,0,0,0,0), 0.0)
+);
+
+volScalarField delta_p_CFD
+(
+    IOobject
+    (
+        "delta_p_CFD",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::AUTO_WRITE
+    ),
+    mesh,
+    dimensionedScalar("delta_p_CFD", dimensionSet(0,2,-2,0,0,0,0), 0.0)
 );
 
 volVectorField delta_U

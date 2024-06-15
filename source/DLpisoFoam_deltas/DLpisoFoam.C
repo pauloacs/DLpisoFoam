@@ -103,20 +103,25 @@ int main(int argc, char *argv[])
         // Pressure-velocity PISO corrector
         {
 
+            p_prev = p;
+
+            #include "UEqn.H"
+
             clock_gettime(CLOCK_MONOTONIC, &tw1); // POSIX
             // Talk to Python
             #include "PythonComm.H"
             clock_gettime(CLOCK_MONOTONIC, &tw2); // POSIX
             posix_wall = 1000.0*tw2.tv_sec + 1e-6*tw2.tv_nsec - (1000.0*tw1.tv_sec + 1e-6*tw1.tv_nsec);
             printf("DL pressure prediction & data transport: %.2f ms\n", posix_wall);
-
-            #include "UEqn.H"
-
+                        
 		    // --- PISO loop
-		    while (piso.correct())
-		    {
-			#include "pEqn.H"
-		    }
+            int counter = 0;
+            while (piso.correct())
+            {
+                #include "pEqn.H"
+                counter++;
+            }
+            delta_p_CFD = p - p_prev;
 
         }
 

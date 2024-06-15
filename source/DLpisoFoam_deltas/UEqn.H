@@ -2,6 +2,8 @@
 
 MRF.correctBoundaryVelocity(U);
 
+U_prev = U;
+
 fvVectorMatrix UEqn
 (
     fvm::ddt(U) + fvm::div(phi, U)
@@ -21,3 +23,5 @@ if (piso.momentumPredictor())
 
     fvOptions.correct(U);
 }
+
+delta_U = U - U_prev;

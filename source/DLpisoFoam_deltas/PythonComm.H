@@ -7,7 +7,8 @@ forAll(delta_p.internalField(), id) // for boundary field use u_.boundaryField()
 
         // Calculate the maximum norm of U for the current time step
         // To enable non-dimensionalization of the velocity field
-        double u_norm = std::pow(U[id].x(), 2) + std::pow(U[id].y(), 2);
+        double u_norm = std::sqrt( std::pow(U[id].x(), 2) + std::pow(U[id].y(), 2) );
+        U_MAX_NORM = std::max(U_MAX_NORM, u_norm);
         U_MAX_NORM = std::max(U_MAX_NORM, u_norm);
 }
 
@@ -39,6 +40,3 @@ Info<< ">>>  delta_p filled <<<" << endl;
 
 
 Py_DECREF(deltapValue);
-
-// Estimating p(t) based on p(t-1) + delta_p (as estimated by the SM)
-p = p + delta_p;

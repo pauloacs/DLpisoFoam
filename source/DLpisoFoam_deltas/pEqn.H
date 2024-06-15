@@ -11,6 +11,11 @@ MRF.makeRelative(phiHbyA);
 
 adjustPhi(phiHbyA, U, p);
 
+if (counter == 0) {
+    // Estimating p(t) based on p(t-1) + delta_p (as estimated by the SM)
+    p = p + delta_p;
+}
+
 // Update the pressure BCs to ensure flux consistency
 constrainPressure(p, U, phiHbyA, rAU, MRF);
 
@@ -42,4 +47,3 @@ while (piso.correctNonOrthogonal())
 U = HbyA - rAU*fvc::grad(p);
 U.correctBoundaryConditions();
 fvOptions.correct(U);
-
