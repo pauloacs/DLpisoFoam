@@ -8,6 +8,10 @@ array = np.load(array)
 top_boundary = np.load(top)
 obst_boundary = np.load(obst)
 var = 0.95
+model_arch = 'MLP_small'
+apply_filter =  False
+overlap_ratio = 0.25
+filter_size = 3
 
 def test_whole_module():
 
@@ -17,7 +21,7 @@ def test_whole_module():
     plt.scatter(array[:,2],array[:,3], c = array[:,1])
     plt.savefig('uy.png')
 
-    load_pca_and_NN(pca_input_fn, pca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var)
+    load_pca_and_NN(pca_input_fn, pca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var, model_arch, apply_filter, overlap_ratio, filter_size)
     init_func(array, top_boundary, obst_boundary)
     p = py_func(array, 1.)
 

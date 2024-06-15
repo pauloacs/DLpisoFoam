@@ -37,7 +37,7 @@ from surrogate_models.deltau_to_deltap.utils import *
 
 #########
 
-def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var):
+def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var, model_arch, apply_filter, overlap_ratio, filter_size, verbose=True):
 	"""
 	Load PCA mapping and initialize the trained neural network model.
 
@@ -45,15 +45,25 @@ def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, wei
 	ipca_input_fn (str): File path to the input PCA model.
 	ipca_output_fn (str): File path to the output PCA model.
 	maxs_fn (str): File path to the maximum values file.
-	max_PCA_fn (str): File path to the maximum PCA values file.
+    PCA_std_vals_fn (str): File path to the maximum PCA values file.
 	weights_fn (str): File path to the neural network model weights.
 	var (float): Variance to be retained.
+	model_arch (str): NN architecture.
+	apply_filter (bool):
+	overlap_ratio (float):
+	verbose (bool, optional): Whether to print verbose output. Defaults to True.
 
 	Returns:
 	None
 	"""
-	print('Loading the PCA mapping')
+    # Set the global configuration
+	global apply_filter_g, overlap_ratio_g, verbose_g, filter_size_g
+	apply_filter_g = apply_filter
+	overlap_ratio_g = overlap_ratio
+	verbose_g = verbose
+	filter_size_g = filter_size
 
+	print('Loading the PCA mapping')
 	pcainput = pk.load(open(ipca_input_fn, 'rb'))
 	pcap = pk.load(open(ipca_output_fn, 'rb'))
 
@@ -82,7 +92,28 @@ def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, wei
 	pca_mean_input = pcainput.mean_
 
 	print('Initializing NN')
-	model = DENSE_PCA((PC_input), PC_p)
+	if model_arch == 'MLP_small':
+		n_layers = 3
+		width = [512]*3
+	elif model_arch == 'small_unet':
+		n_layers = 9
+		width = [512, 256, 128, 64, 32, 64, 128, 256, 512]
+	elif model_arch == 'conv1D':
+		n_layers = 7
+		width = [128, 64, 32, 16, 32, 64, 128]
+		convNN = True
+	elif model_arch == 'MLP_medium':
+		n_layers = 5
+		width = [256] + [512]*3 + [256]
+	elif model_arch == 'MLP_big':
+		n_layers = 7
+		width = [256] + [512]*5 + [256]
+	elif model_arch == 'MLP_huge':
+		n_layers = 12
+		width = [256] + [512]*10 + [256]
+	else:
+		raise ValueError('Invalid NN model type')
+	model = densePCA(PC_input, PC_p, n_layers, width)
 	model.load_weights(weights_fn)
 
 	global comm, rank, nprocs
@@ -90,7 +121,12 @@ def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, wei
 	comm = MPI.COMM_WORLD
 	rank = comm.Get_rank()
 	nprocs = comm.Get_size()
-			
+
+	if verbose:
+		print("PCA models and neural network initialized.")
+		print(f"Variance retained: {var}")
+		print(f"Model architecture: {model_arch}")
+		print(f"overlap_ratio: {overlap_ratio}")
 
 
 def init_func(array, top_boundary, obst_boundary):
@@ -112,9 +148,9 @@ def init_func(array, top_boundary, obst_boundary):
 		- The function gathers data from all ranks and performs computations on rank 0.
 		- The function calculates interpolation weights and vertices for both OFtoNP and NPtoOF.
 		- The function calculates the domain boolean and signed distance function.
-		- The function initializes indices, sdfunct, vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF, grid_shape_y, and grid_shape_x.
+		- The function initializes indices, sdfunct, vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF, shape_y, and shape_x.
 	"""
-	print('Running init function... This may take a while! ')
+	print('Running init function... This might take a while! ')
 
 	array_global = comm.gather(array, root = 0)
 	top_global = comm.gather(top_boundary, root = 0)
@@ -134,32 +170,33 @@ def init_func(array, top_boundary, obst_boundary):
 		#np.save('obst.npy', obst)
 		#np.save('array.npy', array_concat)
 		
-		global indices, sdfunct, vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF, grid_shape_y, grid_shape_x
+		global indices, sdfunct, vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF, shape_y, shape_x
 
 		# Uniform grid resolution
 		delta = 5e-3 
 
-		x_min = round(np.min(array_concat[...,2]),2)
-		x_max = round(np.max(array_concat[...,2]),2)
+		x_min = round(np.min(array_concat[...,2]),3)
+		x_max = round(np.max(array_concat[...,2]),3)
 
-		y_min = round(np.min(array_concat[...,3]),2)
-		y_max = round(np.max(array_concat[...,3]),2)
+		y_min = round(np.min(array_concat[...,3]),3)
+		y_max = round(np.max(array_concat[...,3]),3)
+
+		domain_limits = [x_min, x_max, y_min, y_max]
 
 		X0, Y0 = create_uniform_grid(x_min, x_max, y_min, y_max, delta)
 
 		xy0 = np.concatenate((np.expand_dims(X0, axis=1),np.expand_dims(Y0, axis=1)), axis=-1)
 		points = array_concat[...,2:4] #coordinates
 
-
 		#print( 'Calculating verts and weights' )
-		vert_OFtoNP, weights_OFtoNP = interp_weights(points, xy0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
-		vert_NPtoOF, weights_NPtoOF = interp_weights(xy0, points) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
+		vert_OFtoNP, weights_OFtoNP = interp_barycentric_weights(points, xy0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
+		vert_NPtoOF, weights_NPtoOF = interp_barycentric_weights(xy0, points) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
 	
 		#print( 'Calculating domain bool' )
-		domain_bool, sdf = domain_dist(top, obst, xy0)
+		domain_bool, sdf = domain_dist(top, obst, xy0, domain_limits)
 
-		grid_shape_y = int(round((y_max-y_min)/delta)) 
-		grid_shape_x = int(round((x_max-x_min)/delta))
+		shape_y = int(round((y_max-y_min)/delta)) 
+		shape_x = int(round((x_max-x_min)/delta))
 		block_size = 128
 
 		x0 = np.min(X0)
@@ -168,14 +205,14 @@ def init_func(array, top_boundary, obst_boundary):
 		dy = delta
 
 		indices= np.empty((X0.shape[0],2))
-		obst_bool = np.zeros((grid_shape_y,grid_shape_x,1))
-		sdfunct = np.zeros((grid_shape_y,grid_shape_x,1))
+		obst_bool = np.zeros((shape_y,shape_x,1))
+		sdfunct = np.zeros((shape_y,shape_x,1))
 
 		#to compute bool 
 		ux = array_concat[...,0:1] #values
 		ux_interp = interpolate_fill(ux, vert_OFtoNP, weights_OFtoNP) 
 
-		for (step, x_y) in enumerate(np.c_[X0, Y0]):  
+		for (step, x_y) in enumerate(xy0):  
 			if domain_bool[step] * (~np.isnan(ux_interp[step])) :
 				jj = int(round((x_y[...,0] - x0) / dx))
 				ii = int(round((x_y[...,1] - y0) / dy))
@@ -190,19 +227,18 @@ def init_func(array, top_boundary, obst_boundary):
 		#sys.stdout.flush()
 	return 0
 
-def py_func(array_in, U_max_norm, verbose=True):
+def py_func(array_in, U_max_norm):
 	"""
 	Method called at each simulation time step to compute the pressure field based on an input velocity field.
 
 	Args:
 		array_in (ndarray): Input velocity field.
 		U_max_norm (float): Maximum normalized velocity.
-		verbose (bool, optional): Whether to print verbose output. Defaults to True.
 
 	Returns:
 		ndarray: Predicted pressure field.
 	"""
-
+	print(U_max_norm)
 	# Gathering all the inputs in 1 thread
 	array_global = comm.gather(array_in, root = 0)
 
@@ -221,20 +257,20 @@ def py_func(array_in, U_max_norm, verbose=True):
 		deltaUy_adim = array[...,1:2]/U_max_norm 
 
 		t1 = time.time()
-		if verbose: 
+		if verbose_g: 
 			print( "Data pre-processing:" + str(t1-t0) + " s")
 
 		t0 = time.time()
 
-		deltaUx_interp = interpolate(deltaUx_adim, vert_OFtoNP, weights_OFtoNP)
-		deltaUy_interp = interpolate(deltaUy_adim, vert_OFtoNP, weights_OFtoNP)
+		deltaUx_interp = interpolate_fill(deltaUx_adim, vert_OFtoNP, weights_OFtoNP)
+		deltaUy_interp = interpolate_fill(deltaUy_adim, vert_OFtoNP, weights_OFtoNP)
 
 		t1 = time.time()
-		if verbose:
+		if verbose_g:
 			print( "1st interpolation took:" + str(t1-t0) + " s")
 
 		t0 = time.time()
-		grid = np.zeros(shape=(1, grid_shape_y, grid_shape_x, 3))
+		grid = np.zeros(shape=(1, shape_y, shape_x, 3))
 
 		# Rearrange interpolated 1D arrays into 2D arrays
 		grid[0, :, :, 0:1][tuple(indices.T)] = deltaUx_interp.reshape(deltaUx_interp.shape[0], 1)
@@ -247,7 +283,7 @@ def py_func(array_in, U_max_norm, verbose=True):
 		grid[0,:,:,2:3] = grid[0,:,:,2:3] / max_abs_dist
 
 		t1 = time.time()
-		if verbose:
+		if verbose_g:
 			print( "2nd interpolation took:" + str(t1-t0) + " s")
 
 		# Setting any nan value to 0 to avoid issues
@@ -258,40 +294,35 @@ def py_func(array_in, U_max_norm, verbose=True):
 		indices_list = []
 
 		shape = 128
-		avance = int(0.1*shape)
+		overlap = int(overlap_ratio_g*shape)
 
-		n_x = int((grid.shape[2]-shape)/(shape - avance ))  
-		n_y = int((grid.shape[1]-shape)/(shape - avance ))
-
+		n_x = int(np.ceil((shape_x-shape)/(shape - overlap )) )
+		n_y = int((shape_y-shape)/(shape - overlap ))
 
 		t0 = time.time()
 
 		# Sampling blocks of size [shape X shape] from the input fields (Ux, Uy and sdf)
 		# In the indices_list, the indices corresponding to each sampled block is stored to enable domain reconstruction later.
-		for i in range (n_y + 2):
-				for j in range (n_x +1):
+		for i in range ( n_y + 2 ): #+1 b
+			for j in range ( n_x +1 ):
+				
+				# going right to left
+				x_0 = grid.shape[2] - j*shape + j*overlap - shape
+				if j == n_x: x_0 = 0
+				x_f = x_0 + shape
 
-					if i == (n_y + 1 ):
-						x_list.append(grid[0:1, (grid.shape[1]-shape):grid.shape[1] , ((grid.shape[2]-shape)-j*shape+j*avance):(grid.shape[2]-j*shape +j*avance) ,0:3])
-						indices_list.append([i, n_x - j])
+				y_0 = i*shape - i*overlap
+				if i == n_y + 1: y_0 = grid.shape[1]-shape
+				y_f = y_0 + shape
 
-					else:
-						x_list.append(grid[0:1,(i*shape - i*avance):(shape*(i+1) - i*avance),((grid.shape[2]-shape)-j*shape+j*avance):(grid.shape[2]-j*shape +j*avance),0:3])
-						indices_list.append([i, n_x - j]) #will be used to rearrange the output
+				x_list.append(grid[0:1, y_0:y_f, x_0:x_f, 0:3])
 
-					if ( j ==  n_x ) and ( i == (n_y+1) ): #last one
-						x_list.append(grid[0:1, (grid.shape[1]-shape):grid.shape[1] , 0:shape ,0:3])
-						indices_list.append([i,-1])
-
-					elif j == n_x :
-						x_list.append(grid[0:1,i*shape - i*avance :shape*(i+1) -i*avance , 0:shape ,0:3])
-						indices_list.append([i,-1])
-
+				indices_list.append([i, n_x - j])
 
 		x_array = np.concatenate(x_list)
 
 		t1 = time.time()
-		if verbose:
+		if verbose_g:
 			print( "Data extraction loop took:" + str(t1-t0) + " s")
 
 		t0 = time.time()
@@ -302,28 +333,26 @@ def py_func(array_in, U_max_norm, verbose=True):
 
 		input_flat = x_array_flat.reshape((x_array_flat.shape[0],-1))
 		#input_transformed = pcainput.transform(input_flat)[:,:PC_input]
-
 		input_transformed = np.dot(input_flat - pca_mean_input, comp_input.T)
 
 		# Standardize input PCs
 		x_input = (input_transformed - mean_in) / std_in
 
 		t1 = time.time()
-		if verbose:
+		if verbose_g:
 			print( "PCA transform : " + str(t1-t0) + " s")
 
-		result_array = np.empty(grid[...,0:1].shape)
 		t0 = time.time()
 
 		# Calling the NN to predict the principal components (PC) of the pressure field:
 		# PC_input -> PC_p (if necessary could be done in batches)
 		res_concat = np.array(model(x_input)) 
 		t1 = time.time()
-		if verbose:
+		if verbose_g:
 			print( "Model prediction time : " + str(t1-t0) + " s")
 
 		# PCA inverse transformation:
-		# PC_p -> p
+		# PC_deltaP -> deltaP
 		t0 = time.time()
 
 		# Getting the non-standerdized PCs
@@ -332,119 +361,198 @@ def py_func(array_in, U_max_norm, verbose=True):
 		res_flat_inv = np.dot(res_concat, comp_p) + pca_mean_p	
 		res_concat = res_flat_inv.reshape((res_concat.shape[0], shape, shape, 1))
 		t1 = time.time()
-		if verbose:
+		if verbose_g:
 			print( "PCA inverse transform : " + str(t1-t0) + " s")
 
-		## Domain reassembly method
-		flow_bool_ant = np.ones((shape,shape))
-		BC_up = 0
-		BC_ant = 0
-		BC_alter = 0
+		# Redimensionalizing the predicted pressure field
+		res_concat = res_concat * max_abs_p * pow(U_max_norm, 2.0)
 
+		for i, x in enumerate(x_list):
+			if (x[0,:,:,0] < 1e-5).all() and (x[0,:,:,1] < 1e-5).all():
+				res_concat[i] = np.zeros((shape, shape, 1))
+
+		# The boundary condition is a fixed pressure of 0 at the output
+		Ref_BC = 0 
+
+		## Domain reassembly method
+		result = np.empty(shape=(shape_y, shape_x))
+
+		## Array to store the average pressure in the overlap region with the next down block
 		BC_ups = np.zeros(n_x+1)
 
+		# i index where the lower blocks are located
+		p_i = shape_y - ( (shape-overlap) * n_y + shape )
+		
+		# j index where the left-most blocks are located
+		p_j = shape_x - ( (shape - overlap) * n_x + shape )
+
 		t0 = time.time()
 
-		# TODO: Update the reassembly method to match the SM under
-		# https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications/blob/main/Improved_SM/deltaU_to_deltaP/source/pressureSM_deltas/SM_call.py
-		
 		for i in range(len(x_list)):
 
-				idx = indices_list[i]
-				flow_bool = x_array[i,:,:,2]
-				res = res_concat[i,:,:,0]
+			idx_i, idx_j = indices_list[i]
+			flow_bool = x_array[i,:,:,2]
+			pred_field = res_concat[i,:,:,0]
+			## FIRST row
+			if idx_i == 0:
 
-				if idx[0] == 0: 
-					if idx[1] == n_x :
+				## Calculating correction to be applied
+				if i == 0: 
+ 					## First correction - based on the outlet fixed pressure boundary condition
+					BC_coor = np.mean(pred_field[:,-1][flow_bool[:,-1]!=0]) - Ref_BC
+					#BC_coor = np.mean(pred_field[:,-1][flow_bool[:,-1]!=0]) - Ref_BC  # i = 0 sits outside the inclusion zone
+				else:
+					BC_ant_0 = np.mean(old_pred_field[:,:overlap][flow_bool[:,:overlap] !=0]) 
+					BC_coor = np.mean(pred_field[:,-overlap:][flow_bool[:,-overlap:]!=0]) - BC_ant_0
+				if idx_j == 0:
+					intersect_zone_limit = overlap - p_j
+					BC_ant_0 = np.mean(old_pred_field[:, :intersect_zone_limit][flow_bool[:, :intersect_zone_limit] !=0]) 
+					BC_coor = np.mean(pred_field[:, -intersect_zone_limit:][flow_bool[:, -intersect_zone_limit:]!=0]) - BC_ant_0
 
-						BC_coor = np.mean(res[:,(shape-avance):shape][flow_bool[:,(shape-avance):shape]!=0]) - BC_up
-						res -= BC_coor
-						BC_ups[idx[1]] = np.mean(res[(shape-avance):shape,(shape-avance):shape][flow_bool[(shape-avance):shape,(shape-avance):shape] !=0])	
+				## Applying correction
+				pred_field -= BC_coor
 
-					elif idx[1] == -1:
-						p_j = (grid.shape[2]-shape)-n_x*shape+n_x*avance
-						BC_coor = np.mean(res[:, p_j:p_j + avance][flow_bool[:, p_j:p_j + avance] !=0] ) - BC_ant_0 #middle ones are corrected by the right side
-						res -= BC_coor
-						BC_up_ = np.mean(res[(shape-avance):shape, p_j:p_j + avance][flow_bool[(shape-avance):shape, p_j:p_j + avance] !=0] ) #equivale a BC_ups[idx[1]==-1]
+				## Storing upward average pressure
+				BC_ups[idx_j] = np.mean(pred_field[-overlap:,:][flow_bool[-overlap:,:] !=0])
+
+			## MIDDLE rows
+			elif idx_i != n_y + 1:
+
+				## Calculating correction to be applied
+				if np.isnan(BC_ups[idx_j]): #### THIS PART IS NOT WORKING WELL ... CORRECT THIS!!
+					if idx_j == 0:
+						intersect_zone_limit = overlap - p_j
+						BC_ant_0 = np.mean(old_pred_field[:, :intersect_zone_limit][flow_bool[:, :intersect_zone_limit] !=0]) 
+						BC_coor = np.mean(pred_field[:, -intersect_zone_limit:][flow_bool[:, -intersect_zone_limit:]!=0]) - BC_ant_0
+					elif idx_j == n_x:
+						# Here it always needs to be corrected from above to keep consistency
+						BC_ant_0 = np.mean(old_pred_field[:,:overlap][flow_bool[:,:overlap] !=0]) 
+						BC_coor = np.mean(pred_field[:overlap,:][flow_bool[:overlap,:]!=0]) - BC_ups[idx_j]
 					else:
-						BC_coor = np.mean(res[:,(shape-avance):shape][flow_bool[:,(shape-avance):shape] !=0] ) - BC_ant_0 
-						res -= BC_coor
-						BC_ups[idx[1]] = np.mean(res[(shape-avance):shape,:][flow_bool[(shape-avance):shape,:] !=0])	
-					BC_ant_0 =  np.mean(res[:,0:avance][flow_bool[:,0:avance] !=0]) 	
+						BC_ant_0 = np.mean(old_pred_field[:,:overlap][flow_bool[:,:overlap] !=0]) 
+						BC_coor = np.mean(pred_field[:,-overlap:][flow_bool[:,-overlap:]!=0]) - BC_ant_0											
+				else:
+					BC_coor = np.mean(pred_field[:overlap,:][flow_bool[:overlap,:]!=0]) - BC_ups[idx_j]
+					if idx_j != 0 and idx_j != n_x:
+						BC_ant_0 = np.mean(old_pred_field[:,:overlap][flow_bool[:,:overlap] !=0]) 
+						BC_coor_2 = np.mean(pred_field[:,-overlap:][flow_bool[:,-overlap:]!=0]) - BC_ant_0
+					
+						# ## Apply the lowest correction ... less prone to problems...
+						# if abs(BC_coor_2) < abs(BC_coor):
+						# 	BC_coor = BC_coor_2
 
-				elif idx[0] == n_y+1 : 
-					if idx[1] == -1: 
+				## Applying correction
+				pred_field -= BC_coor
+
+				## Storing upward average pressure
+				BC_ups[idx_j] = np.mean(pred_field[-overlap:,:][flow_bool[-overlap:,:] !=0])
 				
-						p = grid.shape[1] - (shape*(n_y+1) - n_y*avance)
-						p_j = (grid.shape[2]-shape)-n_x*shape+n_x*avance
-						BC_coor = np.mean(res[shape - p -avance: shape - p , p_j: p_j + avance][flow_bool[ shape - p -avance: shape - p , p_j: p_j + avance] !=0] ) - BC_up_
-						res -= BC_coor
-					else: 
+				## Value stored to be used in the last row depends on p_i
+				if idx_i == n_y:
+					BC_ups[idx_j] = np.mean(pred_field[-(shape-p_i):,:][flow_bool[-(shape-p_i):,:] !=0])
+			
+			
+			## LAST row
+			else:
 
-						p = grid.shape[1] - (shape*(n_y+1) - n_y*avance)
-						if np.isnan(BC_ups[idx[1]]):
-							BC_coor = np.mean(res[:,shape-avance:shape][flow_bool[:,shape-avance:shape] !=0]) - BC_alter
-						else:
-							BC_coor = np.mean(res[shape - p -avance: shape - p,:][flow_bool[shape - p -avance: shape - p,:] !=0]) - BC_ups[idx[1]]
+				## Calculating correction to be applied
 
-						res -= BC_coor	
-
+				## In the last column the correction needs to be from above to keep consistency (with BC_ups)
+				if idx_j == n_x:
+					BC_coor = np.mean(pred_field[-p_i-overlap:-p_i,:][flow_bool[-p_i-overlap:-p_i,:]!=0]) - BC_ups[idx_j]
 				else:
+									
+					#up
+					y_0 = -p_i - overlap
+					y_f = -p_i
+					n_up_non_nans = (flow_bool[y_0:y_f,:]!=0).sum()
+					# right side
+					x_0 = shape_x -shape - (n_x-1)*(shape-overlap)
+					n_right_non_nans = (flow_bool[:, x_0:]!=0).sum()
 
-					if idx[1] == -1:
-
-						p_j = (grid.shape[2]-shape)-n_x*shape+n_x*avance
-						BC_coor = np.mean(res[0:avance,p_j: p_j + avance ][flow_bool[0:avance,p_j: p_j + avance ]!=0]) - BC_up_
-						res -= BC_coor
-						BC_up_ = np.mean(res[(shape-avance):shape, p_j: p_j + avance])
-
+					# Give preference to "up" or "right" correction???
+					## Giving it to "up" because it is being done everywhere else
+					## only switch method if in the overlap region more than 90% of the values are NANs
+					
+					if (n_up_non_nans)/128**2 > 0.9:
+						if idx_j == 0:
+							intersect_zone_limit = overlap - p_j
+							BC_ant_0 = np.mean(old_pred_field[:, :intersect_zone_limit][flow_bool[:, :intersect_zone_limit] !=0]) 
+							BC_coor = np.mean(pred_field[:, -intersect_zone_limit:][flow_bool[:, -intersect_zone_limit:]!=0]) - BC_ant_0
+						else:
+							BC_ant_0 = np.mean(old_pred_field[:,:overlap][flow_bool[:,:overlap] !=0]) 
+							BC_coor = np.mean(pred_field[:,-overlap:][flow_bool[:,-overlap:]!=0]) - BC_ant_0								
 					else:
+						BC_coor = np.mean(pred_field[:-p_i,:][flow_bool[:-p_i,:]!=0]) - BC_ups[idx_j]
 
-						if np.isnan(BC_ups[idx[1]]):
-							BC_coor = np.mean(res[: ,shape-avance:shape][flow_bool[: ,shape-avance:shape] !=0]) - BC_alter
-						else:
-							BC_coor = np.mean(res[0:avance,:][flow_bool[0:avance,:]!=0]) - BC_ups[idx[1]]
-						res -= BC_coor 
-						BC_ups[idx[1]] = np.mean(res[(shape-avance):shape,:][flow_bool[(shape-avance):shape,:] !=0])	
+						if idx_j != 0:
+							BC_ant_0 = np.mean(old_pred_field[:,:overlap][flow_bool[:,:overlap] !=0]) 
+							BC_coor_2 = np.mean(pred_field[:,-overlap:][flow_bool[:,-overlap:]!=0]) - BC_ant_0
 						
+							# ## Apply the lowest correction ... less prone to problems...
+							# if abs(BC_coor_2) < abs(BC_coor):
+							# 	BC_coor = BC_coor_2
+								
+				## Applying the correction
+				pred_field -= BC_coor
+				
+			old_pred_field = pred_field
+			## Last reassembly step:
+			## Assigning the block to the right location in the flow domain
+			if [idx_i, idx_j] == [n_y + 1, 0]:
+				result[-p_i:shape_y , 0:shape] = pred_field[-p_i:]
+			elif idx_j == 0:
+				result[(shape-overlap) * idx_i:(shape-overlap) * idx_i + shape, 0:shape] = pred_field
+			## Last row
+			elif idx_i == (n_y + 1):
+				idx_j = n_x - idx_j
+				# option 1 - thick penultimate row
+				result[-p_i:, shape_x -shape - idx_j*(shape-overlap) :  shape_x- idx_j*(shape-overlap)] = pred_field[-p_i:]
+				# option 2 - thick last row
+				#result[-shape:, shape_x -shape - idx_j*(shape-overlap) :  shape_x- idx_j*(shape-overlap)] = pred_field
 
-				#BC alternative: when it is not possible to apply the correction based on the right side 
-				# when it is not possible to correct based on the block above
-				BC_alter = np.mean(res[:,0:avance][flow_bool[:,0:avance] !=0]) 
-
-				if idx == [n_y +1, -1]:
-					result_array[0,(grid.shape[1]-(shape-avance)):grid.shape[1] , 0:(grid.shape[2] - (n_x+1)*(shape-avance) -avance) ,0] = res[avance:shape , 0:grid.shape[2] - (n_x+1)*(shape-avance) -avance]
-
-				elif idx[1] == -1:
-					result_array[0,(idx[0]*shape - idx[0]*avance):(1+idx[0])*shape - idx[0]*avance, 0:shape,0] = res
-
-
-				elif idx[0] == (n_y + 1):
-					j = n_x - idx[1]
-					result_array[0,(grid.shape[1]-(shape-avance)):grid.shape[1], grid.shape[2] -shape - j*(shape-avance) : grid.shape[2] - j*(shape-avance) ,0] = res[avance:shape,:]
-
-				else:
-					j = n_x - idx[1]
-					result_array[0,(idx[0]*shape - idx[0]*avance):(1+idx[0])*shape - idx[0]*avance, grid.shape[2] -shape - j*(shape-avance) : grid.shape[2] - j*(shape-avance) ,0] = res
-
+			else:
+				idx_j = n_x - idx_j
+				result[(shape-overlap) * idx_i:(shape-overlap) * idx_i + shape, shape_x -shape - idx_j*(shape-overlap) : shape_x- idx_j*(shape-overlap)] = pred_field
+				
 		t1 = time.time()
-		if verbose:
+		if verbose_g:
 			print( "Reassembly algorithm took:" + str(t1-t0) + " s")
-
+		
 		# Ensuring the constant pressure boundary condition to be ensured at the right-most cell center
 		# instead of doing that at the boundary patch, brings bias to the domain, removing it below:
-		result_array -= np.mean( 3* result_array[0,:,-1,0] - result_array[0,:,-2,0] )/3
-		result_array = result_array[0,:,:,0]
+		result -= np.mean( 3* result[:,-1] - result[:,-2] )/3
 
-		t0 = time.time()
-		# Apply Gaussian filter to correct the attained pressure field (and remove artifacts) (OPTIONAL)
-		#result_array = ndimage.gaussian_filter(result_array, sigma=(5, 5), order=0)
-		t1 = time.time()
-		if verbose:
-			print( "Applying Gaussian filter took:" + str(t1-t0) + " s")
+		if apply_filter_g:
+			t0 = time.time()
+			# Apply Gaussian filter to correct the attained pressure field (and remove artifacts) (OPTIONAL)
+			result = ndimage.gaussian_filter(result, sigma=(filter_size_g, filter_size_g), order=0)
+			t1 = time.time()
+			if verbose_g:
+				print( "Applying Gaussian filter took:" + str(t1-t0) + " s")
+
+		# # Plotting the integrated pressure field
+		## FOR DEBUGGING PURPOSES
+		# fig, axs = plt.subplots(3,1, figsize=(65, 15))
+
+		# no_flow_bool = grid[0,:,:,2] == 0
+	
+		# masked_arr = np.ma.array(result, mask=no_flow_bool)
+		# cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+		# plt.colorbar(cf, ax=axs[0])
+
+		# masked_arr = np.ma.array(grid[0,:,:,0], mask=no_flow_bool)
+		# cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+		# plt.colorbar(cf, ax=axs[1])
+
+		# masked_arr = np.ma.array(grid[0,:,:,1], mask=no_flow_bool)
+		# cf = axs[2].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+		# plt.colorbar(cf, ax=axs[2])
+
+		# plt.savefig('fields.png')
 
 		# Rearrange the prediction into a 1D array that it can be sent to OF
-		p_adim_unif = result_array[tuple(indices.T)]
+		p_adim_unif = result[tuple(indices.T)]
 
 		t0 = time.time()
 		# Interpolation into the orginal grid
@@ -452,28 +560,24 @@ def py_func(array_in, U_max_norm, verbose=True):
 		p_interp = interpolate_fill(p_adim_unif, vert_NPtoOF, weights_NPtoOF)
 		#p_interp[np.isnan(p_interp)] = 0
 		t1 = time.time()
-		if verbose:
+		if verbose_g:
 			print( "Final Interpolation took:" + str(t1-t0) + " s")
 
-		# Finally redimensionalizing the predicted pressure field
-		p = p_interp * max_abs_p * pow(U_max_norm, 2.0)
-
+		#########################################################################
 		#### The following code is a workaround to avoid the model to predict the pressure field near walls ####
 		# Using the last time step pressure field for the near wall locations
 		# Because we know that the model underperforms at the grid elements near walls
 		# sdf_mesh = interpolate_fill(sdfunct[:,:,0], vert_NPtoOF, weights_NPtoOF)
+		# p_interp[sdf_mesh < 0.05] = 0	
 
-		# p[sdf_mesh < 0.05] = p_prev[sdf_mesh < 0.05]
-		
-		#### This is not currently in use ####
+		# # Filling it with zeros means that the pressure previous time-step pressure field will be used
+		# # IDW is used for extrapolation, thus this should not be necessary
+		# p_interp[np.isnan(p_interp)] = np.zeros_like(p_interp[np.isnan(p_interp)])
+		#################### This is not currently in use #########################
 
-		# The interpolation method fills with NaN when extrapolating
-		# Filling it with zeros means that the pressure previous time-step pressure field will be used
-		p[np.isnan(p_interp)] = np.zeros_like(p[np.isnan(p_interp)]) # p_prev[np.isnan(p_interp)]
-
-
+		p = p_interp
 		t1_py_func = time.time()
-		if verbose:
+		if verbose_g:
 			print( "The whole python function took : " + str(t1_py_func-t0_py_func) + " s")
 
 		init = 0

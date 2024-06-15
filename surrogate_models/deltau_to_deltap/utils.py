@@ -11,13 +11,15 @@ mpi4py.rc.finalize = False
 from mpi4py import MPI
 
 from tensorflow.keras.models import load_model
-from tensorflow.keras import Model
-from tensorflow.keras.layers import Activation, Input, Dense
+from tensorflow.keras import Model, regularizers
+from tensorflow.keras.layers import Activation, Input, Dense, Dropout
 
 import scipy.spatial.qhull as qhull
 from scipy.spatial import distance
 import matplotlib.path as mpltPath
 from shapely.geometry import MultiPoint
+from scipy.spatial import cKDTree
+import sklearn.neighbors
 
 
 def create_uniform_grid(x_min, x_max, y_min, y_max, delta):
@@ -46,21 +48,6 @@ def create_uniform_grid(x_min, x_max, y_min, y_max, delta):
 # for small array seems a bit slower, but is essentially the same...
 # from opt_einsum import contract 
 
-def interpolate(values, vtx, wts):
-    """
-    Interpolates values based on given vertices and weights.
-
-    Parameters:
-    values (ndarray): Array of values to interpolate.
-    vtx (ndarray): Array of vertex indices.
-    wts (ndarray): Array of weights.
-
-    Returns:
-    ndarray: Interpolated values.
-
-    """
-    return np.einsum('nj,nj->n', np.take(values, vtx), wts)
-
 def interpolate_fill(values, vtx, wts, fill_value=np.nan):
     """
     Interpolates values based on the given vertices and weights.
@@ -75,10 +62,12 @@ def interpolate_fill(values, vtx, wts, fill_value=np.nan):
     ndarray: The interpolated values.
     """
     ret = np.einsum('nj,nj->n', np.take(values, vtx), wts)
-    ret[np.any(wts < 0, axis=1)] = fill_value
+    ## Filling not being used currently... 
+    ## shouldn't be necessary since IDW is applied to extrapolate
+    #ret[np.any(wts < 0, axis=1)] = fill_value
     return ret
 
-def domain_dist(top_boundary, obst_boundary, xy0):
+def domain_dist(top_boundary, obst_boundary, xy0, domain_limits):
     """
     Calculate the fluid-flow domain and the signal distance function (SDF).
 
@@ -90,6 +79,7 @@ def domain_dist(top_boundary, obst_boundary, xy0):
         top_boundary (ndarray): The coordinates of the top boundary.
         obst_boundary (ndarray): The coordinates of the obstacle boundary.
         xy0 (ndarray): The coordinates of the points to calculate the SDF for.
+        domain_limits
 
     Returns:
         ndarray: A boolean array representing the fluid-flow domain.
@@ -97,7 +87,10 @@ def domain_dist(top_boundary, obst_boundary, xy0):
     """
     # Calculate the boundaries index
     top = top_boundary
-    max_x, max_y, min_x, min_y = np.max(top[:,0]), np.max(top[:,1]) , np.min(top[:,0]) , np.min(top[:,1])
+    x_min, x_max, y_min, y_max = domain_limits
+    max_x, max_y = np.max([(top[:,0]).max(), x_max]), np.min([(top[:,1]).max(), y_max])
+    min_x, min_y = np.max([(top[:,0]).min(), x_min]), np.min([(top[:,1]).min(), y_min])
+
     is_inside_domain = ( xy0[:,0] <= max_x)  * ( xy0[:,0] >= min_x ) * ( xy0[:,1] <= max_y ) * ( xy0[:,1] >= min_y )
 
     obst = obst_boundary
@@ -109,36 +102,43 @@ def domain_dist(top_boundary, obst_boundary, xy0):
     path = mpltPath.Path(hull_pts)
     is_inside_obst = path.contains_points(xy0)
     domain_bool = is_inside_domain * ~is_inside_obst
-
-    top = top[0:top.shape[0]:10,:]
-    obst = obst[0:obst.shape[0]:10,:]
+    # If this causes an OOM error, increase the step
+    step = 2
+    top = top[0:top.shape[0]:step,:]
+    obst = obst[0:obst.shape[0]:step,:]
     sdf = np.minimum( distance.cdist(xy0,obst).min(axis=1) , distance.cdist(xy0,top).min(axis=1) ) * domain_bool
 
     return domain_bool, sdf
 
-
-def DENSE_PCA(input_shape, PC_p):
+def densePCA(input_shape, PC_p, n_layers, depth=512, dropout_rate=None, regularization=None):
     """
-    Initialized Neural Network.
-
-    Args:
-        input_shape (tuple): The shape of the input data.
-        PC_p (int): The number of principal components for pressure.
-
-    Returns:
-        keras.models.Model: The initialized neural network model.
+    Creates the MLP NN.
     """
-
-    inputs = Input(input_shape)
-    #
-    x = Dense(512, activation='relu')(inputs)
-    x = Dense(512, activation='relu')(x)
-    x = Dense(512, activation='relu')(x)
-    #
+    
+    inputs = Input(int(input_shape))
+    if len(depth) == 1:
+        depth = [depth]*n_layers
+    
+    # Regularization parameter
+    if regularization is not None:
+        regularizer = regularizers.l2(regularization)
+        print(f'\nUsing L2 regularization. Value: {regularization}\n')
+    else:
+        regularizer = None
+    
+    x = Dense(depth[0], activation='relu', kernel_regularizer=regularizer)(inputs)
+    if dropout_rate is not None:
+        x = Dropout(dropout_rate)(x)
+    
+    for i in range(n_layers - 1):
+        x = Dense(depth[i+1], activation='relu', kernel_regularizer=regularizer)(x)
+        if dropout_rate is not None:
+            x = Dropout(dropout_rate)(x)
+    
     outputs = Dense(PC_p)(x)
-    #
-    model = Model(inputs, outputs, name="U-Net")
-    #print(model.summary())
+
+    model = Model(inputs, outputs, name="MLP")
+    print(model.summary())
 
     return model
 
@@ -161,9 +161,9 @@ def memory():
     return ret
 
 
-def interp_weights(xyz, uvw, d=2):
+def interp_barycentric_weights(xyz, uvw, d=2):
     """
-    Get interpolation weights and vertices.
+    Get interpolation weights and vertices using barycentric interpolation.
 
     This function calculates the interpolation weights and vertices for interpolating values from the original grid to the target grid.
     The interpolation is performed using Delaunay triangulation.
@@ -183,4 +183,15 @@ def interp_weights(xyz, uvw, d=2):
     temp = np.take(tri.transform, simplex, axis=0)
     delta = uvw - temp[:, d]
     bary = np.einsum('njk,nk->nj', temp[:, :d, :], delta)
-    return vertices, np.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))
+    wts = np.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))
+    valid = ~(simplex == -1)
+
+    # Fill out-of-bounds points with Inverse-Distance Weighting
+    if (~valid).any():
+        tree = sklearn.neighbors.KDTree(xyz, leaf_size=40)
+        nndist, nni = tree.query(np.array(uvw)[~valid], k=3)
+        invalid = np.flatnonzero(~valid)
+        vertices[invalid] = list(nni)
+        wts[invalid] = list((1./np.maximum(nndist**2, 1e-6)) / (1./np.maximum(nndist**2, 1e-6)).sum(axis=-1)[:,None])
+        
+    return vertices, wts
