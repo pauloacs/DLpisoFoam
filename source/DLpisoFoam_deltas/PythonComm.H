@@ -4,6 +4,9 @@ forAll(delta_p.internalField(), id) // for boundary field use u_.boundaryField()
         input_vals[id][1] = delta_U[id].y();
         input_vals[id][2] = C[id].x();
         input_vals[id][3] = C[id].y();
+        input_vals[id][4] = delta_U_prev[id].x();
+        input_vals[id][5] = delta_U_prev[id].y();
+        input_vals[id][6] = delta_p_CFD[id];
 
         // Calculate the maximum norm of U for the current time step
         // To enable non-dimensionalization of the velocity field

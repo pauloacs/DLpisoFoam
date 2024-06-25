@@ -37,7 +37,7 @@ from surrogate_models.deltau_to_deltap.utils import *
 
 #########
 
-def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var, model_arch, apply_filter, overlap_ratio, filter_size, verbose=True):
+def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var, model_arch, apply_filter, overlap_ratio, filter_tuple, verbose=True):
 	"""
 	Load PCA mapping and initialize the trained neural network model.
 
@@ -57,11 +57,11 @@ def load_pca_and_NN(ipca_input_fn, ipca_output_fn, maxs_fn, PCA_std_vals_fn, wei
 	None
 	"""
     # Set the global configuration
-	global apply_filter_g, overlap_ratio_g, verbose_g, filter_size_g
+	global apply_filter_g, overlap_ratio_g, verbose_g, filter_tuple_g
 	apply_filter_g = apply_filter
 	overlap_ratio_g = overlap_ratio
 	verbose_g = verbose
-	filter_size_g = filter_size
+	filter_tuple_g = filter_tuple
 
 	print('Loading the PCA mapping')
 	pcainput = pk.load(open(ipca_input_fn, 'rb'))
@@ -526,7 +526,7 @@ def py_func(array_in, U_max_norm):
 		if apply_filter_g:
 			t0 = time.time()
 			# Apply Gaussian filter to correct the attained pressure field (and remove artifacts) (OPTIONAL)
-			result = ndimage.gaussian_filter(result, sigma=(filter_size_g, filter_size_g), order=0)
+			result = ndimage.gaussian_filter(result, sigma=filter_tuple_g, order=0)
 			t1 = time.time()
 			if verbose_g:
 				print( "Applying Gaussian filter took:" + str(t1-t0) + " s")

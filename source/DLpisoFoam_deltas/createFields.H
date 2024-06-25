@@ -41,6 +41,22 @@ volScalarField delta_p
     dimensionedScalar("delta_p", dimensionSet(0,2,-2,0,0,0,0), 0.0)
 );
 
+
+volVectorField delta_U_prev
+(
+    IOobject
+    (
+        "delta_U_prev",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::AUTO_WRITE
+    ),
+    mesh,
+    dimensionedVector("delta_U_prev", dimensionSet(0,1,-1,0,0,0,0), vector::zero)
+);
+
+
 volVectorField U_prev
 (
     IOobject

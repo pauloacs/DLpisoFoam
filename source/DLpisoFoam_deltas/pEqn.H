@@ -13,7 +13,7 @@ adjustPhi(phiHbyA, U, p);
 
 if (counter == 0) {
     // Estimating p(t) based on p(t-1) + delta_p (as estimated by the SM)
-    p = p + delta_p;
+    p = p  + delta_p; //(delta_p*0.5 + delta_p_CFD*0.5);
 }
 
 // Update the pressure BCs to ensure flux consistency

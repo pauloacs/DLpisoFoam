@@ -44,7 +44,7 @@ int num_cells_obstacle = p.boundaryField()[obst_patchID].size();
 
 /*double** input_vals;*/
 const int row = num_cells;
-const int col = 4; 
+const int col = 7; 
 
 const int row_top = num_cells_top;
 const int col_top = 2; 
@@ -59,10 +59,13 @@ double(*input_vals_obst)[col_obst]{ new double[row_obst][col_obst] };
 
 forAll(p.internalField(), id) // for boundary field use u_.boundaryField()
 {
-        input_vals[id][0] = U[id].x();
-        input_vals[id][1] = U[id].y();
+        input_vals[id][0] = delta_U[id].x();
+        input_vals[id][1] = delta_U[id].y();
         input_vals[id][2] = C[id].x();
         input_vals[id][3] = C[id].y();
+        input_vals[id][4] = delta_U_prev[id].x();
+        input_vals[id][5] = delta_U_prev[id].y();
+        input_vals[id][6] = delta_p_CFD[id];
 }
 
 forAll(p.boundaryField()[obst_patchID], id)
@@ -78,7 +81,7 @@ forAll(p.boundaryField()[top_patchID], id) // for boundary field use u_.boundary
 }
 
 // Numpy array dimensions
-npy_intp dim[] = {num_cells, 4};
+npy_intp dim[] = {num_cells, 7};
 npy_intp dim_top[] = {num_cells_top, 2};
 npy_intp dim_obstacle[] = {num_cells_obstacle, 2};
 

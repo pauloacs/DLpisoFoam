@@ -104,7 +104,7 @@ int main(int argc, char *argv[])
         {
 
             p_prev = p;
-
+            delta_U_prev = delta_U;
             #include "UEqn.H"
 
             clock_gettime(CLOCK_MONOTONIC, &tw1); // POSIX
