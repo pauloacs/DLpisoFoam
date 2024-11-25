@@ -7,6 +7,16 @@
 - [Local Setup](#local-setup)
 - [Run your first tutorial](#run-your-first-tutorial)
 
+# Articles
+
+1 - Application of machine learning to model the pressure poisson equation for fluid flow on generic geometries:
+https://link.springer.com/article/10.1007/s00521-024-09935-0
+  - This paper contains a deep description of the ML Surrogate Model developed to solve the Pressure Poisson Equation.
+
+2- Enhancing CFD solver with Machine Learning techniques: 
+https://www.sciencedirect.com/science/article/pii/S004578252400389X
+  - This paper contains the CFD solver benchmark
+
 ## Introduction
 
 This repository contains the solvers and test cases for the **DLpisoFoam** solver. This solver is based on the OpenFOAM v8 version and is developed to solve the incompressible Navier-Stokes equations using the PISO algorithm. The main goal of this solver is to enhance the pressure-velocity coupling with a Deep Learning surrogate model. The solver is currently being developed in two versions:
