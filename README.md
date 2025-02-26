@@ -19,14 +19,18 @@ https://www.sciencedirect.com/science/article/pii/S004578252400389X
 
 ## Introduction
 
-This repository contains the solvers and test cases for the **DLpisoFoam** solver. This solver is based on the OpenFOAM v8 version and is developed to solve the incompressible Navier-Stokes equations using the PISO algorithm. The main goal of this solver is to enhance the pressure-velocity coupling with a Deep Learning surrogate model. The solver is currently being developed in two versions:
+This repository contains the solvers and test cases for the **DLpisoFoam** solver. This solver is based on the OpenFOAM v8 version and is developed to solve the incompressible Navier-Stokes equations using the PISO algorithm. The main goal of this solver is to enhance the pressure-velocity coupling with a Deep Learning surrogate model. The solver has three versions:
 
-1 - **DLpisoFoam-alg1 and DLpisoFoam-alg2**:
- the solvers developed in https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications. These solvers use the **U_to_p surrogate model** in surrogate_models/u_to_p/.
+Latest: 
 
-2 - **DLpisoFoam-deltas**:
+**DLpisoFoam-deltas**:
   this solver is currently implemented. It makes use of the **deltau_to_delta surrogate models** in https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications. This solver use the **deltau_to_delta surrogate model** in surrogate_models/deltau_to_delta/. 
 
+
+Old versions - stored under **other_solvers/**
+
+**DLpisoFoam-alg1 and DLpisoFoam-alg2**:
+ the solvers developed in https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications. These solvers use the **U_to_p surrogate model** in surrogate_models/u_to_p/. 
 
 Here you can find the DLpisoFoam solvers as well as test cases where those can be used. A DockerFile and everything that is needed to build the docker image is also provided here to ease the installation of the solver.
 
