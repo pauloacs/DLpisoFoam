@@ -1,7 +1,40 @@
-surrogate_models/deltau_to_deltap/tests/manual_test_plate/
+# Ignore cache files
+*.cache
+*.pyc
+*.pyo
+__pycache__/
 
-source/DLpisoFoam_alg1/Make/linux64GccDPInt32Opt/
-source/DLpisoFoam_alg2/Make/linux64GccDPInt32Opt/
+# Ignore temporary files
+*.tmp
+*.swp
+*.swo
+*.bak
+*.orig
 
-*.png
-*/__pychache__
+# Ignore log files
+*.log
+
+# Ignore build artifacts
+build/
+dist/
+*.o
+*.so
+*.a
+*.out
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore version control files
+*.git/
+
+# Ignore dataset files
+dataset*.hdf5
+
+train_SM_*
+!train_SM_example
+!train_SM_3d_example
+
+simulation_data
+pressureSM.egg-info
