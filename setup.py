@@ -10,6 +10,8 @@ setup(
             'evaluation_script = pressureSM.train_and_eval.entry_point:eval_entry_point',
             'train_3d = pressureSM.train_and_eval_3d.entry_point:train_entry_point',
             'eval_3d = pressureSM.train_and_eval_3d.entry_point:eval_entry_point'
+            'train_3d_PCA = pressureSM.train_and_eval_3d_PCA.entry_point:train_entry_point',
+            'eval_3d_PCA = pressureSM.train_and_eval_3d_PCA.entry_point:eval_entry_point'            
         ]
     },
     install_requires=[

@@ -85,13 +85,20 @@ class Evaluation():
 		print(self.model.summary())
 		
 		### loading the pca matrices for transformations ###
-		with open('tucker_factors.pkl', 'rb') as f:
-			factors = pk.load(f)
-			self.input_factors = factors['input_factors']
-			self.output_factors = factors['output_factors']
+		self.pcainput = pk.load(open("ipca_input.pkl",'rb'))
+		self.pcap = pk.load(open("ipca_p.pkl",'rb'))
 
-		self.pc_in = 4*4*4*4
-		self.pc_p = 4*4*4
+		pc_in_explained_var_cumulative = self.pcainput.explained_variance_ratio_.cumsum()
+		if pc_in_explained_var_cumulative[-1] < self.var_in:
+			self.pc_in = max_num_PC
+		else:
+			self.pc_in = np.argmax(pc_in_explained_var_cumulative > self.var_in)
+
+		pc_p_explained_var_cumulative = self.pcap.explained_variance_ratio_.cumsum()
+		if pc_p_explained_var_cumulative[-1] < self.var_p:
+			self.pc_p = max_num_PC
+		else:
+			self.pc_p = np.argmax(pc_p_explained_var_cumulative > self.var_p)
 		
 	def computeOnlyOnce(self, sim):
 		"""
@@ -532,9 +539,9 @@ class Evaluation():
 		grid[0,:,:,:,3:4] = grid[0,:,:,:,3:4]/self.max_abs_dist
 		grid[0,:,:,:,4:5] = grid[0,:,:,:,4:5]/self.max_abs_delta_p
 
-		#if save_plots:
-			#utils.plot_inputs_slices(grid[0,...,0], grid[0,...,1], grid[0,...,2], \
-		#					grid[0,...,3], grid[0,...,4], slices_indices=[5, 10, 20])
+		if save_plots:
+			utils.plot_inputs_slices(grid[0,...,0], grid[0,...,1], grid[0,...,2], \
+							grid[0,...,3], grid[0,...,4], slices_indices=[5, 10, 20])
 
 		# saving for weighting procedure
 		deltaU_change_grid = np.zeros(shape=(self.grid_shape_z, self.grid_shape_y, self.grid_shape_x))
@@ -603,15 +610,18 @@ class Evaluation():
 		for step in range(y_array.shape[0]):
 			y_array[step,...,0][self.x_array[step,...,3] != 0] -= np.mean(y_array[step,...,0][self.x_array[step,...,3] != 0])
 
-		import tensorly as tl
-
-		# Apply Tucker decomposition to transform input and output tensors
-		input_core = tl.tenalg.multi_mode_dot(self.x_array, self.input_factors[1:], modes=[1, 2, 3, 4], transpose=True)
-		output_core = tl.tenalg.multi_mode_dot(y_array[...,0], self.output_factors[1:], modes=[1, 2, 3], transpose=True)
+		x_array_flat = self.x_array.reshape((N, self.x_array.shape[1]*self.x_array.shape[2]*self.x_array.shape[3], features ))
+		input_flat = x_array_flat.reshape((x_array_flat.shape[0],-1))
+		input_transformed = self.pcainput.transform(input_flat)[:,:self.pc_in]
+		print(' Total variance from input represented: ' + str(np.sum(self.pcainput.explained_variance_ratio_[:self.pc_in])))
+		print(input_transformed.shape)
 
 		# to with label data
-		input_transformed = input_core.reshape(N, -1)
-		y_array_flat = output_core.reshape(N, -1)
+		y_array_flat = y_array.reshape((N, y_array.shape[1]*y_array.shape[2]*y_array.shape[3], 1))
+		y_array_flat = y_array_flat.reshape((y_array_flat.shape[0],-1))
+
+		y_transformed = self.pcap.transform(y_array_flat)[:,:self.pc_p]
+		print(' Total variance from pressure represented: ' + str(np.sum(self.pcap.explained_variance_ratio_[:self.pc_p])))
 
 		if self.standardization_method == 'std':
 			## Option 1: Standardization
@@ -635,6 +645,9 @@ class Evaluation():
 		else:
 			raise ValueError("Standardization method not valid")
 
+		comp = self.pcap.components_
+		pca_mean = self.pcap.mean_
+
 		res_concat = np.array(self.model(np.array(x_input)))
 
 		if self.standardization_method == 'std':
@@ -646,15 +659,13 @@ class Evaluation():
 		else:
 			raise ValueError("Standardization method not valid")
 
-		# Reshape res_concat to match the original shape of y_array
-		res_concat = res_concat.reshape(output_core.shape)
-		y_array = y_array_flat.reshape(output_core.shape)
+		res_flat_inv = np.dot(res_concat, comp[:self.pc_p, :]) + pca_mean
+		res_concat = res_flat_inv.reshape((res_concat.shape[0], shape, shape, shape, 1))
 
-		# Perform inverse transformation using Tucker factors
-		res_concat = tl.tenalg.multi_mode_dot(res_concat, self.output_factors[1:], modes=[1, 2, 3], transpose=False)
-		y_concat = tl.tenalg.multi_mode_dot(y_array, self.output_factors[1:], modes=[1, 2, 3], transpose=False)
+		# to test with label data
+		y_flat_inv = np.dot(y_transformed, comp[:self.pc_p, :]) + pca_mean	
+		y_concat = y_flat_inv.reshape((res_concat.shape[0], shape, shape, shape, 1)) 
 
-		res_concat = res_concat.reshape(self.y_array.shape)
 		## Dimensionalize pressure field - There is no need to dimensionalize the pressure field here
 		## As we can compare it to the reference non-dimensionalized field
 		## This only needs to be done when calling the SM in the CFD solver
@@ -662,8 +673,7 @@ class Evaluation():
 
 		## Here compute the error only based on the blocks pressure fields - before the assembly
 		flow_bool = self.x_array[...,3:4] != 0
-
-		pred_minus_true_block, pred_minus_true_squared_block = utils.compute_in_block_error(res_concat, self.y_array * self.max_abs_delta_p * pow(U_max_norm,2.0), flow_bool)
+		pred_minus_true_block, pred_minus_true_squared_block = utils.compute_in_block_error(res_concat, y_array * self.max_abs_delta_p * pow(U_max_norm,2.0), flow_bool)
 		self.pred_minus_true_block.append(pred_minus_true_block)
 		self.pred_minus_true_squared_block.append(pred_minus_true_squared_block)
 		
@@ -703,8 +713,8 @@ class Evaluation():
 
 		if save_plots:
 			#utils.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 50, 95], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
-			utils.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 15, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
-			utils.plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 15, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
+			#utils.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 25, 45], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
+			utils.plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
 
 		#utils.simple_delta_p_slices_plot()
 		

@@ -26,10 +26,6 @@ from shapely.geometry import MultiPoint
 from sklearn.decomposition import PCA, IncrementalPCA
 import gc
 
-from tensorly.decomposition import tucker
-import tensorly as tl
-tl.set_backend('numpy')  # switch to 'torch' if needed
-
 # Set seeds for reproducibility across libraries
 random.seed(0)
 np.random.seed(0)
@@ -136,8 +132,10 @@ class Training:
         indices_per_time.append(ZYX_indices)
       indices_per_sim_per_time.append(indices_per_time)
     
-      return indices_per_sim_per_time
-    
+        # Save indices_per_sim_per_time to a file
+    with open('sample_indices_per_sim_per_time.pkl', 'wb') as f:
+      pk.dump(indices_per_sim_per_time, f)
+
   def sample_blocks_chunked(self, sim, t_start, t_end, i_chunk=None, n_chunks=False):
     """Sample N blocks from each time step based on LHS"""
 
@@ -206,7 +204,7 @@ class Training:
     return inputs_u, inputs_obst, outputs
 
 
-  def sample_blocks(self, sim, t_start, t_end, calculate_maxs=False, sample_indices=None):
+  def sample_blocks(self, sim, t_start, t_end, calculate_maxs=False):
     """Sample N blocks from each time step based on LHS"""
 
     inputs_u_list = []
@@ -221,7 +219,7 @@ class Training:
       with tables.open_file(self.filename, mode='r') as f:
         grid = f.root.data[sim * (self.last_t - self.first_t) + time,:,:,:,:]
 
-      ZYX_indices = sample_indices[sim][time]
+      ZYX_indices = self.sample_indices_per_sim_per_time[sim][time]
 
       for [ii, jj, kk] in ZYX_indices:
 
@@ -504,8 +502,7 @@ class Training:
         _ = self.sample_blocks(sim,
           t_start=time,
           t_end=time+1,
-          calculate_maxs=True,
-          sample_indices=self.sample_indices_per_sim_per_time)
+          calculate_maxs=True)   
 
     np.savetxt('maxs',
       [self.max_abs_delta_Ux,
@@ -644,126 +641,61 @@ class Training:
 
     client.close()
 
-  def get_representative_factors(self, blocks_data: np.ndarray, ranks):
-
-    # Define ranks
-    spatial_ranks = (ranks, ranks, ranks)
+  def transform_data_to_PC(self, blocks_data: np.ndarray, client) -> np.ndarray:
 
     inputs_u, inputs_obst, outputs = blocks_data
     chunk_size = inputs_u.shape[0]
     print(f'ACTUAL Chunk size: {chunk_size}')
 
-    # --- Normalize and prepare full tensors ---
-    velocity = inputs_u / [self.max_abs_delta_Ux, self.max_abs_delta_Uy, self.max_abs_delta_Uz]  # (N, 16, 16, 16, 3)
-    obstacle = inputs_obst / self.max_abs_dist  # (N, 16, 16, 16, 1)
-    pressure = outputs[..., 0] / self.max_abs_delta_p  # (N, 16, 16, 16)
+    # Flatten & Normalize to [-1, 1]
+    x_array_flat = inputs_u.reshape((chunk_size, -1, 3)) / [
+        self.max_abs_delta_Ux, self.max_abs_delta_Uy, self.max_abs_delta_Uz]
+    obst_array_flat = inputs_obst.reshape((chunk_size, -1, 1)) / self.max_abs_dist
+    y_array_flat = outputs.reshape((chunk_size, -1)) / self.max_abs_delta_p
 
-    print("Calculating representative Tucker factors ({chunk_size} samples) ...")
-    input_tensor = np.concatenate([velocity, obstacle], axis=-1)
+    input_flat = np.concatenate((x_array_flat, obst_array_flat), axis=-1).reshape((chunk_size, -1))
+    y_flat = y_array_flat.reshape((y_array_flat.shape[0], -1))
 
-    process_velocity_separately=False
+    # Scatter input and output data
+    input_dask_future = client.scatter(input_flat)
+    y_dask_future = client.scatter(y_flat)
 
-    if process_velocity_separately:
-      _, self.input_u_factors = tucker(velocity, rank=(chunk_size,) + spatial_ranks + (1,))
-      _, self.input_obst_factors = tucker(obstacle, rank=(chunk_size,) + spatial_ranks + (1,))
-      _, self.output_factors = tucker(pressure, rank=(chunk_size,) + spatial_ranks)
-    else:
-        
-      process_inputs_together = False
+    # Convert futures to Dask arrays
+    input_dask = dask.array.from_delayed(input_dask_future, shape=input_flat.shape, dtype=input_flat.dtype)
+    y_dask = dask.array.from_delayed(y_dask_future, shape=y_flat.shape, dtype=y_flat.dtype)
 
-      if process_inputs_together:
-        last_rank = 1
-      else:
-        last_rank = 4
+    scaler = dask_ml.preprocessing.StandardScaler().fit(input_dask.rechunk({1: input_dask.shape[1]}))
+    scaler1 = dask_ml.preprocessing.StandardScaler().fit(y_dask.rechunk({1: y_dask.shape[1]}))
 
-      _, self.input_factors = tucker(input_tensor, rank=(chunk_size,) + spatial_ranks + (last_rank,))
-      _, self.output_factors = tucker(pressure, rank=(chunk_size,) + spatial_ranks)
+    inputScaled = scaler.transform(input_dask)
+    yScaled = scaler1.transform(y_dask)
 
-    # Save the factors for later use
-    with open('tucker_factors.pkl', 'wb') as f:
-      pk.dump({'input_factors': self.input_factors, 'output_factors': self.output_factors}, f)
+    input_transf = self.ipca_input.transform(inputScaled)
+    y_transf = self.ipca_p.transform(yScaled)
 
-  def transform_data_with_tucker(self, blocks_data: np.ndarray, client, ranks) -> np.ndarray:
-
-    inputs_u, inputs_obst, outputs = blocks_data
-    chunk_size = inputs_u.shape[0]
-    print(f'ACTUAL Chunk size: {chunk_size}')
+    del input_dask, y_dask
+    gc.collect()
     
-    # --- Normalize and prepare full tensors ---
-    velocity = inputs_u / [self.max_abs_delta_Ux, self.max_abs_delta_Uy, self.max_abs_delta_Uz]  # (N, 16, 16, 16, 3)
-    obstacle = inputs_obst / self.max_abs_dist  # (N, 16, 16, 16, 1)
-    pressure = outputs[..., 0] / self.max_abs_delta_p  # (N, 16, 16, 16)
+    PC_data = np.concatenate((np.expand_dims(input_transf, axis=-1), np.expand_dims(y_transf, axis=-1)), axis=-1)
 
-    # # Use the first 2000 samples to calculate the factors
-    # if not hasattr(self, 'input_factors') or not hasattr(self, 'output_factors'):
-    #   print("Calculating Tucker factors using the first 2000 samples...")
-    #   input_tensor_sample = np.concatenate([velocity[:2000], obstacle[:2000]], axis=-1)
-    #   pressure_sample = pressure[:2000]
-
-    #   _, self.input_factors = tucker(input_tensor_sample, rank=(2000,) + spatial_ranks + (1,))
-    #   _, self.output_factors = tucker(pressure_sample, rank=(2000,) + spatial_ranks)
-
-    #   # Save the factors for later use
-    #   with open('tucker_factors.pkl', 'wb') as f:
-    #     pk.dump({'input_factors': self.input_factors, 'output_factors': self.output_factors}, f)
-
-    # Transform the rest of the data using the learned factors
-    print("Transforming data using precomputed Tucker factors...")
-    input_tensor = np.concatenate([velocity, obstacle], axis=-1)
-    input_core = tl.tenalg.multi_mode_dot(input_tensor, self.input_factors[1:], modes=[1, 2, 3, 4], transpose=True)
-    output_core = tl.tenalg.multi_mode_dot(pressure, self.output_factors[1:], modes=[1, 2, 3], transpose=True)
-
-    input_features = input_core.reshape(chunk_size, -1)
-    output_features = output_core.reshape(chunk_size, -1)
-
-    return input_features, output_features
+    return PC_data
 
 
-  def transform_and_write_blocks_to_features(
+  def transform_and_write_blocks_to_PC(
     self,
     filename_flat: str,
     chunks_per_sim: int,
     n_times_per_chunk: int,
     n_sub_chunks: int,
-    ranks: int) -> None:
+    max_num_PC: int = 256) -> None:
     
     with tables.open_file(filename_flat, mode='w') as file:
       atom = tables.Float32Atom()
-      file.create_earray(file.root, 'inputs', atom, (0, ranks* ranks *ranks * ranks))
-      file.create_earray(file.root, 'outputs', atom, (0, ranks*ranks*ranks))
+      file.create_earray(file.root, 'data_flat', atom, (0, max_num_PC, 2))
 
     client = dask.distributed.Client(processes=False)
 
     for sim in range(self.first_sim, self.last_sim):
-
-      # Compute representative factors
-      N_representative = 2500
-      N_representative_per_sim = int(N_representative/(self.last_sim - self.first_sim)/(self.last_t - self.first_t))
-      # all sims and all times
-      representative_blocks = []
-      sample_indices_per_sim_per_time_representative = self.define_sample_indexes(N_representative_per_sim)
-      
-      all_inputs_u = []
-      all_inputs_obst = []
-      all_outputs = []
-
-      for sim in range(self.first_sim, self.last_sim):
-        inputs_u, inputs_obst, outputs = self.sample_blocks(sim,
-          t_start=self.first_t,
-          t_end=self.last_t,
-          sample_indices=sample_indices_per_sim_per_time_representative)
-        
-        all_inputs_u.append(inputs_u)
-        all_inputs_obst.append(inputs_obst)
-        all_outputs.append(outputs)
-
-      all_inputs_u = np.concatenate(all_inputs_u)
-      all_inputs_obst = np.concatenate(all_inputs_obst)
-      all_outputs = np.concatenate(all_outputs)
-
-      representative_blocks = (all_inputs_u, all_inputs_obst, all_outputs)
-      self.get_representative_factors(representative_blocks, ranks=ranks)
-
       print(f'Transforming data from sim {sim+1}/[{self.first_sim}, {self.last_sim}]...')
       for i_chunk in range(chunks_per_sim):
 
@@ -783,17 +715,16 @@ class Training:
             n_chunks=n_sub_chunks
             )
 
-          print(f' -Transforming grid data to tensor cores for chunk {i_chunk+1}/{chunks_per_sim} - subchunk {sub_chunk+1}/{n_sub_chunks}', flush = True)
-          in_features, out_features = self.transform_data_with_tucker(blocks_data, client, ranks)
+          print(f' -Transforming grid data to PC for chunk {i_chunk+1}/{chunks_per_sim} - subchunk {sub_chunk+1}/{n_sub_chunks}', flush = True)
+          PC_data = self.transform_data_to_PC(blocks_data, client)
 
           # Write Principal Component data
           with tables.open_file(filename_flat, mode='a') as f:
-            f.root.inputs.append(np.array(in_features))
-            f.root.outputs.append(np.array(out_features))
+            f.root.data_flat.append(np.array(PC_data))
 
     client.close()
 
-  def write_PC_to_h5(self, filename_flat: str, chunk_size: int = 500, ranks: int = 4) -> None:
+  def write_PC_to_h5(self, filename_flat: str, chunk_size: int = 500, max_num_PC: int = 256) -> None:
     
     with open('sample_indices_per_sim_per_time.pkl', 'rb') as f:
       self.sample_indices_per_sim_per_time = pk.load(f)
@@ -809,37 +740,37 @@ class Training:
       n_times_per_chunk = 1
       n_chunks_per_sim = total_times
 
-    # if not os.path.isfile('ipca_input.pkl'):
-    #   self.ipca_p = dask_ml.decomposition.IncrementalPCA(max_num_PC)
-    #   self.ipca_input = dask_ml.decomposition.IncrementalPCA(max_num_PC)
-    #   self.fit_PCA(n_chunks_per_sim, n_times_per_chunk, n_sub_chunks)
-    # else:
-    #   print('Loading PCA arrays, as those are already available', flush=True)
-    #   self.ipca_p = pk.load(open("ipca_p.pkl",'rb'))
-    #   self.ipca_input = pk.load(open("ipca_input.pkl",'rb'))
+    if not os.path.isfile('ipca_input.pkl'):
+      self.ipca_p = dask_ml.decomposition.IncrementalPCA(max_num_PC)
+      self.ipca_input = dask_ml.decomposition.IncrementalPCA(max_num_PC)
+      self.fit_PCA(n_chunks_per_sim, n_times_per_chunk, n_sub_chunks)
+    else:
+      print('Loading PCA arrays, as those are already available', flush=True)
+      self.ipca_p = pk.load(open("ipca_p.pkl",'rb'))
+      self.ipca_input = pk.load(open("ipca_input.pkl",'rb'))
 
-    # pc_in_explained_var_cumulative = self.ipca_input.explained_variance_ratio_.cumsum()
-    # if pc_in_explained_var_cumulative[-1] < self.var_in:
-    #   self.PC_input = max_num_PC
-    # else:
-    #   self.PC_input = np.argmax(pc_in_explained_var_cumulative > self.var_in)
+    pc_in_explained_var_cumulative = self.ipca_input.explained_variance_ratio_.cumsum()
+    if pc_in_explained_var_cumulative[-1] < self.var_in:
+      self.PC_input = max_num_PC
+    else:
+      self.PC_input = np.argmax(pc_in_explained_var_cumulative > self.var_in)
 
-    # pc_p_explained_var_cumulative = self.ipca_p.explained_variance_ratio_.cumsum()
-    # if pc_p_explained_var_cumulative[-1] < self.var_p:
-    #   self.PC_p = max_num_PC
-    # else:
-    #   self.PC_p = np.argmax(pc_p_explained_var_cumulative > self.var_p)
+    pc_p_explained_var_cumulative = self.ipca_p.explained_variance_ratio_.cumsum()
+    if pc_p_explained_var_cumulative[-1] < self.var_p:
+      self.PC_p = max_num_PC
+    else:
+      self.PC_p = np.argmax(pc_p_explained_var_cumulative > self.var_p)
 		
-    # print(f'PC_p : {self.PC_p}', flush = True)
-    # print(f'PC_input: {self.PC_input}', flush = True)
+    print(f'PC_p : {self.PC_p}', flush = True)
+    print(f'PC_input: {self.PC_input}', flush = True)
 
-    # print(' Total variance from input represented: ' + str(np.sum(self.ipca_input.explained_variance_ratio_[:self.PC_input])))
-    # pk.dump(self.ipca_input, open("ipca_input.pkl","wb"))
+    print(' Total variance from input represented: ' + str(np.sum(self.ipca_input.explained_variance_ratio_[:self.PC_input])))
+    pk.dump(self.ipca_input, open("ipca_input.pkl","wb"))
 
-    # print(' Total variance from p represented: ' + str(np.sum(self.ipca_p.explained_variance_ratio_[:self.PC_p])))
-    # pk.dump(self.ipca_p, open("ipca_p.pkl","wb"))
+    print(' Total variance from p represented: ' + str(np.sum(self.ipca_p.explained_variance_ratio_[:self.PC_p])))
+    pk.dump(self.ipca_p, open("ipca_p.pkl","wb"))
 
-    self.transform_and_write_blocks_to_features(filename_flat, n_chunks_per_sim, n_times_per_chunk, n_sub_chunks, ranks)
+    self.transform_and_write_blocks_to_PC(filename_flat, n_chunks_per_sim, n_times_per_chunk, n_sub_chunks, max_num_PC)
 
 ####################################################################
 ############## <Processing data\>
@@ -878,7 +809,7 @@ class Training:
       return 1e6 * loss
     return loss_f
 
-  def prepare_data_to_tf(self, hdf5_paths: str, ranks: int, outarray_fn: str = 'gridded_sim_data.h5', outarray_flat_fn: str= 'PC_data.h5'):
+  def prepare_data_to_tf(self, hdf5_paths: str, max_num_PC: int, outarray_fn: str = 'gridded_sim_data.h5', outarray_flat_fn: str= 'PC_data.h5'):
 
     self.dataset_path = self.paths[0]
     self.filename = outarray_fn
@@ -888,11 +819,8 @@ class Training:
       print('Numpy gridded data not available ... Reading original CFD simulations hdf5 dataset\n')
       self.write_gridded_simulation_data()
 
-    indices_per_sim_per_time = self.define_sample_indexes(self.n_samples_per_frame)
 
-    # Save indices_per_sim_per_time to a file
-    with open('sample_indices_per_sim_per_time.pkl', 'wb') as f:
-      pk.dump(indices_per_sim_per_time, f)
+    self.define_sample_indexes(self.n_samples_per_frame)
 
     if not os.path.isfile('maxs'):
       self.calculate_block_abs_max()
@@ -907,7 +835,7 @@ class Training:
 
     if not (os.path.isfile(filename_flat) and os.path.isfile('ipca_input.pkl') and os.path.isfile('ipca_p.pkl')):
       print('Data after PCA is not available... Applying PCA \n')
-      self.write_PC_to_h5(filename_flat, self.chunk_size, ranks)
+      self.write_PC_to_h5(filename_flat, self.chunk_size, max_num_PC)
     else:
       print('Data after PCA is available... loading it & stepping over PCA\n')
       self.ipca_p = pk.load(open("ipca_p.pkl",'rb'))
@@ -925,8 +853,8 @@ class Training:
 
     print('Loading Blocks data\n')
     f = tables.open_file(filename_flat, mode='r')
-    input = f.root.inputs[...] 
-    output = f.root.outputs[...] 
+    input = f.root.data_flat[...,:self.PC_input,0] 
+    output = f.root.data_flat[...,:self.PC_p,1] 
     f.close()
 
     standardization_method="std"
@@ -949,19 +877,7 @@ class Training:
 
     return 0 
    
-  def load_data_and_train(self,
-      lr,
-      batch_size,
-      model_name,
-      beta_1,
-      num_epoch,
-      n_layers,
-      width,
-      dropout_rate,
-      regularization,
-      model_architecture,
-      new_model,
-      ranks):
+  def load_data_and_train(self, lr, batch_size, max_num_PC, model_name, beta_1, num_epoch, n_layers, width, dropout_rate, regularization, model_architecture, new_model):
 
     train_path = 'train_data.tfrecords'
     test_path = 'test_data.tfrecords'
@@ -976,7 +892,7 @@ class Training:
 
     if new_model:
       if (model_architecture=='MLP_small') or (model_architecture=='MLP_big') or (model_architecture=='MLP_small_unet') or (model_architecture=='MLP_huge') or (model_architecture=='MLP_huger'):
-        self.model = densePCA(n_layers, width, ranks*ranks*ranks*ranks, ranks*ranks*ranks, dropout_rate, regularization)
+        self.model = densePCA(n_layers, width, self.PC_input, self.PC_p, dropout_rate, regularization)
       elif model_architecture == 'conv1D':
         self.model = self.conv1D_PCA(n_layers, width, self.PC_input, self.PC_p, dropout_rate, regularization)
       elif model_architecture == 'MLP_attention':
@@ -1046,7 +962,7 @@ class Training:
     return 0
 
 def main_train(dataset_path, first_sim, last_sim, first_t, last_t, num_epoch, lr, beta, batch_size, \
-              standardization_method, n_samples_per_frame, block_size, grid_res, ranks, \
+              standardization_method, n_samples_per_frame, block_size, grid_res, max_num_PC, \
               var_p, var_in, model_architecture, dropout_rate, outarray_fn, outarray_flat_fn, regularization, new_model, chunk_size):
 
   new_model = new_model.lower() == 'true'
@@ -1060,8 +976,8 @@ def main_train(dataset_path, first_sim, last_sim, first_t, last_t, num_epoch, lr
   Train = Training(grid_res, block_size,var_p, var_in, paths, n_samples_per_frame, first_sim, last_sim, first_t, last_t, standardization_method, chunk_size)
 
   # If you want to read the crude dataset (hdf5) again, delete the 'gridded_sim_data.h5' file
-  Train.prepare_data_to_tf(paths, ranks, outarray_fn, outarray_flat_fn) #prepare and save data to tf records
-  Train.load_data_and_train(lr, batch_size, model_name, beta, num_epoch, n_layers, width, dropout_rate, regularization, model_architecture, new_model, ranks)
+  Train.prepare_data_to_tf(paths, max_num_PC, outarray_fn, outarray_flat_fn) #prepare and save data to tf records
+  Train.load_data_and_train(lr, batch_size, max_num_PC, model_name, beta, num_epoch, n_layers, width, dropout_rate, regularization, model_architecture, new_model)
 
 if __name__ == '__main__':
 
