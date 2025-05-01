@@ -1,6 +1,6 @@
 import argparse
-from pressureSM.train_and_eval_3d.train import main_train
-from pressureSM.train_and_eval_3d.SM_call import call_SM_main
+from pressure_SM.train_and_eval_3d.train import main_train
+from pressure_SM.train_and_eval_3d.SM_call import call_SM_main
 
 def train_entry_point():
     parser = argparse.ArgumentParser(description='Train your Surrogate Model.')
