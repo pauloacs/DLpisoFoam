@@ -756,7 +756,7 @@ class Training:
       count_test = utils.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
     else:
       print("TFRecords train and test data already available, using it... If you want to write new data, delete 'train_data.tfrecords' and 'test_data.tfrecords'!\n")
-    self.len_train = int(count_train)
+    self.len_train = int(split*x.shape[0])
 
     return 0 
    
