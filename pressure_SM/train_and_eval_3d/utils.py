@@ -1,7 +1,5 @@
 from numba import njit
 import os
-import shutil
-import time
 import h5py
 import numpy as np
 import pyvista as pv
@@ -11,18 +9,13 @@ import matplotlib.pyplot as plt
 import scipy.spatial.qhull as qhull
 import matplotlib.path as mpltPath
 import tensorflow as tf
-from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
 from sklearn.neighbors import KDTree
 import sklearn
 from shapely.geometry import MultiPoint
 from scipy.spatial import distance
 from scipy.spatial import ConvexHull, Delaunay, cKDTree
 
-from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 from matplotlib.colors import Normalize
 

@@ -1,12 +1,8 @@
 # Standard library imports
 import os
 import random
-import shutil
-import time
 import math
 from math import ceil
-import itertools
-from ctypes import py_object
 import pickle as pk
 import scipy.ndimage as ndimage
 
@@ -17,13 +13,8 @@ os.environ['TF_DETERMINISTIC_OPS'] = '1'
 import numpy as np
 import tables
 import h5py
-import matplotlib
 import matplotlib.pyplot as plt
-import scipy.spatial.qhull as qhull
 from scipy.spatial import cKDTree as KDTree, distance
-import matplotlib.path as mpltPath
-from shapely.geometry import MultiPoint
-from sklearn.decomposition import PCA, IncrementalPCA
 import gc
 
 from tensorly.decomposition import tucker
@@ -41,9 +32,6 @@ from tensorflow.keras.layers import (
     ZeroPadding2D, Conv2D, MaxPooling2D, Conv2DTranspose, 
     BatchNormalization, Activation, MaxPool2D, concatenate, Input
 )
-from tensorflow.keras.utils import plot_model
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.optimizers import Adam
 from tensorflow.python.ops.gen_array_ops import inplace_update
 
 # Enable deterministic random behavior in TensorFlow
@@ -58,15 +46,12 @@ for device in physical_devices:
 import dask
 import dask.config
 import dask.distributed
-import dask_ml
-import dask_ml.preprocessing
-import dask_ml.decomposition
 
 # Additional scientific computing and data processing libraries
 from pyDOE import lhs
 
 from . import utils
-from .NNs import densePCA, densePCA_attention, conv1D_PCA
+from .NNs import densePCA
 import warnings
 
 warnings.filterwarnings("ignore", message="Unmanaged memory use is high")
@@ -514,136 +499,6 @@ class Training:
         self.max_abs_dist,
         self.max_abs_delta_p])
 
-
-  def fit_PCA_to_blocks(self, blocks_data: np.ndarray, client) -> None:
-    """
-    Fits Incremental PCA (IPCA) to input and output data blocks using Dask for distributed computation.
-
-    Parameters:
-    -----------
-    blocks_data : np.NDArray
-      A tuple containing three NumPy arrays:
-      - inputs_u (np.NDArray): Input data representing velocity or similar features.
-      - inputs_obst (np.NDArray): Input data representing obstacle or boundary features.
-      - outputs (np.NDArray): Output data representing the target values.
-
-    Returns:
-    --------
-    None
-      This method updates the internal IPCA models (`self.ipca_input` and `self.ipca_p`) with the scaled and transformed data.
-
-    Notes:
-    ------
-    - The method uses Dask for distributed computation to handle large datasets.
-    - Data is scaled using `dask_ml.preprocessing.StandardScaler` before being passed to the IPCA models.
-    - The method assumes that `self.ipca_input` and `self.ipca_p` are pre-initialized Incremental PCA models.
-    """
-
-    inputs_u, inputs_obst, outputs = blocks_data
-    chunk_size = inputs_u.shape[0]
-    print(f'Actual chunk size: {chunk_size}')
-
-    # Flatten & Normalize to [-1, 1]
-    x_array_flat = inputs_u.reshape((chunk_size, -1, 3)) / [
-        self.max_abs_delta_Ux, self.max_abs_delta_Uy, self.max_abs_delta_Uz]
-    obst_array_flat = inputs_obst.reshape((chunk_size, -1, 1)) / self.max_abs_dist
-    y_array_flat = outputs.reshape((chunk_size, -1)) / self.max_abs_delta_p
-
-    input_flat = np.concatenate((x_array_flat, obst_array_flat), axis=-1).reshape((chunk_size, -1))
-    y_flat = y_array_flat.reshape((y_array_flat.shape[0], -1))
-
-    input_flat = np.concatenate((inputs_u, inputs_obst), axis=-1).reshape((chunk_size, -1))
-    y_flat = outputs.reshape((chunk_size, -1))
-
-    # Scatter input and output data
-    input_dask_future = client.scatter(input_flat)
-    y_dask_future = client.scatter(y_flat)
-
-    # Convert futures to Dask arrays
-    input_dask = dask.array.from_delayed(input_dask_future, shape=input_flat.shape, dtype=input_flat.dtype)
-    y_dask = dask.array.from_delayed(y_dask_future, shape=y_flat.shape, dtype=y_flat.dtype)
-
-    del input_dask_future, y_dask_future
-
-    # #scaler = dask_ml.preprocessing.StandardScaler().fit(input_dask)
-    # scaler = dask_ml.preprocessing.StandardScaler().fit(input_dask.rechunk({1: input_dask.shape[1]}))
-
-    # #scaler1 = dask_ml.preprocessing.StandardScaler().fit(y_dask)
-    # scaler1 = dask_ml.preprocessing.StandardScaler().fit(y_dask.rechunk({1: y_dask.shape[1]}))
-
-    # inputScaled = scaler.transform(input_dask).compute()
-    # yScaled = scaler1.transform(y_dask).compute()
-
-    # self.ipca_input.partial_fit(inputScaled)
-    # self.ipca_p.partial_fit(yScaled)
-
-    # del input_dask, y_dask, inputScaled, yScaled
-    # gc.collect()
-
-    # Rechunk to avoid large memory spikes
-    input_dask = input_dask.rechunk({0: "auto", 1: input_dask.shape[1]})
-    y_dask = y_dask.rechunk({0: "auto", 1: y_dask.shape[1]})
-
-    # Apply StandardScaler
-    scaler = dask_ml.preprocessing.StandardScaler().fit(input_dask)
-    scaler1 = dask_ml.preprocessing.StandardScaler().fit(y_dask)
-
-    inputScaled = scaler.transform(input_dask)
-    yScaled = scaler1.transform(y_dask)
-
-    # Ensure proper chunking
-    inputScaled = inputScaled.rechunk({0: "auto", 1: inputScaled.shape[1]})
-    yScaled = yScaled.rechunk({0: "auto", 1: yScaled.shape[1]})
-
-    gc.collect()
-    # Incremental PCA
-    self.ipca_input.partial_fit(inputScaled)
-    self.ipca_p.partial_fit(yScaled)
-
-    del input_dask, y_dask, inputScaled, yScaled, scaler, scaler1
-    gc.collect()
-
-
-  def fit_PCA(self, chunks_per_sim: int, n_times_per_chunk: int, n_sub_chunks: int) -> None:
-
-    client = dask.distributed.Client(processes=False)
-
-    for sim in range(self.first_sim, self.last_sim):
-      print(f'Fitting sim {sim+1}/[{self.first_sim}, {self.last_sim}]...')
-      for i_chunk in range(chunks_per_sim):
-
-        # print(f' -Sampling block data for chunk {i_chunk+1}/{chunks_per_sim}', flush = True)
-        # blocks_data = self.sample_blocks(sim,
-        #   t_start=(i_chunk-1) * n_times_per_chunk,
-        #   t_end=i_chunk * n_times_per_chunk)
-
-        gc.collect()
-
-        print(f' -Fitting chunk {i_chunk+1}/{chunks_per_sim} for sim {sim+1}/[{self.first_sim}, {self.last_sim}]', flush = True)
-
-        # Create sub-chunks if necessary
-        for sub_chunk in range(n_sub_chunks):
-          gc.collect()
-
-          # If there are subchunks, there is only 1 time at each chunk
-          print(f' -Sampling block data for chunk {i_chunk+1}/{chunks_per_sim} - subchunk {sub_chunk+1}/{n_sub_chunks}', flush = True)
-          blocks_data = self.sample_blocks_chunked(sim,
-            t_start=(i_chunk-1) * n_times_per_chunk,
-            t_end=i_chunk * n_times_per_chunk,
-            i_chunk=sub_chunk,
-            n_chunks=n_sub_chunks
-            )
-
-          # blocks_data_chunked = tuple(
-          #     data[sub_chunk * elements_per_sub_chunk: (sub_chunk + 1) * elements_per_sub_chunk].copy()
-          #     for data in blocks_data
-          #   )
-
-          print(f' -Fitting PCA for chunk {i_chunk+1}/{chunks_per_sim} - subchunk {sub_chunk+1}/{n_sub_chunks}', flush = True)
-          self.fit_PCA_to_blocks(blocks_data, client)
-
-    client.close()
-
   def get_representative_factors(self, blocks_data: np.ndarray, ranks):
 
     # Define ranks
@@ -658,7 +513,7 @@ class Training:
     obstacle = inputs_obst / self.max_abs_dist  # (N, 16, 16, 16, 1)
     pressure = outputs[..., 0] / self.max_abs_delta_p  # (N, 16, 16, 16)
 
-    print("Calculating representative Tucker factors ({chunk_size} samples) ...")
+    print(f"Calculating representative Tucker factors ({chunk_size} samples) ...")
     input_tensor = np.concatenate([velocity, obstacle], axis=-1)
 
     process_velocity_separately=False
@@ -809,36 +664,6 @@ class Training:
       n_times_per_chunk = 1
       n_chunks_per_sim = total_times
 
-    # if not os.path.isfile('ipca_input.pkl'):
-    #   self.ipca_p = dask_ml.decomposition.IncrementalPCA(max_num_PC)
-    #   self.ipca_input = dask_ml.decomposition.IncrementalPCA(max_num_PC)
-    #   self.fit_PCA(n_chunks_per_sim, n_times_per_chunk, n_sub_chunks)
-    # else:
-    #   print('Loading PCA arrays, as those are already available', flush=True)
-    #   self.ipca_p = pk.load(open("ipca_p.pkl",'rb'))
-    #   self.ipca_input = pk.load(open("ipca_input.pkl",'rb'))
-
-    # pc_in_explained_var_cumulative = self.ipca_input.explained_variance_ratio_.cumsum()
-    # if pc_in_explained_var_cumulative[-1] < self.var_in:
-    #   self.PC_input = max_num_PC
-    # else:
-    #   self.PC_input = np.argmax(pc_in_explained_var_cumulative > self.var_in)
-
-    # pc_p_explained_var_cumulative = self.ipca_p.explained_variance_ratio_.cumsum()
-    # if pc_p_explained_var_cumulative[-1] < self.var_p:
-    #   self.PC_p = max_num_PC
-    # else:
-    #   self.PC_p = np.argmax(pc_p_explained_var_cumulative > self.var_p)
-		
-    # print(f'PC_p : {self.PC_p}', flush = True)
-    # print(f'PC_input: {self.PC_input}', flush = True)
-
-    # print(' Total variance from input represented: ' + str(np.sum(self.ipca_input.explained_variance_ratio_[:self.PC_input])))
-    # pk.dump(self.ipca_input, open("ipca_input.pkl","wb"))
-
-    # print(' Total variance from p represented: ' + str(np.sum(self.ipca_p.explained_variance_ratio_[:self.PC_p])))
-    # pk.dump(self.ipca_p, open("ipca_p.pkl","wb"))
-
     self.transform_and_write_blocks_to_features(filename_flat, n_chunks_per_sim, n_times_per_chunk, n_sub_chunks, ranks)
 
 ####################################################################
@@ -905,23 +730,9 @@ class Training:
         self.max_abs_dist, \
         self.max_abs_delta_p = maxs
 
-    if not (os.path.isfile(filename_flat) and os.path.isfile('ipca_input.pkl') and os.path.isfile('ipca_p.pkl')):
-      print('Data after PCA is not available... Applying PCA \n')
+    if not os.path.isfile(filename_flat):
+      print('Data after tucker decomposition is not available... Applying Tucker decomposition \n')
       self.write_PC_to_h5(filename_flat, self.chunk_size, ranks)
-    else:
-      print('Data after PCA is available... loading it & stepping over PCA\n')
-      self.ipca_p = pk.load(open("ipca_p.pkl",'rb'))
-      self.ipca_input = pk.load(open("ipca_input.pkl",'rb'))
-
-      # Determine the number of principal components for outputs (PC_p)
-      self.PC_p = np.argmax(self.ipca_p.explained_variance_ratio_.cumsum() > self.var_p)
-      if self.PC_p == 0 or self.PC_p > max_num_PC:
-          self.PC_p = max_num_PC
-
-      # Determine the number of principal components for inputs (PC_input)
-      self.PC_input = np.argmax(self.ipca_input.explained_variance_ratio_.cumsum() > self.var_in)
-      if self.PC_input == 0 or self.PC_input > max_num_PC:
-          self.PC_input = max_num_PC
 
     print('Loading Blocks data\n')
     f = tables.open_file(filename_flat, mode='r')
@@ -941,11 +752,11 @@ class Training:
     split = 0.9
     if not (os.path.isfile('train_data.tfrecords') and os.path.isfile('test_data.tfrecords')):
       print("TFRecords train and test data is not available... writing it\n")
-      count = utils.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data")
-      count = utils.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
+      count_train = utils.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data")
+      count_test = utils.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
     else:
       print("TFRecords train and test data already available, using it... If you want to write new data, delete 'train_data.tfrecords' and 'test_data.tfrecords'!\n")
-    self.len_train = int(split*x.shape[0])
+    self.len_train = int(count_train)
 
     return 0 
    
