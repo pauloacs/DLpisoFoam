@@ -9,8 +9,6 @@ import matplotlib.pyplot as plt
 import scipy.spatial.qhull as qhull
 import matplotlib.path as mpltPath
 import tensorflow as tf
-from sklearn.decomposition import PCA
-from sklearn.neighbors import KDTree
 import sklearn
 from shapely.geometry import MultiPoint
 from scipy.spatial import distance
@@ -18,6 +16,9 @@ from scipy.spatial import ConvexHull, Delaunay, cKDTree
 
 from matplotlib import cm
 from matplotlib.colors import Normalize
+from pyDOE import lhs
+import pickle as pk
+import tables
 
 def interp_weights(xyz, uvw, d=3):
     """
@@ -489,7 +490,7 @@ def unison_shuffled_copies(a, b):
     p = np.random.permutation(len(a))
     return a[p], b[p]
     
-def normalize_PCA_data(input, output, standardization_method: str = "std"):
+def normalize_feature_data(input, output, standardization_method: str = "std"):
     if standardization_method == 'min_max':
         ## Option 2: Min-max scaling
         min_in = np.min(input, axis=0)
@@ -868,3 +869,187 @@ def plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slic
         plt.close(fig)
     else:
         plt.show()
+
+def define_sample_indexes(
+  n_samples_per_frame,
+  block_size,
+  grid_res,
+  first_sim,
+  last_sim,
+  first_t,
+  last_t,
+  dataset_path,
+  output_pkl_path=None
+):
+  # Read domain bounds from the dataset
+  with h5py.File(dataset_path, "r") as f:
+    data = np.array(f["sim_data"], dtype='float32')
+  indice = index(data[0, 0, :, 0], -100.0)[0]
+  data_limited = data[0, 0, :indice, :]
+
+  x_min = round(np.min(data_limited[..., 4]), 2)
+  x_max = round(np.max(data_limited[..., 4]), 2)
+  y_min = round(np.min(data_limited[..., 5]), 2)
+  y_max = round(np.max(data_limited[..., 5]), 2)
+  z_min = round(np.min(data_limited[..., 6]), 2)
+  z_max = round(np.max(data_limited[..., 6]), 2)
+
+  indices_per_sim_per_time = []
+  for i_sim in range(first_sim, last_sim):
+    indices_per_time = []
+    for i_time in range(last_t - first_t):
+      lower_bound = np.array([
+        0 + block_size * grid_res / 2,
+        0 + block_size * grid_res / 2,
+        0 + block_size * grid_res / 2
+      ])
+      upper_bound = np.array([
+        (z_max - z_min) - block_size * grid_res / 2,
+        (y_max - y_min) - block_size * grid_res / 2,
+        (x_max - x_min) - block_size * grid_res / 2
+      ])
+      ZYX = lower_bound + (upper_bound - lower_bound) * lhs(3, n_samples_per_frame)
+      ZYX_indices = (np.round(ZYX / grid_res)).astype(int)
+      ZYX_indices = np.unique([tuple(row) for row in ZYX_indices], axis=0)
+      indices_per_time.append(ZYX_indices)
+    indices_per_sim_per_time.append(indices_per_time)
+
+  # Save to file if output_pkl_path is provided
+  if output_pkl_path is not None:
+    with open(output_pkl_path, 'wb') as f:
+      pk.dump(indices_per_sim_per_time, f)
+
+  return indices_per_sim_per_time
+
+def sample_blocks(
+  block_size,
+  first_sim,
+  last_t,
+  self_first_sim,
+  self_last_t,
+  sim,
+  t_start,
+  t_end,
+  calculate_maxs=False,
+  sample_indices=None,
+  gridded_h5_fn=None,
+  max_abs_delta_Ux=0,
+  max_abs_delta_Uy=0,
+  max_abs_delta_Uz=0,
+  max_abs_dist=0,
+  max_abs_delta_p=0
+):
+  """Sample N blocks from each time step based on LHS"""
+
+  inputs_u_list = []
+  inputs_obst_list = []
+  outputs_list = []
+
+  count = 0
+  sim_idx = sim - self_first_sim
+
+  for time in range(t_start, t_end):
+
+    with tables.open_file(gridded_h5_fn, mode='r') as f:
+      grid = f.root.data[sim_idx * (self_last_t - self_first_sim) + time, :, :, :, :]
+
+    ZYX_indices = sample_indices[sim_idx][time]
+
+    for [ii, jj, kk] in ZYX_indices:
+
+      i_idx_first = int(ii - block_size / 2)
+      i_idx_last = int(ii + block_size / 2)
+
+      j_idx_first = int(jj - block_size / 2)
+      j_idx_last = int(jj + block_size / 2)
+
+      k_idx_first = int(kk - block_size / 2)
+      k_idx_last = int(kk + block_size / 2)
+
+      inputs_u_sample = grid[i_idx_first:i_idx_last, j_idx_first:j_idx_last, k_idx_first:k_idx_last, 0:3]
+      inputs_obst_sample = grid[i_idx_first:i_idx_last, j_idx_first:j_idx_last, k_idx_first:k_idx_last, 3:4]
+      outputs_sample = grid[i_idx_first:i_idx_last, j_idx_first:j_idx_last, k_idx_first:k_idx_last, 4:5]
+
+      # Remove all the blocks with delta_U = 0 and delta_p = 0
+      if not ((inputs_u_sample == 0).all() and (outputs_sample == 0).all()):
+        inputs_u_list.append(inputs_u_sample)
+        inputs_obst_list.append(inputs_obst_sample)
+        outputs_list.append(outputs_sample)
+      else:
+        count += 1
+
+  inputs_u = np.array(inputs_u_list)
+  inputs_obst = np.array(inputs_obst_list)
+  outputs = np.array(outputs_list)
+
+  # Remove mean from each output block
+  for step in range(outputs.shape[0]):
+    outputs[step, ...][inputs_obst[step, ...] != 0] -= np.mean(outputs[step, ...][inputs_obst[step, ...] != 0])
+
+  print('Removing duplicate blocks ...', flush=True)
+  array = np.c_[inputs_u, inputs_obst, outputs]
+  reshaped_array = array.reshape(array.shape[0], -1)
+  # Find unique rows
+  unique_indices = np.unique(reshaped_array, axis=0, return_index=True)[1]
+  unique_array = array[unique_indices]
+  inputs_u, inputs_obst, outputs = unique_array[..., 0:3], unique_array[..., 3:4], unique_array[..., 4:5]
+
+  if calculate_maxs:
+    max_abs_delta_Ux = max(np.abs(inputs_u[..., 0]).max(), max_abs_delta_Ux)
+    max_abs_delta_Uy = max(np.abs(inputs_u[..., 1]).max(), max_abs_delta_Uy)
+    max_abs_delta_Uz = max(np.abs(inputs_u[..., 2]).max(), max_abs_delta_Uz)
+    max_abs_dist = max(np.abs(inputs_obst).max(), max_abs_dist)
+    max_abs_delta_p = max(np.abs(outputs).max(), max_abs_delta_p)
+
+  if count > 0:
+    print(f'    {count} blocks discarded')
+
+  return inputs_u, inputs_obst, outputs, max_abs_delta_Ux, max_abs_delta_Uy, max_abs_delta_Uz, max_abs_dist, max_abs_delta_p
+
+
+def calculate_and_save_block_abs_max(
+  first_sim,
+  last_sim,
+  last_t,
+  sample_indices_fn,
+  gridded_h5_fn,
+  block_size
+):
+  max_abs_delta_Ux = 0
+  max_abs_delta_Uy = 0
+  max_abs_delta_Uz = 0
+  max_abs_dist = 0
+  max_abs_delta_p = 0
+
+  with open(sample_indices_fn, 'rb') as f:
+    sample_indices_per_sim_per_time = pk.load(f)
+
+  print('Calculating absolute maxs to normalize data...')
+  for sim in range(first_sim, last_sim):
+    for time in range(last_t - first_sim):
+      _, _, _, max_abs_delta_Ux, max_abs_delta_Uy, max_abs_delta_Uz, max_abs_dist, max_abs_delta_p = sample_blocks(
+        block_size,
+        first_sim,
+        last_t,
+        first_sim,
+        last_t,
+        sim,
+        t_start=time,
+        t_end=time + 1,
+        calculate_maxs=True,
+        sample_indices=sample_indices_per_sim_per_time,
+        gridded_h5_fn=gridded_h5_fn,
+        max_abs_delta_Ux=max_abs_delta_Ux,
+        max_abs_delta_Uy=max_abs_delta_Uy,
+        max_abs_delta_Uz=max_abs_delta_Uz,
+        max_abs_dist=max_abs_dist,
+        max_abs_delta_p=max_abs_delta_p
+      )
+
+  np.savetxt('maxs', [
+    max_abs_delta_Ux,
+    max_abs_delta_Uy,
+    max_abs_delta_Uz,
+    max_abs_dist,
+    max_abs_delta_p
+  ])

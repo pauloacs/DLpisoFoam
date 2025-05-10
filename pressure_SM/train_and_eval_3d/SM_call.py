@@ -7,22 +7,14 @@ from numba import njit
 import os
 import shutil
 import time
-import h5py
 import numpy as np
-import pyvista as pv
 
 import pickle as pk
 import matplotlib.pyplot as plt
-import matplotlib.path as mpltPath
 
-from shapely.geometry import MultiPoint
-from scipy.spatial import distance
-import scipy.spatial.qhull as qhull
 import scipy.ndimage as ndimage
 
 from . import utils
-
-import dask.array as da
 
 class Evaluation():
 	def __init__(self, delta, block_size, overlap, var_p, var_in, dataset_path, model_path, max_num_PC, standardization_method):

@@ -25,7 +25,7 @@ stopAt          endTime;
 
 endTime         25;//we stop after 5 s - adjustableRunTime!
 
-deltaT          0.001;//initial time step size
+deltaT          0.0002;//initial time step size
 
 writeControl    adjustableRunTime;//simulation can automatically adjust the time step according to the Courant number
 

@@ -1,11 +1,127 @@
 import tensorflow as tf
 from tensorflow.keras import Input, Model, regularizers
+from tensorflow.keras import layers
+import spektral
+from spektral.layers import GCNConv
+from tensorflow.keras.layers import Layer
 
 ################################################################################
 ## Neural Networks architectures
 ################################################################################
 
-def densePCA(n_layers, depth=512, PC_input=None, PC_p=None, dropout_rate=None, regularization=None):
+def gnn(
+    n_gnn_layers=3,
+    gnn_units=64,
+    dropout_rate=None,
+    regularization=None
+):
+    """
+    Creates a GNN for features prediction.
+    Inputs:
+        - Input shape: (4, 4, 4, 4)  (grid: 4x4x4, 4 features per node)
+        - Output shape: (4, 4, 4)    (grid: 4x4x4, 1 output per node)
+    """
+
+    n_nodes = 4 * 4 * 4
+    node_features = 4
+    output_dim = 1
+
+    # Input: (4,4,4,4)
+    X_in = Input(shape=(4, 4, 4), name='X_in')  # (4,4,4,4) input
+    # Reshape to (n_nodes, node_features)
+    x = layers.Reshape((n_nodes, node_features))(X_in)
+
+    # Adjacency matrix input (n_nodes, n_nodes)
+    A_in = Input(shape=(n_nodes, n_nodes), name='A_in')
+
+    reg = regularizers.l2(regularization) if regularization else None
+
+    for _ in range(n_gnn_layers):
+        x = GCNConv(gnn_units, activation='relu', kernel_regularizer=reg)([x, A_in])
+        if dropout_rate:
+            x = layers.Dropout(dropout_rate)(x)
+
+    x = layers.Dense(output_dim)(x)  # (n_nodes, 1)
+    # Reshape back to (4,4,4)
+    outputs = layers.Reshape((4, 4, 4))(x)
+
+    model = Model(inputs=[X_in, A_in], outputs=outputs, name="GNN_PCA")
+    print(model.summary())
+    return model
+
+
+class SpectralConv3d(Layer):
+    def __init__(self, in_channels, out_channels, modes1, modes2, modes3):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.modes1 = modes1
+        self.modes2 = modes2
+        self.modes3 = modes3
+        # Complex weights for Fourier coefficients
+        self.scale = 1 / (in_channels * out_channels)
+        self.weights_real = self.add_weight(
+            shape=(in_channels, out_channels, modes1, modes2, modes3),
+            initializer="random_normal",
+            trainable=True,
+            name="w_real"
+        )
+        self.weights_imag = self.add_weight(
+            shape=(in_channels, out_channels, modes1, modes2, modes3),
+            initializer="random_normal",
+            trainable=True,
+            name="w_imag"
+        )
+
+    def call(self, x):
+        # x: (batch, nx, ny, nz, in_channels)
+        x_ft = tf.signal.fft3d(tf.cast(x, tf.complex64))
+        # Only keep the lower modes
+        out_ft = tf.zeros_like(x_ft, dtype=tf.complex64)
+        out_ft = tf.tensor_scatter_nd_update(
+            out_ft,
+            indices=[[..., i, j, k, :] for i in range(self.modes1) for j in range(self.modes2) for k in range(self.modes3)],
+            updates=tf.einsum(
+                "bxyzc,cio->bxyzo",
+                x_ft[..., :self.modes1, :self.modes2, :self.modes3, :],
+                tf.complex(self.weights_real, self.weights_imag)
+            )
+        )
+        x = tf.signal.ifft3d(out_ft)
+        return tf.math.real(x)
+
+def FNO3d(
+    modes1=4, modes2=4, modes3=4,
+    width=32,
+    n_layers=4,
+    input_shape=(4, 4, 4, 4),
+    output_shape=(4, 4, 4, 1)
+):
+    """
+    3D Fourier Neural Operator for PCA prediction.
+    Inputs:
+        - input_shape: (4, 4, 4, 4)  (grid: 4x4x4, 4 features per node)
+        - output_shape: (4, 4, 4, 1) (grid: 4x4x4, 1 output per node)
+    """
+    inp = Input(shape=input_shape, name="FNO_input")
+    x = layers.Dense(width)(inp)
+
+    for _ in range(n_layers):
+        x1 = SpectralConv3d(width, width, modes1, modes2, modes3)(x)
+        x2 = layers.Conv3D(width, 1, padding='same', activation=None)(x)
+        x = layers.Add()([x1, x2])
+        x = layers.Activation('gelu')(x)
+
+    x = layers.Dense(128, activation='gelu')(x)
+    x = layers.Dense(output_shape[-1])(x)
+    x = layers.Reshape(output_shape)(x)
+
+    model = Model(inputs=inp, outputs=x, name="FNO3d")
+    print(model.summary())
+    return model
+
+
+def MLP(n_layers, depth=512, PC_input=None, PC_p=None, dropout_rate=None, regularization=None):
     """
     Creates the MLP NN.
     """

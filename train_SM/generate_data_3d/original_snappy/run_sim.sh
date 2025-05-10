@@ -10,7 +10,7 @@
 #SBATCH --mail-type=FAIL
 
 # source OpenFOAM
-source /opt/openfoam8/etc/bashrc
+source /opt/openfoam7/etc/bashrc
 bash create_mesh.sh
 
 rm 0/cellLevel 0/C* 0/nSurfaceLayers  0/pointLevel  0/thickness*

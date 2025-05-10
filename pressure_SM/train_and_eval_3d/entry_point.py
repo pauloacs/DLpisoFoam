@@ -8,7 +8,7 @@ def train_entry_point():
     # Required arguments
     parser.add_argument('--dataset_path', type=str, required=True,
                         help='Path to dataset')
-    parser.add_argument('--outarray_fn', type=str, required=True,
+    parser.add_argument('--gridded_h5_fn', type=str, required=True,
                         help='Path to dataset')
     parser.add_argument('--first_sim', type=int, required=True,
                         help='First sim')
