@@ -9,7 +9,7 @@ from tensorflow.keras.layers import Layer
 ## Neural Networks architectures
 ################################################################################
 
-def gnn(
+def GNN(
     n_gnn_layers=3,
     gnn_units=64,
     dropout_rate=None,
@@ -27,7 +27,7 @@ def gnn(
     output_dim = 1
 
     # Input: (4,4,4,4)
-    X_in = Input(shape=(4, 4, 4), name='X_in')  # (4,4,4,4) input
+    X_in = Input(shape=(4, 4, 4, 4), name='X_in')  # (4,4,4,4) input
     # Reshape to (n_nodes, node_features)
     x = layers.Reshape((n_nodes, node_features))(X_in)
 
@@ -45,10 +45,9 @@ def gnn(
     # Reshape back to (4,4,4)
     outputs = layers.Reshape((4, 4, 4))(x)
 
-    model = Model(inputs=[X_in, A_in], outputs=outputs, name="GNN_PCA")
+    model = Model(inputs=[X_in, A_in], outputs=outputs, name="GNN")
     print(model.summary())
     return model
-
 
 class SpectralConv3d(Layer):
     def __init__(self, in_channels, out_channels, modes1, modes2, modes3):
@@ -58,7 +57,6 @@ class SpectralConv3d(Layer):
         self.modes1 = modes1
         self.modes2 = modes2
         self.modes3 = modes3
-        # Complex weights for Fourier coefficients
         self.scale = 1 / (in_channels * out_channels)
         self.weights_real = self.add_weight(
             shape=(in_channels, out_channels, modes1, modes2, modes3),
@@ -74,18 +72,29 @@ class SpectralConv3d(Layer):
         )
 
     def call(self, x):
-        # x: (batch, nx, ny, nz, in_channels)
+        # x: (batch, 4, 4, 4, in_channels)
         x_ft = tf.signal.fft3d(tf.cast(x, tf.complex64))
-        # Only keep the lower modes
-        out_ft = tf.zeros_like(x_ft, dtype=tf.complex64)
+        # Only keep the lower modes and apply learned weights
+        x_ft_low = x_ft[:, :self.modes1, :self.modes2, :self.modes3, :]
+        weights = tf.complex(self.weights_real, self.weights_imag)
+        # (batch, modes1, modes2, modes3, in_channels) x (in_channels, out_channels, modes1, modes2, modes3)
+        # -> (batch, modes1, modes2, modes3, out_channels)
+        x_ft_low = tf.transpose(x_ft_low, [0, 4, 1, 2, 3])  # (batch, in_channels, modes1, modes2, modes3)
+        out_ft_low = tf.einsum('bcmnk,coijk->bomnk', x_ft_low, weights)
+        out_ft_low = tf.transpose(out_ft_low, [0, 2, 3, 4, 1])  # (batch, modes1, modes2, modes3, out_channels)
+        # Zero pad to original size
+        out_ft = tf.zeros_like(x_ft[..., :self.out_channels], dtype=tf.complex64)
         out_ft = tf.tensor_scatter_nd_update(
             out_ft,
-            indices=[[..., i, j, k, :] for i in range(self.modes1) for j in range(self.modes2) for k in range(self.modes3)],
-            updates=tf.einsum(
-                "bxyzc,cio->bxyzo",
-                x_ft[..., :self.modes1, :self.modes2, :self.modes3, :],
-                tf.complex(self.weights_real, self.weights_imag)
-            )
+            indices=tf.reshape(tf.stack(tf.meshgrid(
+                tf.range(tf.shape(x)[0]),
+                tf.range(self.modes1),
+                tf.range(self.modes2),
+                tf.range(self.modes3),
+                tf.range(self.out_channels),
+                indexing='ij'
+            ), axis=-1), [-1, 5]),
+            updates=tf.reshape(out_ft_low, [-1])
         )
         x = tf.signal.ifft3d(out_ft)
         return tf.math.real(x)
@@ -95,13 +104,12 @@ def FNO3d(
     width=32,
     n_layers=4,
     input_shape=(4, 4, 4, 4),
-    output_shape=(4, 4, 4, 1)
+    output_shape=(4, 4, 4)
 ):
     """
-    3D Fourier Neural Operator for PCA prediction.
-    Inputs:
-        - input_shape: (4, 4, 4, 4)  (grid: 4x4x4, 4 features per node)
-        - output_shape: (4, 4, 4, 1) (grid: 4x4x4, 1 output per node)
+    Simple 3D Fourier Neural Operator.
+    Input:  (None, 4, 4, 4, 4)
+    Output: (None, 4, 4, 4)
     """
     inp = Input(shape=input_shape, name="FNO_input")
     x = layers.Dense(width)(inp)
@@ -112,10 +120,8 @@ def FNO3d(
         x = layers.Add()([x1, x2])
         x = layers.Activation('gelu')(x)
 
-    x = layers.Dense(128, activation='gelu')(x)
-    x = layers.Dense(output_shape[-1])(x)
-    x = layers.Reshape(output_shape)(x)
-
+    x = layers.Dense(1)(x)  # (None, 4, 4, 4, 1)
+    x = layers.Reshape(output_shape)(x)  # (None, 4, 4, 4)
     model = Model(inputs=inp, outputs=x, name="FNO3d")
     print(model.summary())
     return model
@@ -153,7 +159,7 @@ def MLP(n_layers, depth=512, PC_input=None, PC_p=None, dropout_rate=None, regula
 
     return model
 
-def densePCA_attention(n_layers=3, depth=[512], PC_input=None, PC_p=None, dropout_rate=None, regularization=None):
+def dense_attention(n_layers=3, depth=[512], PC_input=None, PC_p=None, dropout_rate=None, regularization=None):
     """
     Creates the MLP with an attention mechanism.
     """
@@ -188,7 +194,7 @@ def densePCA_attention(n_layers=3, depth=[512], PC_input=None, PC_p=None, dropou
 
     return model
 
-def conv1D_PCA(n_layers=3, depth=[512], PC_input=None, PC_p=None, dropout_rate=None, regularization=None, kernel_size=3):
+def conv1D(n_layers=3, depth=[512], PC_input=None, PC_p=None, dropout_rate=None, regularization=None, kernel_size=3):
     """
     Creates a 1D ConvNet with regularization and dropout, similar to an MLP.
     """

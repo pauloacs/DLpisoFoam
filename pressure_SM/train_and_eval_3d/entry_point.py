@@ -1,5 +1,5 @@
 import argparse
-from pressure_SM.train_and_eval_3d.train import main_train
+from pressure_SM.train_and_eval_3d.main import main_train
 from pressure_SM.train_and_eval_3d.SM_call import call_SM_main
 
 def train_entry_point():

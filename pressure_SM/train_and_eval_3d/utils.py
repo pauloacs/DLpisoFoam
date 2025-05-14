@@ -20,7 +20,7 @@ from pyDOE import lhs
 import pickle as pk
 import tables
 
-def interp_weights(xyz, uvw, d=3):
+def interp_weights(xyz, uvw, d=3, interp_method='IDW'):
     """
     Get interpolation weights and vertices using barycentric interpolation.
 
@@ -36,53 +36,55 @@ def interp_weights(xyz, uvw, d=3):
         ndarray: Vertices of the simplices that contain the target grid points.
         ndarray: Interpolation weights for each target grid point.
     """
-    # tri = qhull.Delaunay(xyz)
-    # simplex = tri.find_simplex(uvw)
-    # vertices = np.take(tri.simplices, simplex, axis=0)
-    # temp = np.take(tri.transform, simplex, axis=0)
-    # delta = uvw - temp[:, d]
-    # bary = np.einsum('njk,nk->nj', temp[:, :d, :], delta)
-    # wts = np.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))
-    # valid = ~(simplex == -1)
+    # For 3D data, baricentric interpolation is very slow - so IDW is the default
 
-    # import dask.array as da
-    # from scipy.spatial import Delaunay
+    if interp_method == "IDW":
+        tree = sklearn.neighbors.KDTree(xyz, leaf_size=40)
+        nndist, nni = tree.query(np.array(uvw), k=3)
+        vertices = list(nni)
+        wts = list((1./np.maximum(nndist**2, 1e-6)) / (1./np.maximum(nndist**2, 1e-6)).sum(axis=-1)[:,None])
 
-    # # Convert input arrays to dask arrays
-    # xyz_dask = da.from_array(xyz, chunks='auto')
-    # uvw_dask = da.from_array(uvw, chunks='auto')
+    elif interp_method == "barycentric":
+        tri = qhull.Delaunay(xyz)
+        simplex = tri.find_simplex(uvw)
+        vertices = np.take(tri.simplices, simplex, axis=0)
+        temp = np.take(tri.transform, simplex, axis=0)
+        delta = uvw - temp[:, d]
+        bary = np.einsum('njk,nk->nj', temp[:, :d, :], delta)
+        wts = np.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))
+        valid = ~(simplex == -1)
 
-    # # Perform Delaunay triangulation
-    # tri = Delaunay(xyz)
+        import dask.array as da
+        from scipy.spatial import Delaunay
 
-    # # Find the simplex containing each point in uvw
-    # simplex = da.map_blocks(tri.find_simplex, uvw_dask, dtype=int)
-    # vertices = da.map_blocks(np.take, tri.simplices, simplex, axis=0, dtype=int)
-    # temp = da.map_blocks(np.take, tri.transform, simplex, axis=0, dtype=float)
-    # delta = uvw_dask - temp[:, d]
-    # bary = da.einsum('njk,nk->nj', temp[:, :d, :], delta)
-    # wts = da.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))
-    # valid = ~(simplex == -1)
+        # Convert input arrays to dask arrays
+        xyz_dask = da.from_array(xyz, chunks='auto')
+        uvw_dask = da.from_array(uvw, chunks='auto')
 
-    # # Compute the results
-    # vertices = vertices.compute()
-    # wts = wts.compute()
-    # valid = valid.compute()
+        # Perform Delaunay triangulation
+        tri = Delaunay(xyz)
 
-    # # Fill out-of-bounds points with Inverse-Distance Weighting
-    # if (~valid).any():
-    #     tree = sklearn.neighbors.KDTree(xyz, leaf_size=40)
-    #     nndist, nni = tree.query(np.array(uvw)[~valid], k=3)
-    #     invalid = np.flatnonzero(~valid)
-    #     vertices[invalid] = list(nni)
-    #     wts[invalid] = list((1./np.maximum(nndist**2, 1e-6)) / (1./np.maximum(nndist**2, 1e-6)).sum(axis=-1)[:,None])
+        # Find the simplex containing each point in uvw
+        simplex = da.map_blocks(tri.find_simplex, uvw_dask, dtype=int)
+        vertices = da.map_blocks(np.take, tri.simplices, simplex, axis=0, dtype=int)
+        temp = da.map_blocks(np.take, tri.transform, simplex, axis=0, dtype=float)
+        delta = uvw_dask - temp[:, d]
+        bary = da.einsum('njk,nk->nj', temp[:, :d, :], delta)
+        wts = da.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))
+        valid = ~(simplex == -1)
 
-    # For 3D data, the baricentric interpolation is very slow - using simple IDW
-    tree = sklearn.neighbors.KDTree(xyz, leaf_size=40)
-    nndist, nni = tree.query(np.array(uvw), k=3)
-    vertices = list(nni)
-    wts = list((1./np.maximum(nndist**2, 1e-6)) / (1./np.maximum(nndist**2, 1e-6)).sum(axis=-1)[:,None])
+        # Compute the results
+        vertices = vertices.compute()
+        wts = wts.compute()
+        valid = valid.compute()
 
+        # Fill out-of-bounds points with Inverse-Distance Weighting
+        if (~valid).any():
+            tree = sklearn.neighbors.KDTree(xyz, leaf_size=40)
+            nndist, nni = tree.query(np.array(uvw)[~valid], k=3)
+            invalid = np.flatnonzero(~valid)
+            vertices[invalid] = list(nni)
+            wts[invalid] = list((1./np.maximum(nndist**2, 1e-6)) / (1./np.maximum(nndist**2, 1e-6)).sum(axis=-1)[:,None])
 
     return vertices, wts
 
@@ -147,14 +149,6 @@ def create_uniform_grid(x_min, x_max, y_min, y_max, z_min, z_max, delta):
     """
     Creates an uniform 2D grid (should envolve every cell of the mesh).
 
-    Args:
-        x_min (float)
-        x_max (float)
-        y_min (float)
-        y_max (float)
-        z_min (float)
-        z_max (float)
-
     """
     X0 = np.linspace(x_min + delta/2 , x_max - delta/2 , num = int(round( (x_max - x_min)/delta )) )
     Y0 = np.linspace(y_min + delta/2 , y_max - delta/2 , num = int(round( (y_max - y_min)/delta )) )
@@ -182,7 +176,6 @@ def createGIF(n_sims, n_ts):
     ######################## ---------------- //----------------- ###################
 
 # NOT WORKING .... 
-
 def plot_random_blocks_3d_render(res_concat, y_array, x_array, sim, time, save_plots):
     """
     Plot 9 randomly sampled blocks for reference.
@@ -639,31 +632,39 @@ def load_dataset_tf(filename, batch_size, buffer_size):
 
 def define_model_arch(model_architecture: str) -> tuple[int, list]:
 
-  if model_architecture == 'MLP_small':
-    n_layers = 3
-    width = [512]*3
-  elif model_architecture == 'MLP_big':
-    n_layers = 7
-    width = [256] + [512]*5 + [256]
-  elif model_architecture == 'MLP_huge':
-    n_layers = 12
-    width = [256] + [512]*10 + [256]
-  elif model_architecture == 'MLP_huger':
-    n_layers = 20
-    width = [256] + [512]*18 + [256]
-  elif model_architecture == 'MLP_small_unet':
-    n_layers = 9
-    width = [512, 256, 128, 64, 32, 64, 128, 256, 512]
-  elif model_architecture == 'conv1D':
-    n_layers = 7
-    width = [128, 64, 32, 16, 32, 64, 128]
-  elif model_architecture == 'MLP_attention':
-    n_layers = 3
-    width = [512]*3
-  else:
-    raise ValueError('Invalid NN model type')
+    model_architecture = model_architecture.lower()
+    match model_architecture:
+        case 'mlp_small':
+            n_layers = 3
+            width = [512]*3
+        case 'mlp_big':
+            n_layers = 7
+            width = [256] + [512]*5 + [256]
+        case 'mlp_huge':
+            n_layers = 12
+            width = [256] + [512]*10 + [256]
+        case 'mlp_small_unet':
+            n_layers = 9
+            width = [512, 256, 128, 64, 32, 64, 128, 256, 512]
+        case 'conv1d':
+            n_layers = 7
+            width = [128, 64, 32, 16, 32, 64, 128]
+        case 'mlp_attention':
+            n_layers = 3
+            width = [512]*3
+        case 'mlp_medium':
+            n_layers = 5
+            width = [256, 512, 512, 512, 256]
+        case 'gnn':
+            n_layers = 6
+            width = [128, 256, 256, 256, 128, 64]
+        case 'fno3d':
+            n_layers = 4
+            width = [64, 128, 128, 64]
+        case _:
+            raise ValueError('Invalid NN model type')
 
-  return n_layers, width
+    return n_layers, width
 
 
 import numpy as np

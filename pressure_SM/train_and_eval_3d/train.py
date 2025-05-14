@@ -27,7 +27,7 @@ for device in physical_devices:
     tf.config.experimental.set_memory_growth(device, True)
 
 from . import utils
-from .NNs import MLP, densePCA_attention, conv1D_PCA, FNO3d, GNN
+from .neural_networks import MLP, dense_attention, conv1D, FNO3d, GNN
 import warnings
 
 warnings.filterwarnings("ignore", message="Unmanaged memory use is high")
@@ -74,9 +74,9 @@ class Training:
       return 1e6 * loss
     return loss_f
 
-  def prepare_data_to_tf(self, ranks: int, outarray_fn: str = 'gridded_sim_data.h5', outarray_flat_fn: str= 'PC_data.h5'):
+  def prepare_data_to_tf(self, gridded_h5_fn: str = 'gridded_sim_data.h5', outarray_flat_fn: str= 'features_data.h5', flatten_data: bool = False):
 
-    self.gridded_h5_fn = outarray_fn
+    self.gridded_h5_fn = gridded_h5_fn
     filename_flat = outarray_flat_fn
      
     print('Loading Blocks data\n')
@@ -86,12 +86,13 @@ class Training:
     f.close()
 
     standardization_method="std"
-    print(f'Normalizing PCA data based on standardization method: {standardization_method}')
+    print(f'Normalizing feature data based on standardization method: {standardization_method}')
     x, y = utils.normalize_feature_data(input, output, standardization_method)
     x, y = utils.unison_shuffled_copies(x, y)
     print('Data shuffled \n')
-    x = x.reshape((x.shape[0], x.shape[1], 1, 1))
-    y = y.reshape((y.shape[0], y.shape[1], 1, 1))
+    if flatten_data:
+      x = x.reshape((x.shape[0], x.shape[1], 1, 1))
+      y = y.reshape((y.shape[0], y.shape[1], 1, 1))
 
     # Convert values to compatible tf Records - much faster
     split = 0.9
@@ -117,7 +118,8 @@ class Training:
       regularization,
       model_architecture,
       new_model,
-      ranks):
+      ranks,
+      flatten_data):
 
     train_path = 'train_data.tfrecords'
     test_path = 'test_data.tfrecords'
@@ -129,31 +131,35 @@ class Training:
 
     self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=beta_1, beta_2=0.999, epsilon=1e-08)#, decay=0.45*lr, amsgrad=True)
     self.loss_object = self.my_mse_loss()
-    # Model selection and initialization using match-case (Python 3.10+)
+
+    print(model_architecture)
     if new_model:
-      match model_architecture:
-        case 'MLP_small' | 'MLP_big' | 'MLP_small_unet' | 'MLP_huge' | 'MLP_huger':
+      model_architecture_norm = model_architecture.lower()
+      match model_architecture_norm:
+        case 'mlp_small' | 'mlp_big' | 'mlp_small_unet' | 'mlp_huge' | 'mlp_huger':
           self.model = MLP(
           n_layers, width,
           ranks * ranks * ranks * ranks,
           ranks * ranks * ranks,
           dropout_rate, regularization
           )
-        case 'conv1D':
-          self.model = conv1D_PCA(
+        case 'conv1d':
+          self.model = conv1D(
           n_layers, width,
-          self.PC_input, self.PC_p,
+          ranks * ranks * ranks * ranks,
+          ranks * ranks * ranks,
           dropout_rate, regularization
           )
-        case 'MLP_attention':
-          self.model = densePCA_attention(
+        case 'mlp_attention':
+          self.model = dense_attention(
           n_layers, width,
-          self.PC_input, self.PC_p,
+          ranks * ranks * ranks * ranks,
+          ranks * ranks * ranks,
           dropout_rate, regularization
           )
-        case 'GNN':
-          self.model = GNN()
-        case 'FNO3d':
+        case 'gnn':
+            self.model = GNN()
+        case 'fno3d':
           self.model = FNO3d()
         case _:
           raise ValueError('Invalid NN model type')
@@ -173,9 +179,11 @@ class Training:
       losses_test = []
 
       for step, (inputs, labels) in enumerate(self.train_dataset):
-
-        inputs = tf.cast(inputs[...,0,0], dtype='float32')
-        labels = tf.cast(labels[...,0,0], dtype='float32')
+        if flatten_data:
+          inputs = inputs[..., 0, 0]
+          labels = labels[..., 0, 0]
+        inputs = tf.cast(inputs, dtype='float32')
+        labels = tf.cast(labels, dtype='float32')          
         loss = self.train_step(inputs, labels)
         losses_train.append(loss)
 

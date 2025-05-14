@@ -5,7 +5,6 @@ import pickle as pk
 from math import ceil
 import tensorly as tl
 from tensorly.decomposition import tucker
-import utils
 from . import utils
 
 import dask.distributed
@@ -29,7 +28,7 @@ class CFDDataProcessor:
         chunk_size: int,
         gridded_h5_fn: str
     ):
-    
+
     self.grid_res = grid_res
     self.block_size = block_size
     self.var_in = var_in
@@ -329,10 +328,10 @@ class FeatureExtractAndWrite:
     output_core = tl.tenalg.multi_mode_dot(pressure, self.output_factors[1:], modes=[1, 2, 3], transpose=True)
 
     if self.flatten_data:
-        input_features = input_core.reshape(chunk_size, -1)
-        output_features = output_core.reshape(chunk_size, -1)
+        input_core = input_core.reshape(chunk_size, -1)
+        output_core = output_core.reshape(chunk_size, -1)
 
-    return input_features, output_features
+    return input_core, output_core
 
   def transform_and_write_blocks_to_features(
     self,
@@ -344,9 +343,16 @@ class FeatureExtractAndWrite:
     sample_indices_per_sim_per_time
   ) -> None:
     with tables.open_file(filename_flat, mode='w') as file:
-      atom = tables.Float32Atom()
-      file.create_earray(file.root, 'inputs', atom, (0, ranks * ranks * ranks * ranks))
-      file.create_earray(file.root, 'outputs', atom, (0, ranks * ranks * ranks))
+        atom = tables.Float32Atom()
+        if self.flatten_data:
+          input_shape = (0, ranks * ranks * ranks * ranks)
+          output_shape = (0, ranks * ranks * ranks)
+        else:
+          input_shape = (0, ranks, ranks, ranks, ranks)
+          output_shape = (0, ranks, ranks, ranks)
+
+        file.create_earray(file.root, 'inputs', atom, input_shape)
+        file.create_earray(file.root, 'outputs', atom, output_shape)
 
     client = dask.distributed.Client(processes=False)
 
@@ -355,7 +361,7 @@ class FeatureExtractAndWrite:
     self.max_abs_delta_Ux, self.max_abs_delta_Uy, self.max_abs_delta_Uz, self.max_abs_dist, self.max_abs_delta_p = maxs
 
     # Compute representative factors once for all sims
-    N_representative = 2500
+    N_representative = 500 #2500
     N_representative_per_sim = int(N_representative / (self.last_sim - self.first_sim) / (self.last_t - self.first_t))
     sample_indices_per_sim_per_time_representative = utils.define_sample_indexes(
       N_representative_per_sim,
@@ -373,17 +379,17 @@ class FeatureExtractAndWrite:
     all_outputs = []
 
     for sim in range(self.first_sim, self.last_sim):
-      inputs_u, inputs_obst, outputs = self.sample_blocks_chunked(
-        sim,
-        t_start=self.first_t,
-        t_end=self.last_t,
-        i_chunk=None,
-        n_chunks=False,
-        sample_indices=sample_indices_per_sim_per_time_representative
-      )
-      all_inputs_u.append(inputs_u)
-      all_inputs_obst.append(inputs_obst)
-      all_outputs.append(outputs)
+        inputs_u, inputs_obst, outputs = self.sample_blocks_chunked(
+            sim,
+            t_start=self.first_t,
+            t_end=self.last_t,
+            i_chunk=None,
+            n_chunks=False,
+            sample_indices=sample_indices_per_sim_per_time_representative
+            )
+        all_inputs_u.append(inputs_u)
+        all_inputs_obst.append(inputs_obst)
+        all_outputs.append(outputs)
 
     all_inputs_u = np.concatenate(all_inputs_u)
     all_inputs_obst = np.concatenate(all_inputs_obst)
@@ -393,24 +399,24 @@ class FeatureExtractAndWrite:
     self.get_representative_factors(representative_blocks, ranks=ranks)
 
     for sim in range(self.first_sim, self.last_sim):
-      print(f'Transforming data from sim {sim + 1}/[{self.first_sim}, {self.last_sim}]...')
-      for i_chunk in range(chunks_per_sim):
-        for sub_chunk in range(n_sub_chunks):
-          print(f' -Sampling block data for chunk {i_chunk + 1}/{chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)
-          blocks_data = self.sample_blocks_chunked(
-            sim,
-            t_start=i_chunk * n_times_per_chunk,
-            t_end=min((i_chunk + 1) * n_times_per_chunk, self.last_t),
-            i_chunk=sub_chunk,
-            n_chunks=n_sub_chunks,
-            sample_indices=sample_indices_per_sim_per_time
-          )
+        print(f'Transforming data from sim {sim + 1}/[{self.first_sim}, {self.last_sim}]...')
+        for i_chunk in range(chunks_per_sim):
+            for sub_chunk in range(n_sub_chunks):
+                print(f' -Sampling block data for chunk {i_chunk + 1}/{chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)
+                blocks_data = self.sample_blocks_chunked(
+                sim,
+                t_start=i_chunk * n_times_per_chunk,
+                t_end=min((i_chunk + 1) * n_times_per_chunk, self.last_t),
+                i_chunk=sub_chunk,
+                n_chunks=n_sub_chunks,
+                sample_indices=sample_indices_per_sim_per_time
+                )
 
-          print(f' -Transforming grid data to tensor cores for chunk {i_chunk + 1}/{chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)
-          in_features, out_features = self.transform_data_with_tucker(blocks_data, client, ranks)
+                print(f' -Transforming grid data to tensor cores for chunk {i_chunk + 1}/{chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)
+                in_features, out_features = self.transform_data_with_tucker(blocks_data, client, ranks)
 
-          with tables.open_file(filename_flat, mode='a') as f:
-            f.root.inputs.append(np.array(in_features))
-            f.root.outputs.append(np.array(out_features))
+                with tables.open_file(filename_flat, mode='a') as f:
+                    f.root.inputs.append(np.array(in_features))
+                    f.root.outputs.append(np.array(out_features))
 
     client.close()

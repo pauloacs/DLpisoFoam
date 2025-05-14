@@ -30,13 +30,7 @@ physical_devices = tf.config.list_physical_devices('GPU')
 for device in physical_devices:
     tf.config.experimental.set_memory_growth(device, True)
 
-# Dask and related imports
-import dask
-import dask.config
-import dask.distributed
-
 from . import utils
-from .NNs import MLP
 import warnings
 from .data_processor import CFDDataProcessor, FeatureExtractAndWrite
 from .train import Training
@@ -51,11 +45,10 @@ def main_train(dataset_path, first_sim, last_sim, first_t, last_t, num_epoch, lr
 
   new_model = new_model.lower() == 'true'
 
-  if 'MLP' in model_architecture:
+  if 'mlp' in model_architecture.lower():
     flatten_data = True
   else:
     flatten_data = False
-
 
   n_layers, width = utils.define_model_arch(model_architecture)
 
@@ -134,8 +127,8 @@ def main_train(dataset_path, first_sim, last_sim, first_t, last_t, num_epoch, lr
     feature_writer.write_features_to_h5(outarray_flat_fn, chunk_size, ranks)
 
   # If you want to read the crude dataset (hdf5) again, delete the gridded_h5_fn file
-  Train.prepare_data_to_tf(ranks, gridded_h5_fn, outarray_flat_fn) #prepare and save data to tf records
-  Train.load_data_and_train(lr, batch_size, model_name, beta, num_epoch, n_layers, width, dropout_rate, regularization, model_architecture, new_model, ranks)
+  Train.prepare_data_to_tf(gridded_h5_fn, outarray_flat_fn, flatten_data) #prepare and save data to tf records
+  Train.load_data_and_train(lr, batch_size, model_name, beta, num_epoch, n_layers, width, dropout_rate, regularization, model_architecture, new_model, ranks, flatten_data)
 
 if __name__ == '__main__':
 
