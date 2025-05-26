@@ -41,3 +41,4 @@ simulation_data
 pressureSM.egg-info
 
 exclude*
+*.egg-info

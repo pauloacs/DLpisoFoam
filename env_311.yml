@@ -1,4 +1,4 @@
-name: python311
+name: python311_solver
 channels:
   - conda-forge
 dependencies:
