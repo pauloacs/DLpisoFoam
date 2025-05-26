@@ -21,6 +21,7 @@ dist/
 *.so
 *.a
 *.out
+linux64GccDPInt32Opt/
 
 # Ignore system files
 .DS_Store
