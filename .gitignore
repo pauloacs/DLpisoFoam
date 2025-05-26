@@ -39,3 +39,5 @@ train_SM_*
 
 simulation_data
 pressureSM.egg-info
+
+exclude*
