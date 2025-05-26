@@ -15,24 +15,41 @@ mpi4py.rc.finalize = False
 from mpi4py import MPI
 
 #from surrogate_models.deltau_to_deltap.main import load_pca_and_NN
-from pressureSM.CFD_usable.main import load_pca_and_NN
+from pressure_SM._3D.CFD_usable.main import load_tucker_and_NN
 
-pca_input_fn = "pca_in.pkl"
-pca_output_fn = "pca_p.pkl"
+tucker_factors_fn = "tucker_factors.pkl"
 maxs_fn = "maxs"
-PCA_std_vals_fn = "mean_std.npz"
+std_vals_fn = "mean_std.npz"
 weights_fn = "weights.h5"
-var = 0.95
-model_arch = "MLP_huge"
+model_arch = "MLP_small"
 apply_filter = True
-overlap_ratio = 0.5
+overlap_ratio = 0.25
 filter_tuple = (20,20)
 verbose = True
+block_size = 16
+grid_res = 4e-3
+dropout_rate = 0.1
+regularization=None
 
-load_pca_and_NN(pca_input_fn, pca_output_fn, maxs_fn, PCA_std_vals_fn, weights_fn, var, model_arch, apply_filter, overlap_ratio, filter_tuple, verbose)
+# Load PCA and Neural Network models with specified parameters
+load_tucker_and_NN(
+    tucker_factors_fn,
+    maxs_fn,
+    std_vals_fn,
+    weights_fn,
+    model_arch,
+    apply_filter,
+    overlap_ratio,
+    filter_tuple,
+    block_size,
+    grid_res,
+    dropout_rate,
+	regularization,
+    verbose
+)
 
 #from surrogate_models.deltau_to_deltap.main import init_func, py_func
-from pressureSM.CFD_usable.main import init_func, py_func
+from pressure_SM._3D.CFD_usable.main import init_func, py_func
 
 if __name__ == '__main__':
     print('This is the Python module for DLPoissonFoam')
