@@ -30,7 +30,7 @@
 ## Simulation details
 
 # Domain
-Domain L = 0.75
+Domain L = 1
 Height between plates H = 0.1
 Distance from inlet to obstacle d = 0.2
 
@@ -39,6 +39,12 @@ plate length - L
 angle of attack - alpha
 
 # Thermophysical properties
-Air: 
-Cp = 1005
-...
+Water:
+
+kinematic viscosity @20ºC = 1.053E-6 m^2/s
+
+# Flow characteristics
+
+- Adiabatic
+- Varying Re from 500 up to 500 000
+- Confined Flow over inclined plates

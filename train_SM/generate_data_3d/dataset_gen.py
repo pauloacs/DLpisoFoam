@@ -21,7 +21,7 @@ def extract_simulation_data_bound(serial, patch, path_to_sims, total_times, delt
       for time in range(int(total_times)):
 
         #t = deltat*(time*avance+1)
-        t = round(deltat*(time*avance+1)*10000)/10000
+        t = round(deltat*(time*avance+1)*1000000)/1000000
         if t % 1 == 0 :
           t = round(t)
 
@@ -41,15 +41,15 @@ def extract_simulation_data(serial, path_to_sims, total_times, deltat, avance, m
     data = {'Ux': [], 'Uy': [], 'Uz': [],
             'Cx': [], 'Cy': [], 'Cz': [],
             'delta_Ux': [], 'delta_Uy': [], 'delta_Uz': [],
-            'delta_Ux_prev': [], 'delta_Uy_prev': [], 'delta_Uz_prev': [],
+#            'delta_Ux_prev': [], 'delta_Uy_prev': [], 'delta_Uz_prev': [],
             'p': [], 'delta_p': [], 'delta_p_prev': [],
             }
 
-    for entity in ['U_non_cons', 'Cx', 'Cy', 'Cz', 'delta_U', 'delta_p', 'delta_U_prev', 'p', 'delta_p_prev']:
+    for entity in ['U_non_cons', 'Cx', 'Cy', 'Cz', 'delta_U', 'delta_p',  'p', 'delta_p_prev']: #'delta_U_prev']:
       for time in range(int(total_times)):
 
         #t = round(deltat*(time*avance+1)*100)/100
-        t = round(deltat*(time*avance+1)*10000)/10000
+        t = round(deltat*(time*avance+1)*1000000)/1000000
         if t % 1 == 0 :
           t = round(t)
         path = f"{path_to_sims}/{serial}/VTK/{serial}_{t}.vtk"
@@ -68,10 +68,10 @@ def extract_simulation_data(serial, path_to_sims, total_times, deltat, avance, m
             data['delta_Ux'].append(padding(mesh_cell_data[entity][:,0],max))
             data['delta_Uy'].append(padding(mesh_cell_data[entity][:,1],max))
             data['delta_Uz'].append(padding(mesh_cell_data[entity][:,2],max))
-        elif entity == 'delta_U_prev':
-            data['delta_Ux_prev'].append(padding(mesh_cell_data[entity][:,0],max))
-            data['delta_Uy_prev'].append(padding(mesh_cell_data[entity][:,1],max))
-            data['delta_Uz_prev'].append(padding(mesh_cell_data[entity][:,2],max))
+#        elif entity == 'delta_U_prev':
+#            data['delta_Ux_prev'].append(padding(mesh_cell_data[entity][:,0],max))
+#            data['delta_Uy_prev'].append(padding(mesh_cell_data[entity][:,1],max))
+#            data['delta_Uz_prev'].append(padding(mesh_cell_data[entity][:,2],max))
         else:
             extent = 0, 3, 0, 1
             data[entity].append(padding(mesh_cell_data[entity], max))
@@ -122,10 +122,10 @@ def process_simulation(sim, path_to_sims, avance_list, hdf5_file, total_times, m
     hdf5_file['sim_data'][sim, ..., 8] = data['delta_Uy']
     hdf5_file['sim_data'][sim, ..., 9] = data['delta_Uz']
     hdf5_file['sim_data'][sim, ..., 10] = data['delta_p']
-    hdf5_file['sim_data'][sim, ..., 11] = data['delta_Ux_prev']
-    hdf5_file['sim_data'][sim, ..., 12] = data['delta_Uy_prev']
-    hdf5_file['sim_data'][sim, ..., 13] = data['delta_Uz_prev']
-    hdf5_file['sim_data'][sim, ..., 14] = data['delta_p_prev']
+#    hdf5_file['sim_data'][sim, ..., 11] = data['delta_Ux_prev']
+#    hdf5_file['sim_data'][sim, ..., 12] = data['delta_Uy_prev']
+#    hdf5_file['sim_data'][sim, ..., 13] = data['delta_Uz_prev']
+    hdf5_file['sim_data'][sim, ..., 11] = data['delta_p_prev']
 
     hdf5_file['y_bot_bound'][sim, ..., 0] = data_y_bot['Cx']
     hdf5_file['y_bot_bound'][sim, ..., 1] = data_y_bot['Cy']
@@ -150,11 +150,11 @@ def process_simulation(sim, path_to_sims, avance_list, hdf5_file, total_times, m
     hdf5_file.flush()
 
 def main():
-    num_sims_actual = 1
-    total_times = 15
-    hdf5_path = 'dataset_plate_heat_3d_1sim_15ts_piso_14apr.hdf5'
+    num_sims_actual = 2
+    total_times = 25
+    hdf5_path = 'dataset_plate_piso_09May_25t_2sim.hdf5'
     path_to_sims = 'simulation_data'
-    max_n_cells_sim = 250000
+    max_n_cells_sim = 750000
     max_n_cells_patch = 100000
 
     avance_list = [1] * 10 #* 50

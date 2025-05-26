@@ -21,7 +21,7 @@ def extract_simulation_data_bound(serial, patch, path_to_sims, total_times, delt
       for time in range(int(total_times)):
 
         #t = deltat*(time*avance+1)
-        t = round(deltat*(time*avance+1)*10000)/10000
+        t = round(deltat*(time*avance+1)*1000000)/1000000
         if t % 1 == 0 :
           t = round(t)
 
@@ -48,7 +48,7 @@ def extract_simulation_data(serial, path_to_sims, total_times, deltat, avance, m
       for time in range(int(total_times)):
 
         #t = round(deltat*(time*avance+1)*100)/100
-        t = round(deltat*(time*avance+1)*10000)/10000
+        t = round(deltat*(time*avance+1)*1000000)/1000000
         if t % 1 == 0 :
           t = round(t)
         path = f"{path_to_sims}/{serial}/VTK/{serial}_{t}.vtk"
@@ -141,11 +141,11 @@ def process_simulation(sim, path_to_sims, avance_list, hdf5_file, total_times, m
     hdf5_file.flush()
 
 def main():
-    num_sims_actual = 1
-    total_times = 15
-    hdf5_path = 'dataset_plate_heat_3d_1sim_15ts_piso_14apr.hdf5'
+    num_sims_actual = 5
+    total_times = 20
+    hdf5_path = 'dataset_plate_piso_16May_20t_5sim.hdf5'
     path_to_sims = 'simulation_data'
-    max_n_cells_sim = 250000
+    max_n_cells_sim = 750000
     max_n_cells_patch = 100000
 
     avance_list = [1] * 10 #* 50

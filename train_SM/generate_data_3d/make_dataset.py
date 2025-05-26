@@ -44,12 +44,12 @@ print(f'Re numbers: {list(Re)}')
 # Makes sure the flow goes through the domain 1.5X
 domain_L = 1
 n_ts = 25
-delta_T_write = np.round(np.array(domain_L * 1.5) / np.array(U_inlet), 4) / n_ts
-deltaT = delta_T_write / 200
+delta_T_write = np.round(np.array(domain_L * 1.5) / np.array(U_inlet) / n_ts, 4)
+deltaT =  np.round(delta_T_write / 200, 4)
 end_time = delta_T_write * n_ts
 
 num_runs = len(L)
-sim_data_path = 'simulation_data'
+sim_data_path = 'simulation_data_1'
 
 # Create the simulation_data directory if it doesn't exist
 if not os.path.exists(sim_data_path):
