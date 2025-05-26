@@ -39,9 +39,31 @@ warnings.filterwarnings("ignore", message="Unmanaged memory use is high")
 warnings.filterwarnings("ignore", message="Sending large graph of size")
 warnings.filterwarnings("ignore", message="full garbage collections took")
 
-def main_train(dataset_path, first_sim, last_sim, first_t, last_t, num_epoch, lr, beta, batch_size, \
-        standardization_method, n_samples_per_frame, block_size, grid_res, ranks, \
-        var_p, var_in, model_architecture, dropout_rate, gridded_h5_fn, outarray_flat_fn, regularization, new_model, chunk_size):
+def main_train(
+  dataset_path,
+  first_sim,
+  last_sim,
+  first_t,
+  last_t,
+  num_epoch,
+  lr,
+  beta,
+  batch_size,
+  standardization_method,
+  n_samples_per_frame,
+  block_size,
+  grid_res,
+  ranks,
+  var_p,
+  var_in,
+  model_architecture,
+  dropout_rate,
+  gridded_h5_fn,
+  outarray_flat_fn,
+  regularization,
+  new_model,
+  chunk_size
+):
 
   new_model = new_model.lower() == 'true'
 

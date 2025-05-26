@@ -1,6 +1,6 @@
 import argparse
-from pressure_SM.train_and_eval_3d_PCA.train import main_train
-from pressure_SM.train_and_eval_3d_PCA.SM_call import call_SM_main
+from pressure_SM._3D.train_and_eval.main import main_train
+from pressure_SM._3D.train_and_eval.SM_call import call_SM_main
 
 def train_entry_point():
     parser = argparse.ArgumentParser(description='Train your Surrogate Model.')
@@ -8,7 +8,7 @@ def train_entry_point():
     # Required arguments
     parser.add_argument('--dataset_path', type=str, required=True,
                         help='Path to dataset')
-    parser.add_argument('--outarray_fn', type=str, required=True,
+    parser.add_argument('--gridded_h5_fn', type=str, required=True,
                         help='Path to dataset')
     parser.add_argument('--first_sim', type=int, required=True,
                         help='First sim')
@@ -50,7 +50,7 @@ def train_entry_point():
                         help='Block size')
     parser.add_argument('--grid_res', type=float, default=1e-3,
                         help='Grid resolution value')
-    parser.add_argument('--max_num_PC', type=int, default=512,
+    parser.add_argument('--ranks', type=int, default=512,
                         help='Max number of PCs')
     parser.add_argument('--chunk_size', type=int, default=50,
                         help='Chunk size.')

@@ -49,82 +49,81 @@ def GNN(
     print(model.summary())
     return model
 
-class SpectralConv3d(Layer):
-    def __init__(self, in_channels, out_channels, modes1, modes2, modes3):
+class SpectralConv3D(tf.keras.layers.Layer):
+    def __init__(self, in_channels, out_channels, modes):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.modes1 = modes1
-        self.modes2 = modes2
-        self.modes3 = modes3
-        self.scale = 1 / (in_channels * out_channels)
-        self.weights_real = self.add_weight(
-            shape=(in_channels, out_channels, modes1, modes2, modes3),
-            initializer="random_normal",
+        self.modes = modes  # e.g., (4, 4, 4)
+
+        # Complex weights: [in_channels, out_channels, *modes]
+        initializer = tf.keras.initializers.GlorotUniform()
+        self.weight_real = self.add_weight(
+            shape=(in_channels, out_channels, *self.modes),
+            initializer=initializer,
             trainable=True,
             name="w_real"
         )
-        self.weights_imag = self.add_weight(
-            shape=(in_channels, out_channels, modes1, modes2, modes3),
-            initializer="random_normal",
+        self.weight_imag = self.add_weight(
+            shape=(in_channels, out_channels, *self.modes),
+            initializer=initializer,
             trainable=True,
             name="w_imag"
         )
 
     def call(self, x):
-        # x: (batch, 4, 4, 4, in_channels)
-        x_ft = tf.signal.fft3d(tf.cast(x, tf.complex64))
-        # Only keep the lower modes and apply learned weights
-        x_ft_low = x_ft[:, :self.modes1, :self.modes2, :self.modes3, :]
-        weights = tf.complex(self.weights_real, self.weights_imag)
-        # (batch, modes1, modes2, modes3, in_channels) x (in_channels, out_channels, modes1, modes2, modes3)
-        # -> (batch, modes1, modes2, modes3, out_channels)
-        x_ft_low = tf.transpose(x_ft_low, [0, 4, 1, 2, 3])  # (batch, in_channels, modes1, modes2, modes3)
-        out_ft_low = tf.einsum('bcmnk,coijk->bomnk', x_ft_low, weights)
-        out_ft_low = tf.transpose(out_ft_low, [0, 2, 3, 4, 1])  # (batch, modes1, modes2, modes3, out_channels)
-        # Zero pad to original size
-        out_ft = tf.zeros_like(x_ft[..., :self.out_channels], dtype=tf.complex64)
-        out_ft = tf.tensor_scatter_nd_update(
-            out_ft,
-            indices=tf.reshape(tf.stack(tf.meshgrid(
-                tf.range(tf.shape(x)[0]),
-                tf.range(self.modes1),
-                tf.range(self.modes2),
-                tf.range(self.modes3),
-                tf.range(self.out_channels),
-                indexing='ij'
-            ), axis=-1), [-1, 5]),
-            updates=tf.reshape(out_ft_low, [-1])
-        )
-        x = tf.signal.ifft3d(out_ft)
-        return tf.math.real(x)
+        x = tf.cast(x, tf.float32)  # Ensure input is float32
+        B, X, Y, Z, C = tf.unstack(tf.shape(x))  # dynamic shapes
 
-def FNO3d(
-    modes1=4, modes2=4, modes3=4,
-    width=32,
-    n_layers=4,
-    input_shape=(4, 4, 4, 4),
-    output_shape=(4, 4, 4)
-):
+        # FFT
+        x_ft = tf.signal.fft3d(tf.cast(x, tf.complex64))  # (B, X, Y, Z, C)
+        x_ft = tf.transpose(x_ft, [0, 4, 1, 2, 3])  # (B, C, X, Y, Z)
+
+        # Only keep the low-frequency modes
+        modes_x, modes_y, modes_z = self.modes
+        x_ft_crop = x_ft[:, :, :modes_x, :modes_y, :modes_z]  # (B, C, mx, my, mz)
+
+        # Build complex weight tensor
+        w_complex = tf.complex(self.weight_real, self.weight_imag)  # (Cin, Cout, mx, my, mz)
+
+        # Multiply in Fourier space
+        out_ft = tf.einsum("bixyz,ioxyz->boxyz", x_ft_crop, w_complex)  # (B, Cout, mx, my, mz)
+
+        # Pad the result back to full size
+        pad_dims = [[0, 0], [0, 0], [0, X - modes_x], [0, Y - modes_y], [0, Z - modes_z]]
+        out_ft_padded = tf.pad(out_ft, pad_dims)
+
+        # Transpose and inverse FFT
+        out_ft_padded = tf.transpose(out_ft_padded, [0, 2, 3, 4, 1])  # (B, X, Y, Z, Cout)
+        x_out = tf.signal.ifft3d(out_ft_padded)
+        return tf.math.real(x_out)
+
+
+from tensorflow.keras import Model, Input, regularizers
+from tensorflow.keras.layers import Dense, Conv3D, LayerNormalization, Add, Lambda
+
+def FNO3d(input_shape=(4, 4, 4, 4), out_channels=1, modes=(4, 4, 4), width=32, n_layers=4):
     """
-    Simple 3D Fourier Neural Operator.
-    Input:  (None, 4, 4, 4, 4)
-    Output: (None, 4, 4, 4)
+    FNO 3D model.
     """
-    inp = Input(shape=input_shape, name="FNO_input")
-    x = layers.Dense(width)(inp)
+    inputs = Input(shape=input_shape, dtype=tf.float32)  # Ensure float32 input
+    x = tf.keras.layers.Conv3D(width, kernel_size=1)(inputs)  # Project to width channels
 
     for _ in range(n_layers):
-        x1 = SpectralConv3d(width, width, modes1, modes2, modes3)(x)
-        x2 = layers.Conv3D(width, 1, padding='same', activation=None)(x)
-        x = layers.Add()([x1, x2])
-        x = layers.Activation('gelu')(x)
+        x1 = SpectralConv3D(width, width, modes)(x)
+        x2 = tf.keras.layers.Conv3D(width, kernel_size=1)(x)
+        x = Add()([x1, x2])
+        x = tf.keras.layers.Activation('gelu')(x)
+        x = LayerNormalization()(x)
 
-    x = layers.Dense(1)(x)  # (None, 4, 4, 4, 1)
-    x = layers.Reshape(output_shape)(x)  # (None, 4, 4, 4)
-    model = Model(inputs=inp, outputs=x, name="FNO3d")
-    print(model.summary())
+    x = tf.keras.layers.Conv3D(64, kernel_size=1, activation='gelu')(x)
+    x = tf.keras.layers.Conv3D(out_channels, kernel_size=1)(x)
+
+    x = tf.squeeze(x, axis=-1) if out_channels == 1 else x  # Output: (4, 4, 4)
+    model = Model(inputs=inputs, outputs=x, name="FNO3D")
+    model.summary()
     return model
+
 
 
 def MLP(n_layers, depth=512, PC_input=None, PC_p=None, dropout_rate=None, regularization=None):

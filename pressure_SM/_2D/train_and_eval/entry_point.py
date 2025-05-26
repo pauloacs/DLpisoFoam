@@ -1,6 +1,6 @@
 import argparse
-from pressure_SM.train_and_eval_3d.main import main_train
-from pressure_SM.train_and_eval_3d.SM_call import call_SM_main
+from pressure_SM._2D.train import main_train
+from pressure_SM._2D.SM_call import call_SM_main
 
 def train_entry_point():
     parser = argparse.ArgumentParser(description='Train your Surrogate Model.')
@@ -8,20 +8,18 @@ def train_entry_point():
     # Required arguments
     parser.add_argument('--dataset_path', type=str, required=True,
                         help='Path to dataset')
-    parser.add_argument('--gridded_h5_fn', type=str, required=True,
+    parser.add_argument('--outarray_fn', type=str, required=True,
                         help='Path to dataset')
-    parser.add_argument('--first_sim', type=int, required=True,
-                        help='First sim')
-    parser.add_argument('--last_sim', type=int, required=True,
-                        help='Last sim')    
+    parser.add_argument('--num_sims', type=int, required=True,
+                        help='Number of simulations')
     parser.add_argument('--last_t', type=int, required=True,
                         help='Last temporal frame to consider')
     parser.add_argument('--num_epoch', type=int, required=True,
                         help='Number of epochs')
     parser.add_argument('--lr', type=float, required=True,
                         help='Learning rate')
-    parser.add_argument('--n_samples_per_frame', type=int, required=True,
-                        help='Number of samples per frame')
+    parser.add_argument('--n_samples', type=float, required=True,
+                        help='Number of samples per simulation')
     parser.add_argument('--var_p', type=float, required=True,
                         help='Var p value')
     parser.add_argument('--var_in', type=float, required=True,
@@ -48,12 +46,12 @@ def train_entry_point():
                         help='Standardization method')
     parser.add_argument('--block_size', type=int, default=128,
                         help='Block size')
-    parser.add_argument('--grid_res', type=float, default=1e-3,
-                        help='Grid resolution value')
-    parser.add_argument('--ranks', type=int, default=512,
+    parser.add_argument('--delta', type=float, default=5e-3,
+                        help='Delta value')
+    parser.add_argument('--max_num_PC', type=int, default=512,
                         help='Max number of PCs')
-    parser.add_argument('--chunk_size', type=int, default=50,
-                        help='Chunk size.')
+    parser.add_argument('--n_chunks', type=int, default=50,
+                        help='Number of chunks in the incremental PCA. Increase this value if OOM error.')
 
     args = parser.parse_args()
 
@@ -82,23 +80,19 @@ def eval_entry_point():
                         help='Var in value')
     parser.add_argument('--dataset_path', type=str, required=True,
                         help='Dataset path')
-    parser.add_argument('--first_sim', type=int, required=True,
-                        help='First simulation')
-    parser.add_argument('--last_sim', type=int, required=True,
-                        help='Last simulation')
-    parser.add_argument('--first_t', type=int, required=True,
-                        help='First time')
-    parser.add_argument('--last_t', type=int, required=True,
-                        help='Last time')
-    
+    parser.add_argument('--n_sims', type=int, required=True,
+                        help='Number of simulations')
+    parser.add_argument('--n_ts', type=int, required=True,
+                        help='Number of timesteps')
+
     # Optional arguments
-    parser.add_argument('--delta', type=float, default=1e-3,
+    parser.add_argument('--delta', type=float, default=5e-3,
                         help='Delta value')
-    parser.add_argument('--block_size', type=int, default=128,
-                        help='Block size')
+    parser.add_argument('--shape', type=int, default=128,
+                        help='Shape value')
     parser.add_argument('--overlap_ratio', type=float, default=0.25,
                         help='Overlap ratio')
-    parser.add_argument('--max_num_PC', type=int, default=512,
+    parser.add_argument('--max_num_PC', type=int, default=128,
                         help='Max number of PCs')
     parser.add_argument('--standardization_method', type=str, default='std',
                         help='Standardization method')

@@ -6,12 +6,12 @@ setup(
     packages=find_packages(),
     entry_points={
         'console_scripts': [
-            'train_script = pressure_SM.train_and_eval.entry_point:train_entry_point',
-            'evaluation_script = pressure_SM.train_and_eval.entry_point:eval_entry_point',
-            'train_3d = pressure_SM.train_and_eval_3d.entry_point:train_entry_point',
-            'eval_3d = pressure_SM.train_and_eval_3d.entry_point:eval_entry_point',
-            'train_3d_PCA = pressure_SM.train_and_eval_3d_PCA.entry_point:train_entry_point',
-            'eval_3d_PCA = pressure_SM.train_and_eval_3d_PCA.entry_point:eval_entry_point'            
+            'train_2d = pressure_SM._2D.train_and_eval.entry_point:train_entry_point',
+            'eval_2d = pressure_SM._2D.train_and_eval.entry_point:eval_entry_point',
+            'train_3d = pressure_SM._3D.train_and_eval.entry_point:train_entry_point',
+            'eval_3d = pressure_SM._3D.train_and_eval.entry_point:eval_entry_point',
+            'train_3d_PCA = pressure_SM._3D.train_and_eval_3d_PCA.entry_point:train_entry_point',
+            'eval_3d_PCA = pressure_SM._3D.train_and_eval_3d_PCA.entry_point:eval_entry_point'            
         ]
     },
     install_requires=[
