@@ -27,7 +27,7 @@ solvers
         nPostSweeps     2;
         nFinestSweeps   2;
         cacheAgglomeration true;
-        nCellsInCoarsestLevel 1000;
+        nCellsInCoarsestLevel 100;
         agglomerator    faceAreaPair;
         mergeLevels     1;
         minIter         2;
@@ -47,7 +47,7 @@ solvers
                 nPostSweeps     2;
                 nFinestSweeps   2;
                 cacheAgglomeration true;
-                nCellsInCoarsestLevel 1000;
+                nCellsInCoarsestLevel 100;
                 agglomerator    faceAreaPair;
                 mergeLevels     1;
                 minIter         2;

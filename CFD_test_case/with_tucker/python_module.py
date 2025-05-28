@@ -14,8 +14,8 @@ mpi4py.rc.initialize = True
 mpi4py.rc.finalize = False
 from mpi4py import MPI
 
-#from surrogate_models.deltau_to_deltap.main import load_pca_and_NN
-from pressure_SM._3D.CFD_usable.main import load_tucker_and_NN
+#from pressure_SM._3D.CFD_usable.main import load_tucker_and_NN
+from pressure_SM._3D.CFD_usable.main_mpi import load_tucker_and_NN
 
 tucker_factors_fn = "tucker_factors.pkl"
 maxs_fn = "maxs"
@@ -25,7 +25,7 @@ model_arch = "MLP_small"
 apply_filter = True
 overlap_ratio = 0.25
 filter_tuple = (20,20)
-verbose = True
+verbose = False
 block_size = 16
 grid_res = 4e-3
 dropout_rate = 0.1
@@ -48,8 +48,8 @@ load_tucker_and_NN(
     verbose
 )
 
-#from surrogate_models.deltau_to_deltap.main import init_func, py_func
-from pressure_SM._3D.CFD_usable.main import init_func, py_func
+#from pressure_SM._3D.CFD_usable.main import init_func, py_func
+from pressure_SM._3D.CFD_usable.main_mpi import init_func, py_func
 
 if __name__ == '__main__':
     print('This is the Python module for DLPoissonFoam')

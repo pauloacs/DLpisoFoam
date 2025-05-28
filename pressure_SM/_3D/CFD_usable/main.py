@@ -233,7 +233,7 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 
 	return 0
 
-def py_func(array_in, U_max_norm):
+def py_func(array_in, U_max_norm, verbose=False):
 	"""
 	Method called at each simulation time step to compute the pressure field based on an input velocity field.
 
@@ -251,7 +251,9 @@ def py_func(array_in, U_max_norm):
 	
 	array_global = [array_in]
 	
-	print('Starting call of SM')
+	if verbose_g:
+		print('Starting call of SM')
+
 	block_size = block_size_g
 
 	t0_py_func = time.time()
@@ -354,13 +356,10 @@ def py_func(array_in, U_max_norm):
 				x_f = x_0 + block_size
 
 				#DEBUGGING print
-				print(f"{(z_0,z_f, y_0,y_f, x_0,x_f)}")
-				print(f"indices: {(i, j, n_x -1 - k)}")
+				#print(f"{(z_0,z_f, y_0,y_f, x_0,x_f)}")
+				#print(f"indices: {(i, j, n_x -1 - k)}")
 				x_list.append(grid[z_0:z_f, y_0:y_f, x_0:x_f, 0:4])
 				indices_list.append([i, j, n_x -1 - k])
-
-				print('done')
-				#print((i, j, k))
 
 	x_array = np.array(x_list)
 

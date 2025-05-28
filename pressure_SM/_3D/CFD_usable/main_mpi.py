@@ -86,50 +86,51 @@ def load_tucker_and_NN(
 	block_size_g = block_size
 	grid_res_g = grid_res
 
-	global in_factors, out_factors
-	print('Loading the Tucker factors')
-	with open(tucker_fn, 'rb') as f:
-		tucker_data = pk.load(f)
-	in_factors = tucker_data['input_factors']
-	out_factors = tucker_data['output_factors']
-
-	## Loading values for blocks normalization
-	maxs = np.loadtxt(maxs_fn)
-	global max_abs_delta_Ux, max_abs_delta_Uy, max_abs_delta_Uz, max_abs_dist, max_abs_delta_p
-	(max_abs_delta_Ux,
-  		max_abs_delta_Uy,
-		max_abs_delta_Uz,
-		max_abs_dist,
-		max_abs_delta_p) = maxs
-	
-	# Loading values for standardization
-	data = np.load(std_vals_fn)
-	global mean_in, std_in, mean_out, std_out
-	mean_in = data['mean_in']
-	std_in = data['std_in']
-	mean_out = data['mean_out']
-	std_out = data['std_out']
-
-	print('Initializing NN')
-	n_layers, width = define_model_arch(model_arch)
-
-	global model
-	input_features_size = 4 * 4 * 4 * 4
-	output_features_size = 4 * 4 * 4
-
-	model = MLP(n_layers, width, input_features_size, output_features_size, dropout_rate, regularization)
-	model.load_weights(weights_fn)
-
 	global comm, rank, nprocs
 	print('Initializing MPI communication in Python')
 	comm = MPI.COMM_WORLD
 	rank = comm.Get_rank()
 	nprocs = comm.Get_size()
 
-	if verbose:
-		print("Neural network initialized.")
-		print(f"Model architecture: {model_arch}")
-		print(f"overlap_ratio: {overlap_ratio}")
+	if rank == 0:
+		global in_factors, out_factors
+		print('Loading the Tucker factors')
+		with open(tucker_fn, 'rb') as f:
+			tucker_data = pk.load(f)
+		in_factors = tucker_data['input_factors']
+		out_factors = tucker_data['output_factors']
+
+		## Loading values for blocks normalization
+		maxs = np.loadtxt(maxs_fn)
+		global max_abs_delta_Ux, max_abs_delta_Uy, max_abs_delta_Uz, max_abs_dist, max_abs_delta_p
+		(max_abs_delta_Ux,
+			max_abs_delta_Uy,
+			max_abs_delta_Uz,
+			max_abs_dist,
+			max_abs_delta_p) = maxs
+		
+		# Loading values for standardization
+		data = np.load(std_vals_fn)
+		global mean_in, std_in, mean_out, std_out
+		mean_in = data['mean_in']
+		std_in = data['std_in']
+		mean_out = data['mean_out']
+		std_out = data['std_out']
+
+		print('Initializing NN')
+		n_layers, width = define_model_arch(model_arch)
+
+		global model
+		input_features_size = 4 * 4 * 4 * 4
+		output_features_size = 4 * 4 * 4
+
+		model = MLP(n_layers, width, input_features_size, output_features_size, dropout_rate, regularization)
+		model.load_weights(weights_fn)
+
+		if verbose:
+			print("Neural network initialized.")
+			print(f"Model architecture: {model_arch}")
+			print(f"overlap_ratio: {overlap_ratio}")
 
 
 def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_boundary, obst_boundary):
@@ -188,12 +189,12 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		z_top = np.concatenate(z_top_global)
 
 		#for debugging purposes
-		np.save('obst.npy', obst)
-		np.save('array.npy', array_concat)
-		np.save('y_bot.npy', y_bot)
-		np.save('z_bot.npy', z_bot)
-		np.save('y_top.npy', y_top)
-		np.save('z_top.npy', z_top)
+		# np.save('obst.npy', obst)
+		# np.save('array.npy', array_concat)
+		# np.save('y_bot.npy', y_bot)
+		# np.save('z_bot.npy', z_bot)
+		# np.save('y_top.npy', y_top)
+		# np.save('z_top.npy', z_top)
 		
 		global indices, sdfunct
 		global vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF
@@ -266,16 +267,15 @@ def py_func(array_in, U_max_norm):
 		ndarray: Predicted pressure field.
 	"""
 	# Gathering all the inputs in 1 thread
-	#if 'comm' in globals() and comm.Get_size() > 1:
-	#	array_global = comm.gather(array_in, root = 0)
-	#else:
+	if 'comm' in globals() and comm.Get_size() > 1:
+		array_global = comm.gather(array_in, root = 0)
+	else:
+		array_global = [array_in]
 	
-	array_global = [array_in]
-	
-	print('Starting call of SM')
 	block_size = block_size_g
 
 	if rank == 0: #running all calculations at rank 0 
+		print('Starting call of SM')
 
 		t0_py_func = time.time()
 
@@ -377,13 +377,11 @@ def py_func(array_in, U_max_norm):
 					x_f = x_0 + block_size
 
 					#DEBUGGING print
-					print(f"{(z_0,z_f, y_0,y_f, x_0,x_f)}")
-					print(f"indices: {(i, j, n_x -1 - k)}")
+					if verbose_g:
+						print(f"{(z_0,z_f, y_0,y_f, x_0,x_f)}")
+						print(f"indices: {(i, j, n_x -1 - k)}")
 					x_list.append(grid[z_0:z_f, y_0:y_f, x_0:x_f, 0:4])
 					indices_list.append([i, j, n_x -1 - k])
-
-					print('done')
-					#print((i, j, k))
 
 		x_array = np.array(x_list)
 
@@ -414,9 +412,10 @@ def py_func(array_in, U_max_norm):
 
 		# Calling the NN to predict the principal components (PC) of the pressure field:
 		# PC_input -> PC_p (if necessary could be done in batches)
-		import pdb; pdb.set_trace()
 
-		res_concat = model.predict(x_input, batch_size=32)
+		# res_concat = model.predict(x_input, batch_size=32)
+		res_concat = np.array(model(x_input))
+
 		t1 = time.time()
 		if verbose_g:
 			print( "Model prediction time : " + str(t1-t0) + " s")
@@ -435,7 +434,6 @@ def py_func(array_in, U_max_norm):
 		if verbose_g:
 			print( "PCA inverse transform : " + str(t1-t0) + " s")
 
-		import pdb; pdb.set_trace()
 		# Redimensionalizing the predicted pressure field
 		res_concat = res_concat * max_abs_delta_p * pow(U_max_norm, 2.0)
 
@@ -445,7 +443,6 @@ def py_func(array_in, U_max_norm):
 
 		# The boundary condition is a fixed pressure of 0 at the output
 		Ref_BC = 0 
-		import pdb; pdb.set_trace()
 
 		deltap_res, change_in_deltap = assemble_prediction(
 			res_concat,
@@ -465,7 +462,6 @@ def py_func(array_in, U_max_norm):
 			deltaP_prev_grid,
 			True,
 		)
-		import pdb; pdb.set_trace()
 
 		t1 = time.time()
 		if verbose_g:
@@ -490,21 +486,29 @@ def py_func(array_in, U_max_norm):
 			print( "The whole python function took : " + str(t1_py_func-t0_py_func) + " s")
 
 		init = 0
+
 		# Dividing p into a list of n elements (consistent with the OF domain decomposition)
 		# This is necessary to enable parallelization in OF
 		p_rankwise = [] 
+
+		# Check if len_rankwise matches the number of ranks and total length
+		if len(len_rankwise) != nprocs:
+			raise ValueError(f"len_rankwise ({len(len_rankwise)}) does not match number of ranks ({nprocs})")
+		if sum(len_rankwise) != len(p):
+			raise ValueError(f"Sum of len_rankwise ({sum(len_rankwise)}) does not match length of p ({len(p)})")
+
 		for length in len_rankwise:
 			end = init + length
 			p_rankwise.append(p[init:end,...])
 			init += length
-		
+
 	else:
 		p_rankwise = None
-	
-	p = comm.scatter(p_rankwise, root = 0)
 
-	if rank ==0:
-		print(memory())
+	# This scatters the value to each worker
+	p = comm.scatter(p_rankwise, root=0)
+	if verbose_g:
+		print(f"Process {rank} received object with shape {p.shape}")
 
 	return p
 
