@@ -9,13 +9,17 @@
 
 # Articles
 
-1 - Application of machine learning to model the pressure poisson equation for fluid flow on generic geometries:
+1 - Application of machine learning to model the pressure Poisson equation for fluid flow on generic geometries:
 https://link.springer.com/article/10.1007/s00521-024-09935-0
-  - This paper contains a deep description of the ML Surrogate Model developed to solve the Pressure Poisson Equation.
+  - This paper contains a detailed description of the ML Surrogate Model developed to solve the Pressure Poisson Equation.
 
 2- Enhancing CFD solver with Machine Learning techniques: 
 https://www.sciencedirect.com/science/article/pii/S004578252400389X
-  - This paper contains the CFD solver benchmark
+  - This paper contains the DLpisoFoam CFD solver benchmark
+
+3- Hybrid Cfd - a Data-Driven Approach to Speed-Up Incompressible Cfd Solvers:
+https://www.researchgate.net/publication/389522957_Hybrid_Cfd_-_a_Data-Driven_Approach_to_Speed-Up_Incompressible_Cfd_Solvers
+  - This paper presents an improved pressure SM and its integration in the DLpisoFoam CFD solver
 
 ## Introduction
 
