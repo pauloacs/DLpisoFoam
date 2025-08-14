@@ -18,12 +18,12 @@ https://www.sciencedirect.com/science/article/pii/S004578252400389X
   - This paper contains the DLpisoFoam CFD solver benchmark
 
 3- Hybrid Cfd - a Data-Driven Approach to Speed-Up Incompressible Cfd Solvers:
-https://www.researchgate.net/publication/389522957_Hybrid_Cfd_-_a_Data-Driven_Approach_to_Speed-Up_Incompressible_Cfd_Solvers
+[https://www.researchgate.net/publication/389522957_Hybrid_Cfd_-_a_Data-Driven_Approach_to_Speed-Up_Incompressible_Cfd_Solvers](https://www.researchgate.net/publication/394002762_Surrogate-Based_Pressure-Velocity_Coupling_Accelerating_Incompressible_Cfd_Flow_Solvers_with_Machine_Learning)
   - This paper presents an improved pressure SM and its integration in the DLpisoFoam CFD solver
 
 ## Introduction
 
-This repository contains the solvers and test cases for the **DLpisoFoam** solver. This solver is based on the OpenFOAM v8 version and is developed to solve the incompressible Navier-Stokes equations using the PISO algorithm. The main goal of this solver is to enhance the pressure-velocity coupling with a Deep Learning surrogate model. The solver has three versions:
+This repository contains the solvers and test cases for the **DLpisoFoam** solver. This solver is based on the OpenFOAM v8 version and is developed to solve the incompressible Navier-Stokes equations using the PISO algorithm. The primary objective of this solver is to improve the pressure-velocity coupling using a Deep Learning surrogate model. The solver has three versions:
 
 ### Latest: 
 
@@ -36,7 +36,7 @@ This repository contains the solvers and test cases for the **DLpisoFoam** solve
 **DLpisoFoam-alg1 and DLpisoFoam-alg2**:
  the solvers developed in https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications. These solvers use the **U_to_p surrogate model** in surrogate_models/u_to_p/. 
 
-Here you can find the DLpisoFoam solvers as well as test cases where those can be used. A DockerFile and everything that is needed to build the docker image is also provided here to ease the installation of the solver.
+Here, you can find the DLpisoFoam solvers, as well as test cases that utilize them. A DockerFile and everything that is needed to build the docker image is also provided here to ease the installation of the solver.
 
 ## How to start
 
