@@ -27,7 +27,7 @@ for device in physical_devices:
     tf.config.experimental.set_memory_growth(device, True)
 
 from . import utils
-from .neural_networks import MLP, dense_attention, conv1D, FNO3d, GNN
+from .neural_networks import MLP, dense_attention, conv1D, FNO3d, GNN, MLP_Mixer_3D, SimpleCNN3D, Simple_multi_layer_3D
 import warnings
 
 warnings.filterwarnings("ignore", message="Unmanaged memory use is high")
@@ -36,9 +36,7 @@ warnings.filterwarnings("ignore", message="full garbage collections took")
 
 class Training:
 
-  def __init__(self, var_p, var_in, standardization_method):
-    self.var_in = var_in
-    self.var_p = var_p
+  def __init__(self, standardization_method):
     self.standardization_method = standardization_method
   
   @tf.function
@@ -52,13 +50,14 @@ class Training:
     return loss
 
   #@tf.function
-  def perform_validation(self):
+  def perform_validation(self, flatten_data):
 
     losses = []
 
     for (x_val, y_val) in self.test_dataset:
-      x_val = tf.cast(x_val[...,0,0], dtype='float32')
-      y_val = tf.cast(y_val[...,0,0], dtype='float32')
+      if flatten_data:
+        x_val = tf.cast(x_val[...,0,0], dtype='float32')
+        y_val = tf.cast(y_val[...,0,0], dtype='float32')
 
       val_logits = self.model(x_val)
       val_loss = self.loss_object(y_true = y_val , y_pred = val_logits)
@@ -71,7 +70,7 @@ class Training:
 
       loss = tf.reduce_mean(tf.square(y_true - y_pred) )
 
-      return 1e6 * loss
+      return 100 * loss
     return loss_f
 
   def prepare_data_to_tf(self, gridded_h5_fn: str = 'gridded_sim_data.h5', outarray_flat_fn: str= 'features_data.h5', flatten_data: bool = False):
@@ -139,28 +138,37 @@ class Training:
         case 'mlp_small' | 'mlp_big' | 'mlp_small_unet' | 'mlp_huge' | 'mlp_huger':
           self.model = MLP(
           n_layers, width,
-          ranks * ranks * ranks * ranks,
+          ranks * ranks * ranks * 4,
           ranks * ranks * ranks,
           dropout_rate, regularization
           )
         case 'conv1d':
           self.model = conv1D(
           n_layers, width,
-          ranks * ranks * ranks * ranks,
+          ranks * ranks * ranks * 4,
           ranks * ranks * ranks,
           dropout_rate, regularization
           )
         case 'mlp_attention':
           self.model = dense_attention(
           n_layers, width,
-          ranks * ranks * ranks * ranks,
+          ranks * ranks * ranks * 4,
           ranks * ranks * ranks,
           dropout_rate, regularization
           )
         case 'gnn':
-            self.model = GNN()
+            self.model = GNN(ranks)
         case 'fno3d':
-          self.model = FNO3d()
+          self.model = FNO3d(ranks)
+        case 'mixer':
+          self.model = MLP_Mixer_3D(n_layers, ranks, dropout_rate=dropout_rate, regularization=regularization)
+        case 'cnn':
+          self.model = SimpleCNN3D(ranks)
+        case 'multi_layer_3d':
+          self.model = Simple_multi_layer_3D(
+            ranks, n_layers=n_layers, width=width,
+            dropout_rate=dropout_rate, regularization=regularization
+          )
         case _:
           raise ValueError('Invalid NN model type')
     else:
@@ -183,11 +191,12 @@ class Training:
           inputs = inputs[..., 0, 0]
           labels = labels[..., 0, 0]
         inputs = tf.cast(inputs, dtype='float32')
-        labels = tf.cast(labels, dtype='float32')          
+        labels = tf.cast(labels, dtype='float32')
+
         loss = self.train_step(inputs, labels)
         losses_train.append(loss)
 
-      losses_val  = self.perform_validation()
+      losses_val  = self.perform_validation(flatten_data)
 
       losses_train_mean = np.mean(losses_train)
       losses_val_mean = np.mean(losses_val)
@@ -204,7 +213,7 @@ class Training:
         print("Callback_EarlyStopping signal received at epoch= %d/%d"%(epoch,num_epoch))
         break
 
-      if epoch > 20:
+      if epoch > 5:
         mod = 'model_' + model_name + '.h5'
         if losses_val_mean < min_yet:
           print(f'saving model: {mod}', flush=True)

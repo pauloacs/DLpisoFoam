@@ -650,8 +650,8 @@ def define_model_arch(model_architecture: str) -> tuple[int, list]:
             n_layers = 12
             width = [256] + [512]*10 + [256]
         case 'mlp_small_unet':
-            n_layers = 9
-            width = [512, 256, 128, 64, 32, 64, 128, 256, 512]
+            width = [512, 512, 256, 256, 128] #, 256, 512]
+            n_layers = len(width)
         case 'conv1d':
             n_layers = 7
             width = [128, 64, 32, 16, 32, 64, 128]
@@ -667,6 +667,15 @@ def define_model_arch(model_architecture: str) -> tuple[int, list]:
         case 'fno3d':
             n_layers = 4
             width = [64, 128, 128, 64]
+        case 'mixer':
+            n_layers=3
+            width = [512]*3
+        case 'cnn':
+            n_layers = None
+            width = None
+        case 'multi_layer_3d':
+            n_layers = 5
+            width = 128
         case _:
             raise ValueError('Invalid NN model type')
 
@@ -765,6 +774,91 @@ def plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indi
     else:
         plt.show()
 
+
+def plot_cfd_results_3d_helper(cfd_results, no_flow_bool, slices_indices=None, fig_path=None, alpha_boundary=0.4):
+    """
+    Plot multiple slices of the CFD results field in 3D, with a view to show the overall domain shape.
+
+    Args:
+        cfd_results (ndarray): CFD results array, shape (Z, Y, X).
+        no_flow_bool (ndarray): Boolean mask for no-flow regions.
+        slices_indices (list, optional): Indices of slices to plot. If None, plot every 10th slice.
+        fig_path (str, optional): Path to save the figure. If None, the plot is displayed.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib import cm
+    from matplotlib.colors import Normalize
+    import numpy as np
+
+    # Mask the CFD results
+    masked_cfd = np.where(no_flow_bool, np.nan, cfd_results)
+
+    # Choose slices to plot
+    if slices_indices is None:
+        slices_indices = list(range(0, masked_cfd.shape[0], max(1, masked_cfd.shape[0] // 10)))
+
+    # Create meshgrid
+    X, Y = np.meshgrid(np.arange(masked_cfd.shape[2]), np.arange(masked_cfd.shape[1]))
+
+    # Set colormap and normalization
+    cmap = cm.RdYlBu
+    vmin = np.nanmin(masked_cfd)
+    vmax = np.nanmax(masked_cfd)
+    norm = Normalize(vmin=vmin, vmax=vmax)
+
+    # Create figure and axis
+    fig = plt.figure(figsize=(14, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot CFD results slices
+    for idx in slices_indices:
+        Z = np.full_like(X, idx)
+        alpha = 1 if (idx == slices_indices[0] or idx==slices_indices[-1]) else 0.5
+        facecolors = cmap(norm(masked_cfd[idx, :, :]))
+        # Instead of making NaNs fully transparent, keep their alpha the same as others
+        # (i.e., do not modify the alpha channel for NaNs)
+        # If you want to ensure all alphas are the same, set it explicitly:
+        facecolors[..., 3] = alpha
+        ax.plot_surface(X, Y, Z, facecolors=facecolors, rstride=1, cstride=1, linewidth=0, edgecolor='none', antialiased=False)
+
+    # Plot boundary slices with transparency
+
+    # X=0 and X=-1 (YZ planes)
+    X0 = np.zeros_like(masked_cfd[:, :, 0])
+    XN = np.full_like(masked_cfd[:, :, -1], masked_cfd.shape[2] - 1)
+    facecolors_x0 = cmap(norm(masked_cfd[:, :, 0]))
+    facecolors_x0[..., 3] = alpha_boundary
+    ax.plot_surface(X0, np.arange(masked_cfd.shape[1])[:, None], np.arange(masked_cfd.shape[0])[None, :], 
+                    facecolors=facecolors_x0.transpose(1,0,2), rstride=1, cstride=1, linewidth=0, edgecolor='none', antialiased=False)
+    facecolors_xn = cmap(norm(masked_cfd[:, :, -1]))
+    facecolors_xn[..., 3] = alpha_boundary
+    ax.plot_surface(XN, np.arange(masked_cfd.shape[1])[:, None], np.arange(masked_cfd.shape[0])[None, :], 
+                    facecolors=facecolors_xn.transpose(1,0,2), rstride=1, cstride=1, linewidth=0, edgecolor='none', antialiased=False)
+
+    # Y=0 and Y=-1 (XZ planes)
+    Y0 = np.zeros_like(masked_cfd[:, 0, :])
+    YN = np.full_like(masked_cfd[:, -1, :], masked_cfd.shape[1] - 1)
+    facecolors_y0 = cmap(norm(masked_cfd[:, 0, :]))
+    facecolors_y0[..., 3] = alpha_boundary
+    ax.plot_surface(np.arange(masked_cfd.shape[2])[None, :], Y0, np.arange(masked_cfd.shape[0])[:, None], 
+                    facecolors=facecolors_y0, rstride=1, cstride=1, linewidth=0, edgecolor='none', antialiased=False)
+    facecolors_yn = cmap(norm(masked_cfd[:, -1, :]))
+    facecolors_yn[..., 3] = alpha_boundary
+    ax.plot_surface(np.arange(masked_cfd.shape[2])[None, :], YN, np.arange(masked_cfd.shape[0])[:, None], 
+                    facecolors=facecolors_yn, rstride=1, cstride=1, linewidth=0, edgecolor='none', antialiased=False)
+
+    ax.set_box_aspect([masked_cfd.shape[2], masked_cfd.shape[1], masked_cfd.shape[0]])
+    ax.view_init(elev=20, azim=200)
+    ax.grid(False)
+    ax.set_axis_off()
+    plt.tight_layout()
+    if fig_path:
+        plt.savefig(fig_path, dpi=300, bbox_inches='tight', transparent=True)
+        plt.close(fig)
+    else:
+        plt.show()
+
+
 def plot_inputs_slices(ux, uy, uz, sdf, deltap, slices_indices=[5, 50, 95], fig_path=None):
     """
     Plot slices of the input fields: ux, uy, uz, and density.
@@ -777,41 +871,27 @@ def plot_inputs_slices(ux, uy, uz, sdf, deltap, slices_indices=[5, 50, 95], fig_
         slices_indices (list): Indices of slices to plot.
         fig_path (str, optional): Path to save the figure. If None, the plot is displayed.
     """
-    # Create the figure and axes
-    fig, axs = plt.subplots(len(slices_indices), 5, figsize=(20, 5 * len(slices_indices)))
+    # Create the figure and axes with a wide aspect ratio and reduced height
+    fig_height = 2.5 * len(slices_indices)
+    fig_width = 18  # Wide figure
+    fig, axs = plt.subplots(len(slices_indices), 5, figsize=(fig_width, fig_height), constrained_layout=True)
 
     # Set the column titles
-    axs[0, 0].set_title("ux", fontsize=14, fontweight='bold')
-    axs[0, 1].set_title("uy", fontsize=14, fontweight='bold')
-    axs[0, 2].set_title("uz", fontsize=14, fontweight='bold')
-    axs[0, 3].set_title("SDF", fontsize=14, fontweight='bold')
-    axs[0, 4].set_title("output - deltaP", fontsize=14, fontweight='bold')
+    for col, title in enumerate(["ux", "uy", "uz", "SDF", "output - deltaP"]):
+        axs[0, col].set_title(title, fontsize=14, fontweight='bold', pad=10)
 
     # Plot the slices for each field
     for i, idx in enumerate(slices_indices):
-        axs[i, 0].imshow(ux[idx, :, :], cmap='viridis', origin='lower')
-        axs[i, 0].set_title(f"Slice {idx}/100", fontsize=12, fontweight='bold', loc='left')
-        axs[i, 0].axis("off")
-
-        axs[i, 1].imshow(uy[idx, :, :], cmap='viridis', origin='lower')
-        axs[i, 1].set_title(f"Slice {idx}/100", fontsize=12, fontweight='bold', loc='left')
-        axs[i, 1].axis("off")
-
-        axs[i, 2].imshow(uz[idx, :, :], cmap='viridis', origin='lower')
-        axs[i, 2].set_title(f"Slice {idx}/100", fontsize=12, fontweight='bold', loc='left')
-        axs[i, 2].axis("off")
-
-        axs[i, 3].imshow(sdf[idx, :, :], cmap='viridis', origin='lower')
-        axs[i, 3].set_title(f"Slice {idx}/100", fontsize=12, fontweight='bold', loc='left')
-        axs[i, 3].axis("off")
-
-        axs[i, 4].imshow(deltap[idx, :, :], cmap='viridis', origin='lower')
-        axs[i, 4].set_title(f"Slice {idx}/100", fontsize=12, fontweight='bold', loc='left')
-        axs[i, 4].axis("off")
+        for j, field in enumerate([ux, uy, uz, sdf, deltap]):
+            im = axs[i, j].imshow(field[idx, :, :], cmap='viridis', origin='lower', aspect='auto')
+            axs[i, j].set_title(f"Slice {idx}/100", fontsize=11, fontweight='bold', loc='left')
+            axs[i, j].axis("off")
+            # Optionally add colorbar only for the first row
+            if i == 0:
+                plt.colorbar(im, ax=axs[i, j], fraction=0.03, pad=0.02)
 
     # Adjust layout for better spacing
-    plt.subplots_adjust(hspace=0.5)  # Adjust vertical spacing between rows
-    plt.tight_layout()
+    plt.subplots_adjust(left=0.03, right=0.98, top=0.92, bottom=0.08, wspace=0.15, hspace=0.25)
 
     # Show or save the plot
     if fig_path:
@@ -849,28 +929,31 @@ def plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slic
     norm = Normalize(vmin=vmin, vmax=vmax)
     error_norm = Normalize(vmin=0, vmax=25)
 
-    # Create figure and axes
-    fig, axs = plt.subplots(len(slices_indices), 3, figsize=(15, 5 * len(slices_indices)))
+    # Create figure and axes with improved aspect ratio
+    fig_height = 2.5 * len(slices_indices)
+    fig_width = 45  # Wide figure for better aspect
+    fig, axs = plt.subplots(len(slices_indices), 3, figsize=(fig_width, fig_height))
+    total_slices = masked_deltap.shape[0]
 
     # Plot slices
     for i, idx in enumerate(slices_indices):
         # Plot delta_p predicted
-        axs[i, 0].imshow(masked_deltap[idx, :, :], cmap=cmap, norm=norm, origin='lower')
-        axs[i, 0].set_title(f"delta_p predicted (Slice {idx})", fontsize=12, fontweight='bold')
+        axs[i, 0].imshow(masked_deltap[idx, :, :], cmap=cmap, norm=norm, origin='lower', aspect='auto')
+        axs[i, 0].set_title(f"delta_p predicted (Slice {idx}/{total_slices})", fontsize=30, fontweight='bold')
         axs[i, 0].axis("off")
 
         # Plot CFD results
-        axs[i, 1].imshow(masked_cfd[idx, :, :], cmap=cmap, norm=norm, origin='lower')
-        axs[i, 1].set_title(f"CFD results (Slice {idx})", fontsize=12, fontweight='bold')
+        axs[i, 1].imshow(masked_cfd[idx, :, :], cmap=cmap, norm=norm, origin='lower', aspect='auto')
+        axs[i, 1].set_title(f"CFD results (Slice {idx}/{total_slices})", fontsize=30, fontweight='bold')
         axs[i, 1].axis("off")
 
         # Plot error field
-        axs[i, 2].imshow(masked_error[idx, :, :], cmap=cmap, norm=error_norm, origin='lower')
-        axs[i, 2].set_title(f"Error (%) (Slice {idx})", fontsize=12, fontweight='bold')
+        axs[i, 2].imshow(masked_error[idx, :, :], cmap=cmap, norm=error_norm, origin='lower', aspect='auto')
+        axs[i, 2].set_title(f"Error (%) (Slice {idx}/{total_slices})", fontsize=30, fontweight='bold')
         axs[i, 2].axis("off")
 
-    # Adjust layout
-    plt.tight_layout()
+    # Adjust layout for better spacing
+    plt.subplots_adjust(left=0.03, right=0.98, top=0.92, bottom=0.08, wspace=0.15, hspace=0.25)
 
     # Show or save the plot
     if fig_path:
@@ -1062,298 +1145,3 @@ def calculate_and_save_block_abs_max(
     max_abs_dist,
     max_abs_delta_p
   ])
-
-
-#### ASSEMBLE ALGORITHM
-
-def correct_pred(field_block, bool_block, i, j, k, p_i, p_j, p_k, shape, overlap, n_x, n_z, BC_col, BC_rows, BC_depths, Ref_BC):
-    """
-    Standalone version of _correct_pred for block correction.
-
-    Args:
-        field_block (ndarray): Block of field values.
-        bool_block (ndarray): Boolean mask for the block.
-        i, j, k (int): Block indices (depth, row, column).
-        p_i, p_j, p_k (int): Index offsets for block placement.
-        shape (int): Block shape.
-        overlap (int): Overlap size.
-        n_x (int): Number of blocks in x-direction.
-        n_z (int): Number of blocks in z-direction.
-        BC_col, BC_rows, BC_depths: Boundary condition arrays (can be None for stateless use).
-        Ref_BC: Reference boundary condition (can be None for stateless use).
-
-    Returns:
-        ndarray: Corrected field block.
-    """
-
-    # i - depth index
-    # j - row index
-    # k - column index
-
-    intersect_zone_limit_i = (-p_i-overlap, -p_i)
-    intersect_zone_limit_j = (-p_j-overlap, -p_j)
-    intersect_zone_limit_k = overlap - p_k
-
-    # left_most_k = len(BC_rows) - 1
-    down_most_j = BC_depths.shape[0] - 1
-
-    # Case 1 - 1st correction - based on the outlet fixed pressure boundary condition (Ref_BC)
-    if (i, j, k) == (0, 0, n_x-1):
-        # check value at outlet BC
-        if ~(bool_block[:, :, -1] == 0).all():
-            BC_corr = np.mean(field_block[:, :, -1][bool_block[:, :, -1] != 0]) - Ref_BC
-        else:
-            BC_corr = np.mean(field_block[:, :, -2][bool_block[:, :, -2] != 0]) - Ref_BC
-
-        field_block -= BC_corr
-        BC_col = np.mean(field_block[:, :, :overlap][bool_block[:, :, :overlap] != 0])
-        BC_rows[k] = np.mean(field_block[:, -overlap:, :][bool_block[:, -overlap:, :] != 0])
-        BC_depths[j, k] = np.mean(field_block[-overlap:, :, :][bool_block[-overlap:, :, :] != 0])
-
-    # Case 2 - 1st depth and 1st row - correct from the left
-    elif (i, j) == (0, 0):
-        # Case 2 a)
-        if k > 0:
-            BC_corr = np.mean(field_block[:, :, -overlap:][bool_block[:, :, -overlap:] != 0]) - BC_col
-            field_block -= BC_corr
-            # left-most column
-            if k == 0:
-                BC_col = np.mean(field_block[:, :, :intersect_zone_limit_k][bool_block[:, :, :intersect_zone_limit_k] != 0])
-            else:
-                BC_col = np.mean(field_block[:, :, :overlap][bool_block[:, :, :overlap] != 0])
-        # Case 2 b) - Left-most block
-        else:
-            BC_corr = np.mean(field_block[:, :, -intersect_zone_limit_k:][bool_block[:, :, -intersect_zone_limit_k:] != 0]) - BC_col
-            field_block -= BC_corr
-
-        BC_rows[k] = np.mean(field_block[:, -overlap:, :][bool_block[:, -overlap:, :] != 0])
-        BC_depths[j, k] = np.mean(field_block[-overlap:, :, :][bool_block[-overlap:, :, :] != 0])
-
-    # Case 3 - 1st depth (non 1st row and column)
-    # Correction based on the
-    elif i == 0:
-        # Case 3 a)
-        if j < down_most_j:
-            BC_corr = np.mean(field_block[:, :overlap, :][bool_block[:, :overlap, :] != 0]) - BC_rows[k]
-            field_block -= BC_corr
-
-            # Value stored to be used in the last row depends on p_i
-            if j == down_most_j - 1:
-                BC_rows[k] = np.mean(field_block[:, -(shape-p_j):, :][bool_block[:, -(shape-p_j):, :] != 0])
-            else:
-                BC_rows[k] = np.mean(field_block[:, -overlap:, :][bool_block[:, -overlap:, :] != 0])
-        # Case 3 b) - Last Row
-        else:
-            # j_0 = #intersect_zone_limit_j[0]
-            # j_f = #intersect_zone_limit_j[1]
-            BC_corr = np.mean(field_block[:, :-p_j, :][bool_block[:, :-p_j, :] != 0]) - BC_rows[k]
-            field_block -= BC_corr
-
-        BC_depths[j, k] = np.mean(field_block[-overlap:, :, :][bool_block[-overlap:, :, :] != 0])
-
-    # Case 4 - non 1st depth (any row and column)
-    # Correcting based on depth overlap -> correcting (i, j, k) = (i, 0, 0) for the pressure BC could improve respecting the outlet BC
-    elif i < n_z - 1:
-        BC_corr = np.mean(field_block[:overlap, :, :][bool_block[:overlap, :, :] != 0]) - BC_depths[j, k]
-        field_block -= BC_corr
-        BC_depths[j, k] = np.mean(field_block[-overlap:, :, :][bool_block[-overlap:, :, :] != 0])
-
-    # Case 5 - last depth
-    else:
-        i_0 = intersect_zone_limit_j[0]
-        i_f = intersect_zone_limit_j[1]
-        BC_corr = np.mean(field_block[i_0:i_f, :, :][bool_block[i_0:i_f, :, :] != 0]) - BC_depths[j, k]
-        field_block -= BC_corr
-
-    # # DEBUGGING print
-    # print(f"(i,j,k): {(i,j,k)}")
-    return field_block
-
-
-def assemble_prediction(
-    array,
-    indices_list,
-    n_x,
-    n_y,
-    n_z,
-    overlap,
-    shape,
-    Ref_BC,
-    x_array,
-    apply_filter,
-    shape_x,
-    shape_y,
-    shape_z,
-    deltaU_change_grid,
-    deltaP_prev_grid,
-    apply_deltaU_change_wgt,
-):
-    """
-    Reconstructs the flow domain based on squared blocks.
-    In the first row the correction is based on the outlet fixed value BC.
-
-    In the following rows the correction is based on the overlap region at the top of each new block.
-    This correction from the top ensures better agreement between different rows, leading to overall better results.
-
-    Args:
-        array (ndarray): The array containing the predicted flow fields for each block.
-        indices_list (list): The list of indices representing the position of each block in the flow domain.
-        n_x (int): The number of blocks in the x-direction.
-        n_y (int): The number of blocks in the y-direction.
-        n_z (int): The number of blocks in the z-direction.
-        overlap (int): Overlap size between blocks.
-        shape (int): Size of each block.
-        Ref_BC: Reference boundary condition (not used directly here).
-        x_array (ndarray): Array with block information.
-        apply_filter (bool): Whether to apply a Gaussian filter.
-        shape_x (int): Domain size in x.
-        shape_y (int): Domain size in y.
-        shape_z (int): Domain size in z.
-        deltaU_change_grid (ndarray): Grid for deltaU change weighting.
-        deltaP_prev_grid (ndarray): Previous deltaP grid.
-        apply_deltaU_change_wgt (bool): Whether to apply deltaU change weighting.
-
-    Returns:
-        tuple: (reconstructed domain, change_in_deltap if requested)
-    """
-
-    result_array = np.empty(shape=(shape_z, shape_y, shape_x))
-
-    # Arrays to store average pressure in overlap regions
-    # BC_col - correction between side by side blocks
-    # BC_rows - correction between top and down blocks
-    # BC_depth - correction between blocks in the depth direction
-    BC_col = 0.0
-    BC_rows = np.zeros(n_x)
-    BC_depths = np.zeros((n_y, n_x))
-
-    print(f'Shape: {(shape_z, shape_y, shape_x)}')
-
-    # i index where the lower blocks are located
-    p_i = shape_z - ((shape - overlap) * (n_z - 2) + shape)
-    # j index where the left-most blocks are located
-    p_j = shape_y - ((shape - overlap) * (n_y - 2) + shape)
-    # k index where the left-most blocks are located
-    p_k = shape_x - ((shape - overlap) * (n_x - 1) + shape)
-
-    result = result_array
-
-    # Loop over all the blocks and apply corrections to ensure consistency between overlapping blocks
-    for i_block in range(x_array.shape[0]):
-        i, j, k = indices_list[i_block]
-        flow_bool = x_array[i_block, :, :, :, 3]
-        pred_field = array[i_block, ...]
-
-        # Applying the correction
-        pred_field = correct_pred(
-            pred_field, flow_bool, i, j, k, p_i, p_j, p_k,
-            shape=shape, overlap=overlap, n_x=n_x, n_z=n_z,
-            BC_col=BC_col, BC_rows=BC_rows, BC_depths=BC_depths, Ref_BC=Ref_BC
-        )
-
-        # Last reassembly step:
-        # Assigning the block to the right location in the flow domain
-
-        # # DEBUGGING print
-        # print(f"(i,j,k): {(i,j,k)}")
-
-        # Non last depth
-        if i < n_z - 1:
-            # Last row, first column (right-most)
-            if (j, k) == (n_y - 1, 0):
-                # # DEBUGGING print
-                # print((shape - overlap) * i, (shape - overlap) * i + shape, shape_y - p_j, shape_y, 0, shape)
-                result[(shape - overlap) * i:(shape - overlap) * i + shape,
-                       -p_j:shape_y, :shape] = pred_field[:, -p_j:, :]
-            # Last column (left-most)
-            elif k == 0:
-                # # DEBUGGING print
-                # print((shape - overlap) * i, (shape - overlap) * i + shape,
-                #       (shape - overlap) * j, (shape - overlap) * j + shape,
-                #       0, shape)
-                result[(shape - overlap) * i:(shape - overlap) * i + shape,
-                       (shape - overlap) * j:(shape - overlap) * j + shape,
-                       0:shape] = pred_field
-            # Last row
-            elif j == (n_y - 1):
-                k_ = n_x - k - 1
-                # # DEBUGGING print
-                # print((shape - overlap) * i, (shape - overlap) * i + shape,
-                #       shape_y - p_j, shape_y, shape_x - shape - k_ * (shape - overlap), shape_x - k_ * (shape - overlap))
-                result[(shape - overlap) * i:(shape - overlap) * i + shape,
-                       -p_j:,
-                       shape_x - shape - k_ * (shape - overlap): shape_x - k_ * (shape - overlap)] = pred_field[:, -p_j:, :]
-            else:
-                k_ = n_x - k - 1
-                # # DEBUGGING print
-                # print((shape - overlap) * i, (shape - overlap) * i + shape,
-                #       (shape - overlap) * j, (shape - overlap) * j + shape,
-                #       shape_x - shape - k_ * (shape - overlap), shape_x - k_ * (shape - overlap))
-                result[(shape - overlap) * i:(shape - overlap) * i + shape,
-                       (shape - overlap) * j:(shape - overlap) * j + shape,
-                       shape_x - shape - k_ * (shape - overlap): shape_x - k_ * (shape - overlap)] = pred_field
-        # Last depth
-        else:
-            # Last row, first column (right-most)
-            if (j, k) == (n_y - 1, 0):
-                # # DEBUGGING print
-                # print((shape_z - p_i, shape_z), (shape_y - p_j, shape_y), 0, shape)
-                result[-p_i:,
-                       -p_j:, :shape] = pred_field[-p_i:, -p_j:, :]
-            # Last column (left-most)
-            elif k == 0:
-                # # DEBUGGING print
-                # print(shape_z - p_i, shape_z, shape_y - p_j, shape_y, 0, shape)
-                result[-p_i:,
-                       (shape - overlap) * j:(shape - overlap) * j + shape,
-                       0:shape] = pred_field[-p_i:, :, :]
-            # Last row
-            elif j == (n_y - 1):
-                k_ = n_x - k - 1
-                # # DEBUGGING print
-                # print(shape_z - p_i, shape_z, shape_y - p_j, shape_y, shape_x - shape - k_ * (shape - overlap), shape_x - k_ * (shape - overlap))
-                result[-p_i:,
-                       -p_j:,
-                       shape_x - shape - k_ * (shape - overlap): shape_x - k_ * (shape - overlap)] = pred_field[-p_i:, -p_j:, :]
-            else:
-                k_ = n_x - k - 1
-                # # DEBUGGING print
-                # print(shape_z - p_i, shape_z, (shape - overlap) * j, (shape - overlap) * j + shape, shape_x - shape - k_ * (shape - overlap), shape_x - k_ * (shape - overlap))
-                result[-p_i:,
-                       (shape - overlap) * j:(shape - overlap) * j + shape,
-                       shape_x - shape - k_ * (shape - overlap): shape_x - k_ * (shape - overlap)] = pred_field[-p_i:, :, :]
-
-        # # DEBUGGING: plot slices
-        # if i==0: # and j==3:
-        #     fig, axs = plt.subplots(7, 1, figsize=(15, 5))
-        #     axs[0].imshow(result[(shape-overlap) * i + 1, :, :])
-        #     axs[1].imshow(result[(shape-overlap) * i + 3, :,:])
-        #     axs[2].imshow(result[(shape-overlap) * i + 5, :,:])
-        #     axs[3].imshow(result[(shape-overlap) * i + 7, :,:])
-        #     axs[4].imshow(result[(shape-overlap) * i + 9,:,:])
-        #     axs[5].imshow(result[(shape-overlap) * i + 11,:,:])
-        #     axs[6].imshow(result[(shape-overlap) * i + 13,:,:])
-        #     for ax in axs:
-        #         plt.colorbar(ax.images[0], ax=ax)
-        #     plt.savefig(f"reconstruct/reconstructed_{i_block}.png")
-        #     plt.close(fig)
-
-    # Correction based on the fact the BC is applied at the last cell center and not the cell face...
-    if ~(flow_bool[:, :, -1] == 0).all():
-        result -= np.mean(3 * result[:, :, -1] - result[:, :, -2]) / 3
-    else:
-        result -= np.mean(3 * result[:, :, -2] - result[:, :, -3]) / 3
-
-    ################### this applies a gaussian filter to remove boundary artifacts #################
-    filter_tuple = (10, 10, 10)
-    if apply_filter:
-        result = ndimage.gaussian_filter(result, sigma=filter_tuple, order=0)
-
-    change_in_deltap = None
-    if apply_deltaU_change_wgt:
-        deltaU_change_grid = ndimage.gaussian_filter(deltaU_change_grid, sigma=(5, 5, 5), order=0)
-        change_in_deltap = result - deltaP_prev_grid
-        change_in_deltap = change_in_deltap * deltaU_change_grid
-        change_in_deltap = ndimage.gaussian_filter(change_in_deltap, sigma=filter_tuple, order=0)
-
-    return result, change_in_deltap

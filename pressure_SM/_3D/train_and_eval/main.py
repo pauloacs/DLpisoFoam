@@ -54,8 +54,6 @@ def main_train(
   block_size,
   grid_res,
   ranks,
-  var_p,
-  var_in,
   model_architecture,
   dropout_rate,
   gridded_h5_fn,
@@ -74,15 +72,13 @@ def main_train(
 
   n_layers, width = utils.define_model_arch(model_architecture)
 
-  model_name = f'{model_architecture}-{standardization_method}-{var_p}-drop{dropout_rate}-lr{lr}-reg{regularization}-batch{batch_size}'
+  model_name = f'{model_architecture}-{standardization_method}-drop{dropout_rate}-lr{lr}-reg{regularization}-batch{batch_size}'
 
   if not os.path.isfile(gridded_h5_fn):
     print('Numpy gridded data not available ... Reading original CFD simulations hdf5 dataset\n')
     processor = CFDDataProcessor(
       grid_res=grid_res,
       block_size=block_size,
-      var_p=var_p,
-      var_in=var_in,
       original_dataset_path=dataset_path,
       n_samples_per_frame=n_samples_per_frame,
       first_sim=first_sim,
@@ -96,19 +92,21 @@ def main_train(
     processor.write_gridded_simulation_data()
 
   sample_indices_fn = 'sample_indices_per_sim_per_time.pkl'
-  _ = utils.define_sample_indexes(
-      n_samples_per_frame,
-      block_size,
-      grid_res,
-      first_sim,
-      last_sim,
-      first_t,
-      last_t,
-      dataset_path,
-      sample_indices_fn
-      )
+  if not os.path.isfile(sample_indices_fn):
+    print('Sample indices file not found. Creating new sample indices...')
+    _ = utils.define_sample_indexes(
+        n_samples_per_frame,
+        block_size,
+        grid_res,
+        first_sim,
+        last_sim,
+        first_t,
+        last_t,
+        dataset_path,
+        sample_indices_fn
+        )
 
-  Train = Training(var_p, var_in, standardization_method)
+  Train = Training(standardization_method)
 
   if not os.path.isfile('maxs'):
     utils.calculate_and_save_block_abs_max(
@@ -133,8 +131,6 @@ def main_train(
     feature_writer = FeatureExtractAndWrite(
       grid_res=grid_res,
       block_size=block_size,
-      var_p=var_p,
-      var_in=var_in,
       original_dataset_path=dataset_path,
       n_samples_per_frame=n_samples_per_frame,
       first_sim=first_sim,
@@ -173,8 +169,6 @@ if __name__ == '__main__':
   block_size = 128
   grid_res = 2.5e-4
   max_num_PC = 512 # to not exceed the width of the NN
-  var_p = 0.95
-  var_in = 0.95
 
   model_architecture = 'MLP_small'
   dropout_rate = 0.1
@@ -186,4 +180,4 @@ if __name__ == '__main__':
   new_model = True
 
   main_train(original_dataset_path, first_sim, last_sim, num_ts, num_epoch, lr, beta, batch_size, standardization_method, \
-    n_samples_per_frame, block_size, grid_res, max_num_PC, var_p, var_in, model_architecture, dropout_rate, outarray_fn, outarray_flat_fn, regularization, new_model)
+    n_samples_per_frame, block_size, grid_res, max_num_PC, model_architecture, dropout_rate, outarray_fn, outarray_flat_fn, regularization, new_model)

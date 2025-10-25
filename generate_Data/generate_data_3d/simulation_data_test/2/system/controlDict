@@ -1,0 +1,117 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  4.0                                   |
+|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      controlDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+application     pisoFoam;
+
+startFrom       latestTime;//If we restart simulation continues from the last time step
+
+startTime       0;
+
+stopAt          endTime;
+
+endTime         0.1775;//we stop after 5 s - adjustableRunTime!
+
+deltaT          0.00004;//initial time step size
+
+writeControl    adjustableRunTime;//simulation can automatically adjust the time step according to the Courant number
+
+writeInterval   0.0071;
+
+purgeWrite      0;
+
+writeFormat     ascii;
+
+writePrecision  6;
+
+writeCompression uncompressed;
+
+timeFormat      general;
+
+timePrecision   6;
+
+runTimeModifiable yes;//adjustableRunTime can modifiy the time step size
+
+adjustTimeStep  yes;//adjustableRunTime can modifiy the time step size
+
+//JN: Co = U*dt/dx
+//U is defined by the flow
+//dx is defined by the cell size i.e. the mesh
+//Co should be below or equal to 1
+//dt is the only value, which can guarantee this
+//dt is changed in each time step
+
+maxCo           0.5;//maximum value for Courant number
+maxAlphaCo      0.5;//maximum value for Courant number of the interface water/air
+
+maxDeltaT       2e-3;//maximum time step
+functions
+{
+
+	forceCoeffs1
+	{
+	    // Mandatory entries
+	    type            forceCoeffs;
+	    libs            ("libforces.so");
+	    patches         (obstacle);
+
+
+	    writeControl    adjustableRunTime;
+	    writeInterval    0.05;
+
+	    // Optional entries
+
+	    // Field names
+	    p               p;
+	    U               U;
+            rho         rhoInf;
+            rhoInf      1000;
+
+	    // Reference pressure [Pa]
+	    pRef            0;
+
+	    // Include porosity effects?
+	    porosity        no;
+
+	    // Store and write volume field representations of forces and moments
+	    writeFields     no;
+
+	    // Centre of rotation for moment calculations
+	    CofR            (0 0 0);
+
+	    // Lift direction
+	    liftDir         (0 1 0);
+
+	    // Drag direction
+	    dragDir         (1 0 0);
+
+	    // Pitch axis
+	    pitchAxis       (0 1 0);
+
+	    // Freestream velocity magnitude [m/s]
+	    magUInf         1.5;
+
+	    // Reference length [m]
+	    lRef            0.3;
+
+	    // Reference area [m2]
+	    Aref            0.03; //pi*0,25^2
+
+	    // Spatial data binning
+	    // - extents given by the bounds of the input geometry
+	}
+}
+// ************************************************************************* //

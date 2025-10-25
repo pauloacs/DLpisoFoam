@@ -1,7 +1,7 @@
 import numpy as np
 from scipy import ndimage
 
-#### ASSEMBLE ALGORITH
+#### ASSEMBLY ALGORITHM
 
 def correct_pred(field_block, bool_block, i, j, k, p_i, p_j, p_k, shape, overlap, n_x, n_z, BC_col, BC_rows, BC_depths, Ref_BC):
     """

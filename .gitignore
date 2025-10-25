@@ -42,3 +42,17 @@ pressureSM.egg-info
 
 exclude*
 *.egg-info
+
+# other test cases to ignore
+windAroundBuildings*
+turbineSiting*
+
+# Mesh related
+polyMesh
+cellLevel
+nSurfaceLayers
+pointLevel
+thickness
+thicknessFraction
+
+*local*

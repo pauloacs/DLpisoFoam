@@ -19,7 +19,7 @@ from . import assembly
 from . import utils
 
 class Evaluation():
-	def __init__(self, delta, block_size, overlap, var_p, var_in, dataset_path, model_path, max_num_PC, standardization_method):
+	def __init__(self, delta, block_size, overlap, dataset_path, model_path, standardization_method, ranks):
 		"""
 		Initialize Evaluation class. 
 
@@ -27,38 +27,26 @@ class Evaluation():
 			delta (float): The value of delta.
 			block_size (int): The shape value.
 			overlap (float): The overlap value.
-			var_p (float): The var_p value.
-			var_in (float): The var_in value.
 			dataset_path (str): The path to the dataset.
 			model_path (str): The path to the model.
-			max_num_PC (int): The maximum number of principal components.
 			standardization_method (str): The standardization method.
 
 		Attributes:
 			delta (float): The value of delta.
 			block_size (int): The shape value.
 			overlap (float): The overlap value.
-			var_p (float): The var_p value.
-			var_in (float): The var_in value.
 			dataset_path (str): The path to the dataset.
 			model_path (str): The path to the model.
-			max_num_PC (int): The maximum number of principal components.
 			standardization_method (str): The standardization method.
 			max_abs_delta_Ux (float): The maximum absolute value of delta Ux.
 			max_abs_delta_Uy (float): The maximum absolute value of delta Uy.
 			max_abs_dist (float): The maximum absolute value of dist.
 			max_abs_delta_p (float): The maximum absolute value of delta p.
 			model (tf.keras.Model): The loaded model.
-			pcainput (pkl): The loaded pca input.
-			pcap (pkl): The loaded pca p.
-			pc_p (int): The number of principal components for p.
-			pc_in (int): The number of principal components for input.
 		"""
 		self.delta = delta
 		self.shape = block_size
 		self.overlap = overlap
-		self.var_in = var_in
-		self.var_p = var_p
 		self.dataset_path = dataset_path
 		self.standardization_method = standardization_method
 
@@ -72,8 +60,12 @@ class Evaluation():
 
 		#### loading the model #######
 		if 'MLP_attention_biased' in model_path:
-			from pressureSM_deltas.train import BiasedAttention
+			from .train import BiasedAttention
 			self.model = tf.keras.models.load_model(model_path, custom_objects={'BiasedAttention': BiasedAttention})
+		elif 'fno3d' in model_path.lower():
+			from .neural_networks import SpectralConv3D, FNOBlock3D
+			self.model = tf.keras.models.load_model(model_path, custom_objects={'FNOBlock3D': FNOBlock3D})
+			#self.model = tf.keras.models.load_model(model_path, custom_objects={'SpectralConv3D': SpectralConv3D})
 		else:
 			self.model = tf.keras.models.load_model(model_path)
 		print(self.model.summary())
@@ -84,8 +76,8 @@ class Evaluation():
 			self.input_factors = factors['input_factors']
 			self.output_factors = factors['output_factors']
 
-		self.pc_in = 4*4*4*4
-		self.pc_p = 4*4*4
+		self.input_shape = ranks * ranks * ranks * 4 
+		self.output_shape = ranks * ranks * ranks
 		
 	def computeOnlyOnce(self, sim):
 		"""
@@ -161,7 +153,7 @@ class Evaluation():
 
 		self.indices = indices.astype(int)
 
-	def timeStep(self, sim, time, plot_intermediate_fields, save_plots, show_plots, apply_filter):
+	def timeStep(self, sim, time, plot_intermediate_fields, save_plots, show_plots, apply_filter, apply_deltaU_change_wgt, flatten_data):
 		"""
 		Performs a time step in the simulation.
 
@@ -192,8 +184,8 @@ class Evaluation():
 		delta_p_prev = data[:self.indice,14:15]
 
 		# check where the deltaU has changed in the last time step
-		deltaU_changed = np.abs(delta_U - delta_U_prev).sum(axis=-1)
-		deltaU_changed = deltaU_changed / deltaU_changed.max()
+		#deltaU_changed = np.abs(delta_U - delta_U_prev).sum(axis=-1)
+		#deltaU_changed = deltaU_changed / deltaU_changed.max()
 
 		# For accuracy accessment
 		delta_p = data[:self.indice,10:11] #values
@@ -217,6 +209,18 @@ class Evaluation():
 		delta_Uy_adim = delta_Uy/U_max_norm
 		delta_Uz_adim = delta_Uz/U_max_norm
 
+		Ux_adim = Ux/U_max_norm
+		Uy_adim = Uy/U_max_norm
+		Uz_adim = Uz/U_max_norm
+		p_adim = p / pow(U_max_norm,2.0)
+		
+		# Interpolate the data to the grid
+		Ux_interp = utils.interpolate_fill(Ux_adim, self.vert, self.weights)
+		Uy_interp = utils.interpolate_fill(Uy_adim, self.vert, self.weights)
+		Uz_interp = utils.interpolate_fill(Uz_adim, self.vert, self.weights)
+		p_interp = utils.interpolate_fill(p_adim, self.vert, self.weights)
+
+
 		delta_p_interp = utils.interpolate_fill(delta_p_adim, self.vert, self.weights)
 		delta_Ux_interp = utils.interpolate_fill(delta_Ux_adim, self.vert, self.weights)
 		delta_Uy_interp = utils.interpolate_fill(delta_Uy_adim, self.vert, self.weights)
@@ -224,10 +228,10 @@ class Evaluation():
 		p_interp = utils.interpolate_fill(p, self.vert, self.weights)
 
 		# weighting 
-		deltaU_changed_interp = utils.interpolate_fill(deltaU_changed, self.vert, self.weights)
-		delta_p_prev_interp = utils.interpolate_fill(delta_p_prev, self.vert, self.weights)
+		#deltaU_changed_interp = utils.interpolate_fill(deltaU_changed, self.vert, self.weights)
+		#delta_p_prev_interp = utils.interpolate_fill(delta_p_prev, self.vert, self.weights)
 
-		grid = np.zeros(shape=(1, self.grid_shape_z, self.grid_shape_y, self.grid_shape_x, 7))
+		grid = np.zeros(shape=(1, self.grid_shape_z, self.grid_shape_y, self.grid_shape_x, 9))
 		filter_tuple = (2,2,2)
 		grid[0,:,:,:,0:1][tuple(self.indices.T)] = delta_Ux_interp.reshape(delta_Ux_interp.shape[0], 1)
 		#grid[0,:,:,:,0] = ndimage.gaussian_filter(grid[0,:,:,:,0], sigma=filter_tuple, order=0)
@@ -241,6 +245,12 @@ class Evaluation():
 		grid[0,:,:,:,3:4] = self.sdfunct
 		grid[0,:,:,:,4:5][tuple(self.indices.T)] = delta_p_interp.reshape(delta_p_interp.shape[0], 1)
 		grid[0,:,:,:,5:6][tuple(self.indices.T)] = p_interp.reshape(p_interp.shape[0], 1)
+
+		#### REMOVE AFTER PLOTS
+
+		grid[0,:,:,:,6:7][tuple(self.indices.T)] = Ux_interp.reshape(delta_p_interp.shape[0], 1)
+		grid[0,:,:,:,7:8][tuple(self.indices.T)] = Uz_interp.reshape(delta_p_interp.shape[0], 1)
+		grid[0,:,:,:,8:9][tuple(self.indices.T)] = Uy_interp.reshape(p_interp.shape[0], 1)
 
 		grid[np.isnan(grid)] = 0 #set any nan value to 0
 
@@ -256,10 +266,10 @@ class Evaluation():
 		#					grid[0,...,3], grid[0,...,4], slices_indices=[5, 10, 20])
 
 		# saving for weighting procedure
-		deltaU_change_grid = np.zeros(shape=(self.grid_shape_z, self.grid_shape_y, self.grid_shape_x))
-		deltaU_change_grid[tuple(self.indices.T)] = deltaU_changed_interp.reshape(deltaU_changed_interp.shape[0])
-		deltaP_prev_grid = np.zeros(shape=(self.grid_shape_z, self.grid_shape_y, self.grid_shape_x))
-		deltaP_prev_grid[tuple(self.indices.T)] = delta_p_prev_interp.reshape(delta_p_prev_interp.shape[0])
+		#deltaU_change_grid = np.zeros(shape=(self.grid_shape_z, self.grid_shape_y, self.grid_shape_x))
+		#deltaU_change_grid[tuple(self.indices.T)] = deltaU_changed_interp.reshape(deltaU_changed_interp.shape[0])
+		#deltaP_prev_grid = np.zeros(shape=(self.grid_shape_z, self.grid_shape_y, self.grid_shape_x))
+		#deltaP_prev_grid[tuple(self.indices.T)] = delta_p_prev_interp.reshape(delta_p_prev_interp.shape[0])
 
 		## Block extraction
 		x_list = []
@@ -322,13 +332,16 @@ class Evaluation():
 		for step in range(y_array.shape[0]):
 			y_array[step,...,0][self.x_array[step,...,3] != 0] -= np.mean(y_array[step,...,0][self.x_array[step,...,3] != 0])
 
-
 		# Apply Tucker decomposition to transform input and output tensors
 		input_core = tl.tenalg.multi_mode_dot(self.x_array, self.input_factors[1:], modes=[1, 2, 3, 4], transpose=True)
 		output_core = tl.tenalg.multi_mode_dot(y_array[...,0], self.output_factors[1:], modes=[1, 2, 3], transpose=True)
 
-		input_transformed = input_core.reshape(N, -1)
-		y_array_flat = output_core.reshape(N, -1)
+		if flatten_data:
+			input_core_flat = input_core.reshape(N, -1)
+			output_core_flat = output_core.reshape(N, -1)
+		else: 
+			input_core_flat = input_core
+			output_core_flat = output_core
 
 		if self.standardization_method == 'std':
 			## Option 1: Standardization
@@ -337,7 +350,7 @@ class Evaluation():
 			std_in_loaded = data['std_in']
 			mean_out_loaded = data['mean_out']
 			std_out_loaded = data['std_out']
-			x_input = (input_transformed - mean_in_loaded) / std_in_loaded
+			x_input = (input_core_flat - mean_in_loaded) / std_in_loaded
 		elif self.standardization_method == 'min_max':
 			## Option 2: Min-max scaling
 			data = np.load('min_max_values.npz')
@@ -345,10 +358,10 @@ class Evaluation():
 			max_in_loaded = data['max_in']
 			min_out_loaded = data['min_out']
 			max_out_loaded = data['max_out']
-			x_input = (input_transformed - min_in_loaded) / (max_in_loaded - min_in_loaded)
+			x_input = (input_core_flat - min_in_loaded) / (max_in_loaded - min_in_loaded)
 		elif self.standardization_method == 'max_abs':
 			## Option 3: Old method
-			x_input = input_transformed / self.max_abs_input_PCA
+			x_input = input_core_flat / self.max_abs_input_PCA
 		else:
 			raise ValueError("Standardization method not valid")
 
@@ -365,7 +378,7 @@ class Evaluation():
 
 		# Reshape res_concat to match the original shape of y_array
 		res_concat = res_concat.reshape(output_core.shape)
-		y_array = y_array_flat.reshape(output_core.shape)
+		y_array = output_core_flat.reshape(output_core.shape)
 
 		# Perform inverse transformation using Tucker factors
 		res_concat = tl.tenalg.multi_mode_dot(res_concat, self.output_factors[1:], modes=[1, 2, 3], transpose=False)
@@ -398,7 +411,7 @@ class Evaluation():
 		self.Ref_BC = 0 
 
 		# # performing the assembly process
-		apply_deltaU_change_wgt = False
+		#apply_deltaU_change_wgt = False
 		# deltap_res, change_in_deltap = self.assemble_prediction(
 		# 	res_concat[..., 0],
 		# 	indices_list,
@@ -429,9 +442,9 @@ class Evaluation():
 			grid.shape[3],
 			grid.shape[2],
 			grid.shape[1],
-			deltaU_change_grid,
-			deltaP_prev_grid,
-			apply_deltaU_change_wgt,
+			deltaU_change_grid=None,
+			deltaP_prev_grid=None,
+			apply_deltaU_change_wgt=apply_deltaU_change_wgt,
 		)
 
 		# The next line can be used to evaluate the assembly algorithm
@@ -453,7 +466,31 @@ class Evaluation():
 		if save_plots:
 			#utils.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 50, 95], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
 			utils.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 15, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
-			utils.plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 15, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
+			utils.plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slices_indices=[1, 5, 10, 15, 20, 24], fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
+			
+			if time == 9:
+				utils.plot_cfd_results_3d_helper(cfd_results[:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltap_p{time}_true.png')
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,0][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltaux{time}_true.png')
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,1][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauy{time}_true.png')
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,2][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauz{time}_true.png')
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,3][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/sdf{time}_true.png')
+
+
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,5][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/p{time}_true.png')
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,6][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/ux{time}_true.png')
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,7][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uy{time}_true.png')
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,8][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uz{time}_true.png')
+
+
+				utils.plot_cfd_results_3d_helper(cfd_results[0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0,15], fig_path=f'plots/sim{sim}/block_deltap_t{time}_true.png', alpha_boundary=0.8)
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,0][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_ux{time}_true.png', alpha_boundary=0.8)
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,1][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uy{time}_true.png', alpha_boundary=0.8)
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,2][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uz{time}_true.png', alpha_boundary=0.8)
+				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,3][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_sdf{time}_true.png', alpha_boundary=0.8)
+
+
+
+
 
 		#utils.simple_delta_p_slices_plot()
 		
@@ -565,14 +602,15 @@ class Evaluation():
 		RMSE_norm = np.sqrt(np.mean( ( pred_masked  - true_masked )[mask_nan]**2 ))/norm * 100
 		STDE_norm = np.sqrt( (RMSE_norm**2 - BIAS_norm**2) )
 
-		print(f"""
-		** Error in delta_p - no weighting **
+		if apply_deltaU_change_wgt:
+			print(f"""
+			** Error in delta_p - no weighting **
 
-			normVal  = {norm} Pa
-			biasNorm = {BIAS_norm:.3f}%
-			stdeNorm = {STDE_norm:.3f}%
-			rmseNorm = {RMSE_norm:.3f}%
-		""", flush = True)
+				normVal  = {norm} Pa
+				biasNorm = {BIAS_norm:.3f}%
+				stdeNorm = {STDE_norm:.3f}%
+				rmseNorm = {RMSE_norm:.3f}%
+			""", flush = True)
 
 		self.pred_minus_true_deltap_crude.append( np.mean( (pred_masked  - true_masked )[mask_nan] )/norm )
 		self.pred_minus_true_squared_deltap_crude.append( np.mean( (pred_masked  - true_masked )[mask_nan]**2 )/norm**2 )
@@ -607,9 +645,16 @@ class Evaluation():
 		return 0
 
 
-def call_SM_main(delta, model_name, block_size, overlap_ratio, var_p, var_in, max_num_PC, dataset_path, \
+def call_SM_main(delta, model_name, block_size, overlap_ratio, dataset_path, \
 					plot_intermediate_fields, standardization_method, save_plots, show_plots, apply_filter, create_GIF, \
-					first_sim, last_sim, first_t, last_t):
+					first_sim, last_sim, first_t, last_t, ranks):
+
+	if 'MLP'.lower() in model_name.lower():
+		flatten_data = True
+	else:
+		flatten_data = False
+
+	apply_deltaU_change_wgt = False
 
 	if save_plots:
 		path = 'plots/'
@@ -619,7 +664,7 @@ def call_SM_main(delta, model_name, block_size, overlap_ratio, var_p, var_in, ma
 
 	overlap = int(overlap_ratio*block_size)
 	
-	Eval = Evaluation(delta, block_size, overlap, var_p, var_in, dataset_path, model_name, max_num_PC, standardization_method)
+	Eval = Evaluation(delta, block_size, overlap, dataset_path, model_name, standardization_method, ranks)
 
 	Eval.pred_minus_true_block = []
 	Eval.pred_minus_true_squared_block = []
@@ -642,7 +687,7 @@ def call_SM_main(delta, model_name, block_size, overlap_ratio, var_p, var_in, ma
 		Eval.computeOnlyOnce(sim)
 		# Timesteps used for evaluation
 		for time in range(first_t, last_t):
-			Eval.timeStep(sim, time, plot_intermediate_fields, save_plots, show_plots, apply_filter)
+			Eval.timeStep(sim, time, plot_intermediate_fields, save_plots, show_plots, apply_filter, apply_deltaU_change_wgt, flatten_data)
 
 		n_ts = last_sim - first_sim
 		# Errors for each simulation
@@ -678,7 +723,10 @@ def call_SM_main(delta, model_name, block_size, overlap_ratio, var_p, var_in, ma
 			BIAS: {BIAS_value_p:.5f}%
 			STDE: {STDE_value_p:.5f}%
 			RMSE: {RMSE_value_p:.5f}%
-
+			''')
+		
+		if apply_deltaU_change_wgt:
+			print(f'''
 			Before Weighting:
 
 				** Error in delta_p (blocks) **
@@ -753,9 +801,6 @@ if __name__ == '__main__':
 	model_name = 'model_small-std-0.95.h5'
 	shape = 128
 	overlap_ratio = 0.25
-	var_p = 0.95
-	var_in = 0.95
-	max_num_PC = 128
 	dataset_path = '../dataset_plate_deltas_5sim20t.hdf5' #adjust dataset path
 	standardization_method = 'std'
 
@@ -770,7 +815,7 @@ if __name__ == '__main__':
 	first_t = 0
 	last_t = 5
 
-	call_SM_main(delta, model_name, shape, overlap_ratio, var_p, var_in, max_num_PC, dataset_path,	\
+	call_SM_main(delta, model_name, shape, overlap_ratio, dataset_path,	\
 				plot_intermediate_fields, standardization_method, save_plots, show_plots, apply_filter, create_GIF, \
 				first_sim, last_sim, first_t, last_t)
 

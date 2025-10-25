@@ -16,8 +16,6 @@ class CFDDataProcessor:
         self,
         grid_res: float,
         block_size: int,
-        var_p: int,
-        var_in: int,
         original_dataset_path: str,
         n_samples_per_frame: int,
         first_sim: int,
@@ -31,8 +29,6 @@ class CFDDataProcessor:
 
     self.grid_res = grid_res
     self.block_size = block_size
-    self.var_in = var_in
-    self.var_p = var_p
     self.original_dataset_path = original_dataset_path
     self.n_samples_per_frame = n_samples_per_frame
     self.first_sim = first_sim
@@ -190,8 +186,6 @@ class FeatureExtractAndWrite:
         self,
         grid_res: float,
         block_size: int,
-        var_p: int,
-        var_in: int,
         original_dataset_path: str,
         n_samples_per_frame: int,
         first_sim: int,
@@ -206,8 +200,6 @@ class FeatureExtractAndWrite:
 
     self.grid_res = grid_res
     self.block_size = block_size
-    self.var_in = var_in
-    self.var_p = var_p
     self.n_samples_per_frame = n_samples_per_frame
     self.first_sim = first_sim
     self.last_sim = last_sim
@@ -313,7 +305,7 @@ class FeatureExtractAndWrite:
     with open('tucker_factors.pkl', 'wb') as f:
       pk.dump({'input_factors': self.input_factors, 'output_factors': self.output_factors}, f)
 
-  def transform_data_with_tucker(self, blocks_data: np.ndarray, client, ranks) -> np.ndarray:
+  def transform_data_with_tucker(self, blocks_data: np.ndarray, client) -> np.ndarray:
     inputs_u, inputs_obst, outputs = blocks_data
     chunk_size = inputs_u.shape[0]
     print(f'ACTUAL Chunk size: {chunk_size}')
@@ -345,10 +337,10 @@ class FeatureExtractAndWrite:
     with tables.open_file(filename_flat, mode='w') as file:
         atom = tables.Float32Atom()
         if self.flatten_data:
-          input_shape = (0, ranks * ranks * ranks * ranks)
+          input_shape = (0, ranks * ranks * ranks * 4)
           output_shape = (0, ranks * ranks * ranks)
         else:
-          input_shape = (0, ranks, ranks, ranks, ranks)
+          input_shape = (0, ranks, ranks, ranks, 4)
           output_shape = (0, ranks, ranks, ranks)
 
         file.create_earray(file.root, 'inputs', atom, input_shape)
@@ -361,7 +353,7 @@ class FeatureExtractAndWrite:
     self.max_abs_delta_Ux, self.max_abs_delta_Uy, self.max_abs_delta_Uz, self.max_abs_dist, self.max_abs_delta_p = maxs
 
     # Compute representative factors once for all sims
-    N_representative = 2500 #2500
+    N_representative = 7000 #2500
     N_representative_per_sim = int(N_representative / (self.last_sim - self.first_sim) / (self.last_t - self.first_t))
     sample_indices_per_sim_per_time_representative = utils.define_sample_indexes(
       N_representative_per_sim,
@@ -413,7 +405,7 @@ class FeatureExtractAndWrite:
                 )
 
                 print(f' -Transforming grid data to tensor cores for chunk {i_chunk + 1}/{chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)
-                in_features, out_features = self.transform_data_with_tucker(blocks_data, client, ranks)
+                in_features, out_features = self.transform_data_with_tucker(blocks_data, client)
 
                 with tables.open_file(filename_flat, mode='a') as f:
                     f.root.inputs.append(np.array(in_features))

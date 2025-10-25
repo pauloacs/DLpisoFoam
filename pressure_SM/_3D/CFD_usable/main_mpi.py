@@ -60,6 +60,7 @@ def load_tucker_and_NN(
 	grid_res,
 	dropout_rate,
 	regularization,
+	ranks,
 	verbose=True
 ):
 	"""
@@ -121,8 +122,8 @@ def load_tucker_and_NN(
 		n_layers, width = define_model_arch(model_arch)
 
 		global model
-		input_features_size = 4 * 4 * 4 * 4
-		output_features_size = 4 * 4 * 4
+		input_features_size = ranks * ranks * ranks * 4
+		output_features_size = ranks * ranks * ranks
 
 		model = MLP(n_layers, width, input_features_size, output_features_size, dropout_rate, regularization)
 		model.load_weights(weights_fn)

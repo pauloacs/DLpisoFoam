@@ -22,10 +22,6 @@ def train_entry_point():
                         help='Learning rate')
     parser.add_argument('--n_samples_per_frame', type=int, required=True,
                         help='Number of samples per frame')
-    parser.add_argument('--var_p', type=float, required=True,
-                        help='Var p value')
-    parser.add_argument('--var_in', type=float, required=True,
-                        help='Var in value')
     parser.add_argument('--model_architecture', type=str, required=True,
                         help='Model architecture')
     parser.add_argument('--outarray_flat_fn', type=str, required=True,
@@ -76,10 +72,6 @@ def eval_entry_point():
     # Required arguments
     parser.add_argument('--model_name', type=str, required=True,
                         help='Model name')
-    parser.add_argument('--var_p', type=float, required=True,
-                        help='Var p value')
-    parser.add_argument('--var_in', type=float, required=True,
-                        help='Var in value')
     parser.add_argument('--dataset_path', type=str, required=True,
                         help='Dataset path')
     parser.add_argument('--first_sim', type=int, required=True,
@@ -98,8 +90,8 @@ def eval_entry_point():
                         help='Block size')
     parser.add_argument('--overlap_ratio', type=float, default=0.25,
                         help='Overlap ratio')
-    parser.add_argument('--max_num_PC', type=int, default=512,
-                        help='Max number of PCs')
+    parser.add_argument('--ranks', type=int, default=4,
+                        help='Ranks for Tucker decomposition')
     parser.add_argument('--standardization_method', type=str, default='std',
                         help='Standardization method')
     parser.add_argument('--plot_intermediate_fields', action='store_true',
