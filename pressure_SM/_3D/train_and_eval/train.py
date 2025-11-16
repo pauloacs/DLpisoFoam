@@ -28,6 +28,9 @@ for device in physical_devices:
 
 from . import utils
 from .neural_networks import MLP, dense_attention, conv1D, FNO3d, GNN, MLP_Mixer_3D, SimpleCNN3D, Simple_multi_layer_3D
+from .utils import io_operations as utils_io
+from .utils import model_utils as utils_model
+from .utils import data_processing as utils_data
 import warnings
 
 warnings.filterwarnings("ignore", message="Unmanaged memory use is high")
@@ -79,15 +82,14 @@ class Training:
     filename_flat = outarray_flat_fn
      
     print('Loading Blocks data\n')
-    f = tables.open_file(filename_flat, mode='r')
-    input = f.root.inputs[...] 
-    output = f.root.outputs[...] 
-    f.close()
+    with tables.open_file(filename_flat, mode='r') as f:
+      input = f.root.inputs[...] 
+      output = f.root.outputs[...] 
 
     standardization_method="std"
     print(f'Normalizing feature data based on standardization method: {standardization_method}')
-    x, y = utils.normalize_feature_data(input, output, standardization_method)
-    x, y = utils.unison_shuffled_copies(x, y)
+    x, y = utils_data.normalize_feature_data(input, output, standardization_method)
+    x, y = utils_data.unison_shuffled_copies(x, y)
     print('Data shuffled \n')
     if flatten_data:
       x = x.reshape((x.shape[0], x.shape[1], 1, 1))
@@ -97,8 +99,8 @@ class Training:
     split = 0.9
     if not (os.path.isfile('train_data.tfrecords') and os.path.isfile('test_data.tfrecords')):
       print("TFRecords train and test data is not available... writing it\n")
-      count_train = utils.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data")
-      count_test = utils.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
+      count_train = utils_io.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data")
+      count_test = utils_io.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
     else:
       print("TFRecords train and test data already available, using it... If you want to write new data, delete 'train_data.tfrecords' and 'test_data.tfrecords'!\n")
     self.len_train = int(split*x.shape[0])
@@ -123,8 +125,8 @@ class Training:
     train_path = 'train_data.tfrecords'
     test_path = 'test_data.tfrecords'
 
-    self.train_dataset = utils.load_dataset_tf(filename = train_path, batch_size = batch_size, buffer_size=1024)
-    self.test_dataset = utils.load_dataset_tf(filename = test_path, batch_size = batch_size, buffer_size=1024)
+    self.train_dataset = utils_io.load_dataset_tf(filename = train_path, batch_size = batch_size, buffer_size=1024)
+    self.test_dataset = utils_io.load_dataset_tf(filename = test_path, batch_size = batch_size, buffer_size=1024)
 
     # Training 
 
@@ -187,6 +189,7 @@ class Training:
       losses_test = []
 
       for step, (inputs, labels) in enumerate(self.train_dataset):
+
         if flatten_data:
           inputs = inputs[..., 0, 0]
           labels = labels[..., 0, 0]
@@ -208,7 +211,7 @@ class Training:
       progbar.update(step+1)
 
       # It was found that if the min_delta is too small, or patience is too high it can cause overfitting
-      stopEarly = utils.Callback_EarlyStopping(epochs_val_losses, min_delta=0.1/100, patience=100)
+      stopEarly = utils_model.Callback_EarlyStopping(epochs_val_losses, min_delta=0.1/100, patience=100)
       if stopEarly:
         print("Callback_EarlyStopping signal received at epoch= %d/%d"%(epoch,num_epoch))
         break

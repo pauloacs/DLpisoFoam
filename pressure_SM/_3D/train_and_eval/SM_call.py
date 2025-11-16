@@ -16,7 +16,11 @@ import tensorly as tl
 import scipy.ndimage as ndimage
 
 from . import assembly
-from . import utils
+from .utils import io_operations as utils_io
+from .utils import data_processing
+from .utils import domain_geometry
+from .utils import sampling
+from .utils import visualization
 
 class Evaluation():
 	def __init__(self, delta, block_size, overlap, dataset_path, model_path, standardization_method, ranks):
@@ -88,38 +92,29 @@ class Evaluation():
 			sim (int): Simulation number.
 		"""
 		time = 0
-		data, obst_boundary, y_bot_boundary, z_bot_boundary, y_top_boundary, z_top_boundary = \
-			utils.read_dataset(self.dataset_path, sim, time)
 
-		self.indice = utils.index(data[:,0] , -100.0 )[0]
-		data_limited = data[:self.indice,:]
+		boundaries = utils_io.read_boundaries(sim, self.dataset_path)
 
-		x_min = round(np.min(data_limited[...,4]),2)
-		x_max = round(np.max(data_limited[...,4]),2)
-
-		y_min = round(np.min(data_limited[...,5]),2)
-		y_max = round(np.max(data_limited[...,5]),2)
-
-		z_min = round(np.min(data_limited[...,6]),2)
-		z_max = round(np.max(data_limited[...,6]),2)
+		data, limits = utils_io.read_cells_and_limits(self.dataset_path, sim, 0, 1)
+		data_t0 = data[0, ...]
 
 		######### -------------------- Assuming constant mesh, the following can be done out of the for cycle ------------------------------- ##########
 
-		X0, Y0, Z0 = utils.create_uniform_grid(x_min, x_max, y_min, y_max, z_min, z_max, self.delta)
+		X0, Y0, Z0 = data_processing.create_uniform_grid(limits, self.delta)
 
 		xyz0 = np.concatenate((np.expand_dims(X0, axis=1), np.expand_dims(Y0, axis=1), np.expand_dims(Z0, axis=1)), axis=-1)
-		points = data[:self.indice,4:7] #coordinates
-		self.vert, self.weights = utils.interp_weights(points, xyz0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
+		
+		points = data_t0[:, 4:7] #coordinates
+		self.vert, self.weights = data_processing.interp_weights(points, xyz0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
 
-		boundaries_list = [obst_boundary, y_bot_boundary, z_bot_boundary, y_top_boundary, z_top_boundary]
-		domain_bool, sdf = utils.domain_dist(boundaries_list, xyz0, self.delta)
+		domain_bool, sdf = domain_geometry.domain_dist(boundaries, xyz0, self.delta)
 
 		#div defines the sliding window vertical and horizontal displacements
 		div = 1 
 
-		self.grid_shape_z = int(round((z_max-z_min)/self.delta))
-		self.grid_shape_y = int(round((y_max-y_min)/self.delta)) #+1
-		self.grid_shape_x = int(round((x_max-x_min)/self.delta)) #+1
+		self.grid_shape_z = int(round((limits['z_max']-limits['z_min'])/self.delta))
+		self.grid_shape_y = int(round((limits['y_max']-limits['y_min'])/self.delta)) #+1
+		self.grid_shape_x = int(round((limits['x_max']-limits['x_min'])/self.delta)) #+1
 
 		#arrange data in array: #this can be put outside the j loop if the mesh is constant 
 
@@ -135,8 +130,8 @@ class Evaluation():
 		obst_bool = np.zeros((self.grid_shape_z, self.grid_shape_y, self.grid_shape_x, 1))
 		self.sdfunct = obst_bool.copy()
 
-		p = data[:self.indice,2:3]
-		p_interp = utils.interpolate_fill(p, self.vert, self.weights) 
+		p = data_t0[:,2:3]
+		p_interp = data_processing.interpolate_fill(p, self.vert, self.weights) 
 
 		for (step, x_y_z) in enumerate(xyz0):  
 			if domain_bool[step] * (~np.isnan(p_interp[step])) :
@@ -168,28 +163,29 @@ class Evaluation():
 		Returns:
 			None
 		"""
-		data, obst_boundary, y_bot_boundary, z_bot_boundary, y_top_boundary, z_top_boundary = \
-			utils.read_dataset(self.dataset_path, sim, time)
 
-		Ux =  data[:self.indice,0:1]
-		Uy =  data[:self.indice,1:2]
-		Uz = data[:self.indice,2:3]
+		data, _ = utils_io.read_cells_and_limits(self.dataset_path, sim, time, time+1)
+		data = data[0, ...]  #shape: (n_cells, n_features)
+		
+		Ux =  data[:,0:1]
+		Uy =  data[:,1:2]
+		Uz = data[:,2:3]
 
-		delta_U = data[:self.indice,7:10]
+		delta_U = data[:,7:10]
 		delta_Ux = delta_U[...,0:1]
 		delta_Uy = delta_U[...,1:2]
 		delta_Uz = delta_U[...,2:3]
 
-		delta_U_prev = data[:self.indice, 11:14]
-		delta_p_prev = data[:self.indice,14:15]
+		delta_U_prev = data[:, 11:14]
+		delta_p_prev = data[:,14:15]
 
 		# check where the deltaU has changed in the last time step
 		#deltaU_changed = np.abs(delta_U - delta_U_prev).sum(axis=-1)
 		#deltaU_changed = deltaU_changed / deltaU_changed.max()
 
 		# For accuracy accessment
-		delta_p = data[:self.indice,10:11] #values
-		p = data[:self.indice,3:4] #values
+		delta_p = data[:,10:11] #values
+		p = data[:,3:4] #values
 
 		U_max_norm = np.max(np.sqrt(np.square(Ux) + np.square(Uy) + np.square(Uz)))
 		deltaU_max_norm = np.max(np.sqrt(np.square(delta_Ux) + np.square(delta_Uy), np.square(delta_Uz)))
@@ -215,21 +211,21 @@ class Evaluation():
 		p_adim = p / pow(U_max_norm,2.0)
 		
 		# Interpolate the data to the grid
-		Ux_interp = utils.interpolate_fill(Ux_adim, self.vert, self.weights)
-		Uy_interp = utils.interpolate_fill(Uy_adim, self.vert, self.weights)
-		Uz_interp = utils.interpolate_fill(Uz_adim, self.vert, self.weights)
-		p_interp = utils.interpolate_fill(p_adim, self.vert, self.weights)
+		Ux_interp = data_processing.interpolate_fill(Ux_adim, self.vert, self.weights)
+		Uy_interp = data_processing.interpolate_fill(Uy_adim, self.vert, self.weights)
+		Uz_interp = data_processing.interpolate_fill(Uz_adim, self.vert, self.weights)
+		p_interp = data_processing.interpolate_fill(p_adim, self.vert, self.weights)
 
 
-		delta_p_interp = utils.interpolate_fill(delta_p_adim, self.vert, self.weights)
-		delta_Ux_interp = utils.interpolate_fill(delta_Ux_adim, self.vert, self.weights)
-		delta_Uy_interp = utils.interpolate_fill(delta_Uy_adim, self.vert, self.weights)
-		delta_Uz_interp = utils.interpolate_fill(delta_Uz_adim, self.vert, self.weights)
-		p_interp = utils.interpolate_fill(p, self.vert, self.weights)
+		delta_p_interp = data_processing.interpolate_fill(delta_p_adim, self.vert, self.weights)
+		delta_Ux_interp = data_processing.interpolate_fill(delta_Ux_adim, self.vert, self.weights)
+		delta_Uy_interp = data_processing.interpolate_fill(delta_Uy_adim, self.vert, self.weights)
+		delta_Uz_interp = data_processing.interpolate_fill(delta_Uz_adim, self.vert, self.weights)
+		p_interp = data_processing.interpolate_fill(p, self.vert, self.weights)
 
 		# weighting 
-		#deltaU_changed_interp = utils.interpolate_fill(deltaU_changed, self.vert, self.weights)
-		#delta_p_prev_interp = utils.interpolate_fill(delta_p_prev, self.vert, self.weights)
+		#deltaU_changed_interp = data_processing.interpolate_fill(deltaU_changed, self.vert, self.weights)
+		#delta_p_prev_interp = data_processing.interpolate_fill(delta_p_prev, self.vert, self.weights)
 
 		grid = np.zeros(shape=(1, self.grid_shape_z, self.grid_shape_y, self.grid_shape_x, 9))
 		filter_tuple = (2,2,2)
@@ -262,7 +258,7 @@ class Evaluation():
 		grid[0,:,:,:,4:5] = grid[0,:,:,:,4:5]/self.max_abs_delta_p
 
 		#if save_plots:
-			#utils.plot_inputs_slices(grid[0,...,0], grid[0,...,1], grid[0,...,2], \
+			#visualization.plot_inputs_slices(grid[0,...,0], grid[0,...,1], grid[0,...,2], \
 		#					grid[0,...,3], grid[0,...,4], slices_indices=[5, 10, 20])
 
 		# saving for weighting procedure
@@ -270,6 +266,10 @@ class Evaluation():
 		#deltaU_change_grid[tuple(self.indices.T)] = deltaU_changed_interp.reshape(deltaU_changed_interp.shape[0])
 		#deltaP_prev_grid = np.zeros(shape=(self.grid_shape_z, self.grid_shape_y, self.grid_shape_x))
 		#deltaP_prev_grid[tuple(self.indices.T)] = delta_p_prev_interp.reshape(delta_p_prev_interp.shape[0])
+		
+		# Initialize to None since the weighting feature is currently disabled
+		deltaU_change_grid = None
+		deltaP_prev_grid = None
 
 		## Block extraction
 		x_list = []
@@ -393,11 +393,11 @@ class Evaluation():
 		## Here compute the error only based on the blocks pressure fields - before the assembly
 		flow_bool = self.x_array[...,3:4] != 0
 
-		pred_minus_true_block, pred_minus_true_squared_block = utils.compute_in_block_error(res_concat, self.y_array * self.max_abs_delta_p * pow(U_max_norm,2.0), flow_bool)
+		pred_minus_true_block, pred_minus_true_squared_block = sampling.compute_in_block_error(res_concat, self.y_array * self.max_abs_delta_p * pow(U_max_norm,2.0), flow_bool)
 		self.pred_minus_true_block.append(pred_minus_true_block)
 		self.pred_minus_true_squared_block.append(pred_minus_true_squared_block)
 		
-		#utils.plot_random_blocks(res_concat, y_array, self.x_array, sim, time, save_plots)
+		#visualization.plot_random_blocks(res_concat, y_array, self.x_array, sim, time, save_plots)
 
 		#### This gives worse results... #####
 		# Ignore blocks with near zero delta_U
@@ -464,35 +464,35 @@ class Evaluation():
 		no_flow_bool = grid[0,:,:,:,3] == 0
 
 		if save_plots:
-			#utils.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 50, 95], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
-			utils.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 15, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
-			utils.plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slices_indices=[1, 5, 10, 15, 20, 24], fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
+			#visualization.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 50, 95], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
+			visualization.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 15, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
+			visualization.plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slices_indices=[1, 5, 10, 15, 20, 24], fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
 			
 			if time == 9:
-				utils.plot_cfd_results_3d_helper(cfd_results[:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltap_p{time}_true.png')
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,0][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltaux{time}_true.png')
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,1][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauy{time}_true.png')
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,2][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauz{time}_true.png')
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,3][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/sdf{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(cfd_results[:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltap_p{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,0][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltaux{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,1][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauy{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,2][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauz{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,3][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/sdf{time}_true.png')
 
 
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,5][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/p{time}_true.png')
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,6][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/ux{time}_true.png')
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,7][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uy{time}_true.png')
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,8][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uz{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,5][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/p{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,6][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/ux{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,7][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uy{time}_true.png')
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,8][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uz{time}_true.png')
 
 
-				utils.plot_cfd_results_3d_helper(cfd_results[0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0,15], fig_path=f'plots/sim{sim}/block_deltap_t{time}_true.png', alpha_boundary=0.8)
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,0][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_ux{time}_true.png', alpha_boundary=0.8)
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,1][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uy{time}_true.png', alpha_boundary=0.8)
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,2][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uz{time}_true.png', alpha_boundary=0.8)
-				utils.plot_cfd_results_3d_helper(grid[0,:,:,:,3][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_sdf{time}_true.png', alpha_boundary=0.8)
+				visualization.plot_cfd_results_3d_helper(cfd_results[0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0,15], fig_path=f'plots/sim{sim}/block_deltap_t{time}_true.png', alpha_boundary=0.8)
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,0][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_ux{time}_true.png', alpha_boundary=0.8)
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,1][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uy{time}_true.png', alpha_boundary=0.8)
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,2][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uz{time}_true.png', alpha_boundary=0.8)
+				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,3][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_sdf{time}_true.png', alpha_boundary=0.8)
 
 
 
 
 
-		#utils.simple_delta_p_slices_plot()
+		#visualization.simple_delta_p_slices_plot()
 		
 		# actual pressure fields
 
@@ -678,7 +678,7 @@ def call_SM_main(delta, model_name, block_size, overlap_ratio, dataset_path, \
 	Eval.pred_minus_true_p = []
 	Eval.pred_minus_true_squared_p = []
 
-	for sim in range(first_sim, last_sim):
+	for sim in range(first_sim, last_sim + 1):
 		path = f'plots/sim{sim}'
 		if os.path.exists(path):
 			shutil.rmtree(path)
@@ -792,7 +792,9 @@ def call_SM_main(delta, model_name, block_size, overlap_ratio, dataset_path, \
 	''', flush = True)
 
 	if create_GIF:
-		utils.createGIF(n_sims, n_ts)
+		n_sims = last_sim - first_sim + 1
+		n_ts = last_t - first_t
+		visualization.createGIF(n_sims, n_ts)
 
 
 if __name__ == '__main__':

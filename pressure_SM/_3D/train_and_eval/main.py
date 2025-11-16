@@ -30,7 +30,10 @@ physical_devices = tf.config.list_physical_devices('GPU')
 for device in physical_devices:
     tf.config.experimental.set_memory_growth(device, True)
 
-from . import utils
+from .utils import model_utils as utils_model
+from .utils import sampling as utils_sampling
+from .utils import io_operations as utils_io
+
 import warnings
 from .data_processor import CFDDataProcessor, FeatureExtractAndWrite
 from .train import Training
@@ -70,11 +73,18 @@ def main_train(
   else:
     flatten_data = False
 
-  n_layers, width = utils.define_model_arch(model_architecture)
+  n_layers, width = utils_model.define_model_arch(model_architecture)
 
   model_name = f'{model_architecture}-{standardization_method}-drop{dropout_rate}-lr{lr}-reg{regularization}-batch{batch_size}'
 
-  if not os.path.isfile(gridded_h5_fn):
+  gridded_h5_fns = utils_io.get_gridded_h5_filenames(
+    gridded_h5_fn,
+    first_sim,
+    last_sim
+  )
+  all_files_exist = all(os.path.isfile(fn) for fn in gridded_h5_fns)
+  
+  if not all_files_exist:
     print('Numpy gridded data not available ... Reading original CFD simulations hdf5 dataset\n')
     processor = CFDDataProcessor(
       grid_res=grid_res,
@@ -94,7 +104,7 @@ def main_train(
   sample_indices_fn = 'sample_indices_per_sim_per_time.pkl'
   if not os.path.isfile(sample_indices_fn):
     print('Sample indices file not found. Creating new sample indices...')
-    _ = utils.define_sample_indexes(
+    _ = utils_sampling.define_sample_indexes(
         n_samples_per_frame,
         block_size,
         grid_res,
@@ -109,9 +119,10 @@ def main_train(
   Train = Training(standardization_method)
 
   if not os.path.isfile('maxs'):
-    utils.calculate_and_save_block_abs_max(
+    utils_sampling.calculate_and_save_block_abs_max(
       first_sim,
       last_sim,
+      first_t,
       last_t,
       sample_indices_fn,
       gridded_h5_fn,

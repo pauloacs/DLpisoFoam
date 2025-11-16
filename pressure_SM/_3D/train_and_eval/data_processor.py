@@ -5,7 +5,15 @@ import pickle as pk
 from math import ceil
 import tensorly as tl
 from tensorly.decomposition import tucker
-from . import utils
+
+from .utils import io_operations as utils_io
+from .utils import domain_geometry as utils_geo
+from .utils import visualization as utils_viz
+from .utils import model_utils as utils_model
+from .utils import sampling as utils_sampling
+from .utils import data_processing as utils_data
+
+import os
 
 import dask.distributed
 
@@ -37,64 +45,65 @@ class CFDDataProcessor:
     self.last_t = last_t
     self.standardization_method = standardization_method
     self.chunk_size = chunk_size
-    self.gridded_h5_fn = gridded_h5_fn
+    self.gridded_h5_filenames = utils_io.get_gridded_h5_filenames(
+      gridded_h5_fn,
+      first_sim,
+      last_sim
+      )
 
   def write_gridded_simulation_data(self) -> None:
     """
     Write CFD mesh data to a regular grid and save to HDF5 file.
     """
-    print(f'########## Writting CFD mesh data to a grid -> {self.gridded_h5_fn} ############')
-    NUM_COLUMNS = 5
 
-    file = tables.open_file(self.gridded_h5_fn, mode='w')
-    atom = tables.Float32Atom()
+    for sim_i in range(self.first_sim, self.last_sim + 1):
 
-    # For now, assume grid shape is fixed as in Training
-    self.grid_shape_z = 0.1 / self.grid_res
-    self.grid_shape_y = 0.1 / self.grid_res
-    self.grid_shape_x = 1 / self.grid_res
+      gridded_h5_fn_sim = self.gridded_h5_filenames[sim_i - self.first_sim]
+      print(f'########## Writting CFD mesh data to a grid -> {gridded_h5_fn_sim} ############')
+      NUM_COLUMNS = 5
 
-    file.create_earray(file.root, 'data', atom, (0, int(self.grid_shape_z), int(self.grid_shape_y), int(self.grid_shape_x), NUM_COLUMNS))
-    file.close()
+      with tables.open_file(gridded_h5_fn_sim, mode='w') as file:
 
-    for i in range(self.first_sim, self.last_sim):
-      print(f"\nProcessing sim {i+1}/{self.last_sim - self.first_sim}\n", flush=True)
-      self.write_sim_fields(i)
+        atom = tables.Float32Atom()
 
-  def write_sim_fields(self, i):
+        _, limits = utils_io.read_cells_and_limits(self.original_dataset_path, sim_i, self.first_t, self.last_t)
+
+        self.grid_shape_z = int(round((limits['z_max'] - limits['z_min']) / self.grid_res))
+        self.grid_shape_y = int(round((limits['y_max'] - limits['y_min']) / self.grid_res))
+        self.grid_shape_x = int(round((limits['x_max'] - limits['x_min']) / self.grid_res))
+
+        file.create_earray(file.root, 'data', atom, (0, self.grid_shape_z, self.grid_shape_y, self.grid_shape_x, NUM_COLUMNS))
+
+      print(f"\nProcessing sim {sim_i+1}/{self.last_sim - self.first_sim + 1}\n", flush=True)
+      self.write_sim_fields(sim_i, gridded_h5_fn_sim)
+
+  def write_sim_fields(self, sim_i, gridded_h5_fn_sim):
     """
     Write simulation fields for a single simulation index to the grid file.
     """
-    with h5py.File(self.original_dataset_path, "r") as f:
-      data = np.array(f["sim_data"][i:i+1, self.first_t:(self.first_t + self.last_t), ...], dtype='float32')
-      obst_boundary = np.array(f["obst_bound"][i, 0, ...], dtype='float32')
-      y_bot_boundary = np.array(f["y_bot_bound"][i, 0, ...], dtype='float32')
-      z_bot_boundary = np.array(f["z_bot_bound"][i, 0, ...], dtype='float32')
-      y_top_boundary = np.array(f["y_top_bound"][i, 0, ...], dtype='float32')
-      z_top_boundary = np.array(f["z_top_bound"][i, 0, ...], dtype='float32')
 
-    indice = utils.index(data[0, 0, :, 0], -100.0)[0]
-    data_limited = data[0, 0, :indice, :]
+    sim_data_ts, limits = utils_io.read_cells_and_limits(
+      self.original_dataset_path,
+      sim_i,
+      self.first_t,
+      self.last_t
+      )
 
-    self.x_min = round(np.min(data_limited[..., 4]), 2)
-    self.x_max = round(np.max(data_limited[..., 4]), 2)
-    self.y_min = round(np.min(data_limited[..., 5]), 2)
-    self.y_max = round(np.max(data_limited[..., 5]), 2)
-    self.z_min = round(np.min(data_limited[..., 6]), 2)
-    self.z_max = round(np.max(data_limited[..., 6]), 2)
+    sim_data_t0 = sim_data_ts[0, :, :]
+    boundaries = utils_io.read_boundaries(sim_i, self.original_dataset_path)
 
-    X0, Y0, Z0 = utils.create_uniform_grid(self.x_min, self.x_max, self.y_min, self.y_max, self.z_min, self.z_max, self.grid_res)
-    xyz0 = np.concatenate((np.expand_dims(X0, axis=1), np.expand_dims(Y0, axis=1), np.expand_dims(Z0, axis=1)), axis=-1)
-    points = data_limited[..., 4:7]
+    X0, Y0, Z0 = utils_data.create_uniform_grid(limits, self.grid_res)
+    xyz0 = np.concatenate(
+      (np.expand_dims(X0, axis=1),
+       np.expand_dims(Y0, axis=1),
+       np.expand_dims(Z0, axis=1)),
+        axis=-1
+      )
+    
+    points = sim_data_t0[..., 4:7]
 
-    vert, weights = utils.interp_weights(points, xyz0)
-    boundaries_list = [obst_boundary, y_bot_boundary, z_bot_boundary, y_top_boundary, z_top_boundary]
-    domain_bool, sdf = utils.domain_dist(boundaries_list, xyz0, self.grid_res)
-
-    div = 1
-    self.grid_shape_z = int(round((self.z_max - self.z_min) / self.grid_res))
-    self.grid_shape_y = int(round((self.y_max - self.y_min) / self.grid_res))
-    self.grid_shape_x = int(round((self.x_max - self.x_min) / self.grid_res))
+    vert, weights = utils_data.interp_weights(points, xyz0)
+    domain_bool, sdf = utils_geo.domain_dist(boundaries, xyz0, self.grid_res)
 
     x0 = np.min(X0)
     y0 = np.min(Y0)
@@ -107,8 +116,8 @@ class CFDDataProcessor:
     obst_bool = np.zeros((self.grid_shape_z, self.grid_shape_y, self.grid_shape_x, 1))
     sdfunct = obst_bool.copy()
 
-    delta_p = data_limited[..., 10:11]
-    p_interp = utils.interpolate_fill(delta_p, vert, weights)
+    delta_p = sim_data_t0[..., 10:11]
+    p_interp = utils_data.interpolate_fill(delta_p, vert, weights)
 
     for (step, x_y_z) in enumerate(xyz0):
       if domain_bool[step] * (~np.isnan(p_interp[step])):
@@ -123,14 +132,14 @@ class CFDDataProcessor:
 
     indices = indices.astype(int)
     self.stationary_ts = 0
-    for j in range(data.shape[1]):
-      data_limited = data[0, j, :indice, :]
-      self.write_time_step_fields(j, data_limited, vert, weights, indices, sdfunct)
+    for j in range(sim_data_ts.shape[0]):
+      data = sim_data_ts[j, :, :]
+      self.write_time_step_fields(j, data, vert, weights, indices, sdfunct, gridded_h5_fn_sim)
       if self.stationary_ts > 5:
         print('This simulation is stationary, ignoring it...')
         break
 
-  def write_time_step_fields(self, j, data_limited, vert, weights, indices, sdfunct):
+  def write_time_step_fields(self, j, data_limited, vert, weights, indices, sdfunct, gridded_h5_fn_sim):
     """
     Write a single time step's fields to the grid file.
     """
@@ -160,10 +169,10 @@ class CFDDataProcessor:
     delta_Uy_adim = delta_Uy / U_max_norm
     delta_Uz_adim = delta_Uz / U_max_norm
 
-    delta_p_interp = utils.interpolate_fill(delta_p_adim, vert, weights)
-    delta_Ux_interp = utils.interpolate_fill(delta_Ux_adim, vert, weights)
-    delta_Uy_interp = utils.interpolate_fill(delta_Uy_adim, vert, weights)
-    delta_Uz_interp = utils.interpolate_fill(delta_Uz_adim, vert, weights)
+    delta_p_interp = utils_data.interpolate_fill(delta_p_adim, vert, weights)
+    delta_Ux_interp = utils_data.interpolate_fill(delta_Ux_adim, vert, weights)
+    delta_Uy_interp = utils_data.interpolate_fill(delta_Uy_adim, vert, weights)
+    delta_Uz_interp = utils_data.interpolate_fill(delta_Uz_adim, vert, weights)
 
     filter_tuple = (2, 2, 2)
     grid = np.zeros(shape=(self.grid_shape_z, self.grid_shape_y, self.grid_shape_x, 5))
@@ -175,8 +184,35 @@ class CFDDataProcessor:
 
     grid[np.isnan(grid)] = 0
 
-    print(f"Writting t{j + self.first_t} to {self.gridded_h5_fn}", flush=True)
-    with tables.open_file(self.gridded_h5_fn, mode='a') as file:
+    import matplotlib.pyplot as plt
+    # Save plots for all variables
+    os.makedirs('plots_debug', exist_ok=True)
+    
+    var_names = ['delta_Ux', 'delta_Uy', 'delta_Uz', 'sdf', 'delta_p']
+    
+    for var_idx in range(5):
+      # Plot slice through middle of grid (z-x plane at middle y)
+      plt.figure(figsize=(10, 6))
+      plt.imshow(grid[1:-1, int(grid.shape[1] / 2), 1:-1, var_idx], cmap='jet')
+      plt.colorbar(label=var_names[var_idx])
+      plt.title(f'{var_names[var_idx]} - Z-X slice (middle Y)')
+      plt.xlabel('X')
+      plt.ylabel('Z')
+      plt.savefig(f'plots_debug/{var_names[var_idx]}_zx_slice_t{j + self.first_t}.png')
+      plt.close()
+      
+      # Plot slice through middle of grid (y-x plane at middle z)
+      plt.figure(figsize=(10, 6))
+      plt.imshow(grid[int(grid.shape[0] / 2), :, :, var_idx], cmap='jet')
+      plt.colorbar(label=var_names[var_idx])
+      plt.title(f'{var_names[var_idx]} - Y-X slice (middle Z)')
+      plt.xlabel('X')
+      plt.ylabel('Y')
+      plt.savefig(f'plots_debug/{var_names[var_idx]}_yx_slice_t{j + self.first_t}.png')
+      plt.close()
+
+    print(f"Writting t{j + self.first_t} to {gridded_h5_fn_sim}", flush=True)
+    with tables.open_file(gridded_h5_fn_sim, mode='a') as file:
       file.root.data.append(np.array(np.expand_dims(grid, axis=0), dtype='float32'))
 
 
@@ -208,7 +244,11 @@ class FeatureExtractAndWrite:
     self.standardization_method = standardization_method
     self.chunk_size = chunk_size
     self.original_dataset_path = original_dataset_path
-    self.gridded_h5_fn = gridded_h5_fn
+    self.gridded_h5_filenames = utils_io.get_gridded_h5_filenames(
+      gridded_h5_fn,
+      first_sim,
+      last_sim
+      )
     self.flatten_data = flatten_data
 
   def write_features_to_h5(self, filename_flat: str, chunk_size: int = 500, ranks: int = 4) -> None:
@@ -237,9 +277,10 @@ class FeatureExtractAndWrite:
     count = 0
 
     sim = sim - self.first_sim
+    
     for time in range(t_start, t_end):
-      with tables.open_file(self.gridded_h5_fn, mode='r') as f:
-        grid = f.root.data[sim * (self.last_t - self.first_t) + time, :, :, :, :]
+      with tables.open_file(self.gridded_h5_filenames[sim], mode='r') as f:
+        grid = f.root.data[time, :, :, :, :]
 
       ZYX_indices = sample_indices[sim][time]
 
@@ -353,9 +394,9 @@ class FeatureExtractAndWrite:
     self.max_abs_delta_Ux, self.max_abs_delta_Uy, self.max_abs_delta_Uz, self.max_abs_dist, self.max_abs_delta_p = maxs
 
     # Compute representative factors once for all sims
-    N_representative = 7000 #2500
+    N_representative = 1500 #2500
     N_representative_per_sim = int(N_representative / (self.last_sim - self.first_sim) / (self.last_t - self.first_t))
-    sample_indices_per_sim_per_time_representative = utils.define_sample_indexes(
+    sample_indices_per_sim_per_time_representative = utils_sampling.define_sample_indexes(
       N_representative_per_sim,
       self.block_size,
       self.grid_res,
@@ -370,7 +411,7 @@ class FeatureExtractAndWrite:
     all_inputs_obst = []
     all_outputs = []
 
-    for sim in range(self.first_sim, self.last_sim):
+    for sim in range(self.first_sim, self.last_sim + 1):
         inputs_u, inputs_obst, outputs = self.sample_blocks_chunked(
             sim,
             t_start=self.first_t,
@@ -390,18 +431,18 @@ class FeatureExtractAndWrite:
     representative_blocks = (all_inputs_u, all_inputs_obst, all_outputs)
     self.get_representative_factors(representative_blocks, ranks=ranks)
 
-    for sim in range(self.first_sim, self.last_sim):
-        print(f'Transforming data from sim {sim + 1}/[{self.first_sim}, {self.last_sim}]...')
+    for sim in range(self.first_sim, self.last_sim + 1):
+        print(f'Transforming data from sim {sim + 1}/[{self.first_sim + 1}, {self.last_sim + 1}]...')
         for i_chunk in range(chunks_per_sim):
             for sub_chunk in range(n_sub_chunks):
                 print(f' -Sampling block data for chunk {i_chunk + 1}/{chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)
                 blocks_data = self.sample_blocks_chunked(
-                sim,
-                t_start=i_chunk * n_times_per_chunk,
-                t_end=min((i_chunk + 1) * n_times_per_chunk, self.last_t),
-                i_chunk=sub_chunk,
-                n_chunks=n_sub_chunks,
-                sample_indices=sample_indices_per_sim_per_time
+                  sim,
+                  t_start=i_chunk * n_times_per_chunk,
+                  t_end=min((i_chunk + 1) * n_times_per_chunk, self.last_t),
+                  i_chunk=sub_chunk,
+                  n_chunks=n_sub_chunks,
+                  sample_indices=sample_indices_per_sim_per_time
                 )
 
                 print(f' -Transforming grid data to tensor cores for chunk {i_chunk + 1}/{chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)

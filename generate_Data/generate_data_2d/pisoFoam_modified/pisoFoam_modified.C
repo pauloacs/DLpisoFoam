@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
 
         // Pressure-velocity PISO corrector
         {
-            delta_U_prev = delta_U;
+        delta_U_prev = delta_U;
 	    delta_p_prev = delta_p;
 
             #include "UEqn.H"
@@ -79,8 +79,8 @@ int main(int argc, char *argv[])
             }
         }
 
-	delta_p = p - p_prev;
- 	p_prev = p;
+        delta_p = p - p_prev;
+        p_prev = p;
 
         laminarTransport.correct();
         turbulence->correct();
