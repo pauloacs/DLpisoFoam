@@ -1,0 +1,34 @@
+// Solve the Momentum equation
+
+MRF.correctBoundaryVelocity(U);
+
+U_prev = U;
+
+tmp<fvVectorMatrix> tUEqn
+(
+    fvm::ddt(U) + fvm::div(phi, U)
+  + MRF.DDt(U)
+  + turbulence->divDevSigma(U)
+ ==
+    fvOptions(U)
+);
+fvVectorMatrix& UEqn = tUEqn.ref();
+
+UEqn.relax();
+
+fvOptions.constrain(UEqn);
+
+if (pimple.momentumPredictor())
+{
+    solve(UEqn == -fvc::grad(p));
+
+    fvOptions.correct(U);
+}
+
+static label lastTimeStepIndex = -1;
+if (runTime.timeIndex() != lastTimeStepIndex)
+{
+    U_non_cons = U;
+    delta_U = U_non_cons - U_prev;
+    lastTimeStepIndex = runTime.timeIndex();
+}

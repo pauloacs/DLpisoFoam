@@ -1,0 +1,29 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      extrudeMeshDict;
+}
+
+
+constructFrom   mesh;
+
+sourceCase      ".";
+
+sourcePatches   (outlet);
+
+flipNormals     false;
+
+nLayers         25;
+
+expansionRatio  1.09;
+
+extrudeModel    linearNormal;
+
+linearNormalCoeffs
+{
+    thickness       1.5;
+}
+
+mergeFaces      false;

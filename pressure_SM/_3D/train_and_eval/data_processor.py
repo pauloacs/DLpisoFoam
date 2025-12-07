@@ -394,8 +394,8 @@ class FeatureExtractAndWrite:
     self.max_abs_delta_Ux, self.max_abs_delta_Uy, self.max_abs_delta_Uz, self.max_abs_dist, self.max_abs_delta_p = maxs
 
     # Compute representative factors once for all sims
-    N_representative = 1500 #2500
-    N_representative_per_sim = int(N_representative / (self.last_sim - self.first_sim) / (self.last_t - self.first_t))
+    N_representative = 7500 #2500
+    N_representative_per_sim = int(N_representative / (self.last_sim - self.first_sim + 1) / (self.last_t - self.first_t + 1))
     sample_indices_per_sim_per_time_representative = utils_sampling.define_sample_indexes(
       N_representative_per_sim,
       self.block_size,

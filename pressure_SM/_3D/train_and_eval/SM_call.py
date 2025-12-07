@@ -166,7 +166,7 @@ class Evaluation():
 
 		data, _ = utils_io.read_cells_and_limits(self.dataset_path, sim, time, time+1)
 		data = data[0, ...]  #shape: (n_cells, n_features)
-		
+
 		Ux =  data[:,0:1]
 		Uy =  data[:,1:2]
 		Uz = data[:,2:3]
@@ -468,28 +468,25 @@ class Evaluation():
 			visualization.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 15, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
 			visualization.plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slices_indices=[1, 5, 10, 15, 20, 24], fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
 			
-			if time == 9:
-				visualization.plot_cfd_results_3d_helper(cfd_results[:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltap_p{time}_true.png')
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,0][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltaux{time}_true.png')
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,1][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauy{time}_true.png')
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,2][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauz{time}_true.png')
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,3][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/sdf{time}_true.png')
+			# if time == 9:
+			# 	visualization.plot_cfd_results_3d_helper(cfd_results[:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltap_p{time}_true.png')
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,0][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltaux{time}_true.png')
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,1][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauy{time}_true.png')
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,2][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltauz{time}_true.png')
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,3][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/sdf{time}_true.png')
 
 
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,5][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/p{time}_true.png')
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,6][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/ux{time}_true.png')
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,7][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uy{time}_true.png')
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,8][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uz{time}_true.png')
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,5][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/p{time}_true.png')
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,6][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/ux{time}_true.png')
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,7][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uy{time}_true.png')
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,8][:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/uz{time}_true.png')
 
 
-				visualization.plot_cfd_results_3d_helper(cfd_results[0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0,15], fig_path=f'plots/sim{sim}/block_deltap_t{time}_true.png', alpha_boundary=0.8)
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,0][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_ux{time}_true.png', alpha_boundary=0.8)
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,1][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uy{time}_true.png', alpha_boundary=0.8)
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,2][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uz{time}_true.png', alpha_boundary=0.8)
-				visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,3][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_sdf{time}_true.png', alpha_boundary=0.8)
-
-
-
+			# 	visualization.plot_cfd_results_3d_helper(cfd_results[0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0,15], fig_path=f'plots/sim{sim}/block_deltap_t{time}_true.png', alpha_boundary=0.8)
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,0][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_ux{time}_true.png', alpha_boundary=0.8)
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,1][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uy{time}_true.png', alpha_boundary=0.8)
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,2][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_uz{time}_true.png', alpha_boundary=0.8)
+			# 	visualization.plot_cfd_results_3d_helper(grid[0,:,:,:,3][0:16,0:16, 100:116], no_flow_bool[0:16,0:16, 100:116], slices_indices=[0, 15], fig_path=f'plots/sim{sim}/block_sdf{time}_true.png', alpha_boundary=0.8)
 
 
 		#visualization.simple_delta_p_slices_plot()
