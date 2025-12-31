@@ -53,7 +53,7 @@ class Training:
     return loss
 
   #@tf.function
-  def perform_validation(self, flatten_data):
+  def perform_validation(self, flatten_data: bool) -> list:
 
     losses = []
 
@@ -69,14 +69,18 @@ class Training:
     return losses
   
   def my_mse_loss(self):
-    def loss_f(y_true, y_pred):
+    def loss_f(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
 
       loss = tf.reduce_mean(tf.square(y_true - y_pred) )
 
       return 100 * loss
     return loss_f
 
-  def prepare_data_to_tf(self, gridded_h5_fn: str = 'gridded_sim_data.h5', outarray_flat_fn: str= 'features_data.h5', flatten_data: bool = False):
+  def prepare_data_to_tf(
+    self,
+    gridded_h5_fn: str = 'gridded_sim_data.h5',
+    outarray_flat_fn: str= 'features_data.h5',
+    flatten_data: bool = False):
 
     self.gridded_h5_fn = gridded_h5_fn
     filename_flat = outarray_flat_fn
@@ -108,19 +112,19 @@ class Training:
     return 0 
    
   def load_data_and_train(self,
-      lr,
-      batch_size,
-      model_name,
-      beta_1,
-      num_epoch,
-      n_layers,
-      width,
-      dropout_rate,
-      regularization,
-      model_architecture,
-      new_model,
-      ranks,
-      flatten_data):
+      lr: float,
+      batch_size: int,
+      model_name: str,
+      beta_1: float,
+      num_epoch: int,
+      n_layers: int,
+      width: int,
+      dropout_rate: float,
+      regularization: float,
+      model_architecture: str,
+      new_model: bool,
+      ranks: int,
+      flatten_data: bool) -> None:
 
     train_path = 'train_data.tfrecords'
     test_path = 'test_data.tfrecords'

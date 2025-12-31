@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from pressure_SM._3D.CFD_usable.main import load_tucker_and_NN, init_func, py_func
+from pressure_SM._3D.CFD_usable.main_mpi import load_tucker_and_NN, init_func, py_func
 import os
 from pressure_SM._3D.CFD_usable.test_data import (
     array, y_bot, y_top, z_bot, z_top, obst,
@@ -23,6 +23,7 @@ block_size = 16
 grid_res = 4e-3
 dropout_rate = 0.1
 regularization=None
+ranks = 4
 
 def test_whole_module():
 
@@ -40,14 +41,18 @@ def test_whole_module():
         model_arch,
         apply_filter,
         overlap_ratio,
-        (filter_size,filter_size,filter_size),
+        (filter_size, filter_size, filter_size),
         block_size,
         grid_res,
         dropout_rate,
-        regularization
+        regularization,
+        ranks,
+        verbose=True
     )
     init_func(array, z_top, z_bot, y_top, y_bot, obst_boundary)
     delta_p = py_func(array, 1.)
+    assert delta_p.shape == (array.shape[0],)
+    assert np.all(np.isfinite(delta_p))
 
 if __name__=="__main__":
     test_whole_module()

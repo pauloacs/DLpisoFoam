@@ -1,5 +1,4 @@
 import numpy as np
-import h5py
 import tables
 import pickle as pk
 from math import ceil
@@ -8,8 +7,6 @@ from tensorly.decomposition import tucker
 
 from .utils import io_operations as utils_io
 from .utils import domain_geometry as utils_geo
-from .utils import visualization as utils_viz
-from .utils import model_utils as utils_model
 from .utils import sampling as utils_sampling
 from .utils import data_processing as utils_data
 
@@ -269,7 +266,16 @@ class FeatureExtractAndWrite:
       filename_flat, n_chunks_per_sim, n_times_per_chunk, n_sub_chunks, ranks, sample_indices_per_sim_per_time
     )
 
-  def sample_blocks_chunked(self, sim, t_start, t_end, i_chunk=None, n_chunks=False, sample_indices=None):
+  def sample_blocks_chunked(
+    self,
+    sim: int,
+    t_start: int,
+    t_end: int,
+    i_chunk=None,
+    n_chunks=False,
+    sample_indices=None):
+    """
+    """
     inputs_u_list = []
     inputs_obst_list = []
     outputs_list = []

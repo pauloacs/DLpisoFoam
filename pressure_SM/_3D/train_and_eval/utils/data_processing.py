@@ -8,7 +8,11 @@ import sklearn
 from numba import njit
 
 
-def interp_weights(xyz, uvw, d=3, interp_method='IDW'):
+def interp_weights(
+    xyz: np.ndarray,
+    uvw: np.ndarray,
+    d: int=3,
+    interp_method='IDW'):
     """
     Get interpolation weights and vertices using barycentric interpolation.
 

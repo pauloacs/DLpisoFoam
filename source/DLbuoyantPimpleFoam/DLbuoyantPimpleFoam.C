@@ -46,6 +46,9 @@ Description
 #include "fvOptions.H"
 #include "localEulerDdtScheme.H"
 #include "fvcSmooth.H"
+#include "POSIX.H"
+
+#include <time.h>
 
 /*The following stuff is for Python interoperability*/
 #include <Python.h>
@@ -58,7 +61,7 @@ Description
 //}
 
 /*Done importing Python functionality*/
-
+#include <cmath>
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 int main(int argc, char *argv[])
@@ -76,7 +79,7 @@ int main(int argc, char *argv[])
 
     #include "postProcess.H"
 
-    #include "setRootCaseLists.H"
+    //#include "setRootCaseLists.H"
     #include "createTime.H"
     #include "createDynamicFvMesh.H"
     #include "createDyMControls.H"
@@ -133,6 +136,7 @@ int main(int argc, char *argv[])
         // --- Pressure-velocity PIMPLE corrector loop
         while (pimple.loop())
         {
+            int counter = 0;
             if (pimple.firstPimpleIter() || moveMeshOuterCorrectors)
             {
                 // Store previous time values
@@ -192,11 +196,14 @@ int main(int argc, char *argv[])
                 clock_gettime(CLOCK_MONOTONIC, &tw2); // POSIX
                 posix_wall = 1000.0*tw2.tv_sec + 1e-6*tw2.tv_nsec - (1000.0*tw1.tv_sec + 1e-6*tw1.tv_nsec);
                 printf("DL pressure prediction & data transport: %.2f ms\n", posix_wall);
+                
+                int counter = 0;
             }
             // --- Pressure corrector loop
             while (pimple.correct())
             {
                 #include "pEqn.H"
+                counter++;
             }
 
             if (pimple.turbCorr())

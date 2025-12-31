@@ -3,14 +3,16 @@ Domain boundary detection, obstacle clustering, and distance calculations.
 """
 
 import numpy as np
-from scipy.spatial import ConvexHull, Delaunay, cKDTree
+from scipy.spatial import cKDTree
 from sklearn.cluster import DBSCAN
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 
-def _cluster_square_cylinders_3d(obst_points: np.ndarray, grid_res: float, eps_multiplier: float = 1.5):
+def _cluster_square_cylinders_3d(
+    obst_points: np.ndarray,
+    grid_res: float,
+    eps_multiplier: float = 1.5):
     """
     Cluster obstacle points in 3D based on proximity in all directions.
     Creates axis-aligned bounding boxes for each cluster (squared cylinders).
@@ -53,7 +55,10 @@ def _cluster_square_cylinders_3d(obst_points: np.ndarray, grid_res: float, eps_m
     return boxes
 
 
-def _visualize_clusters_3d(obst_points: np.ndarray, boxes: list, fig_path: str = None):
+def _visualize_clusters_3d(
+    obst_points: np.ndarray,
+    boxes: list,
+    fig_path: str = None):
     """
     Visualize the 3D clustered obstacles as bounding boxes.
     
@@ -146,7 +151,13 @@ def _distance_to_boxes(xyz: np.ndarray, boxes: list):
     return np.min(np.vstack(d_all), axis=0)
 
 
-def domain_dist(boundaries, xyz0, grid_res, find_limited_index=True, eps_multiplier=5, visualize=True):
+def domain_dist(
+    boundaries,
+    xyz0,
+    grid_res,
+    find_limited_index=True,
+    eps_multiplier=5,
+    visualize=True):
     """
     Generalized domain + signed distance for multiple 3D squared cylinders.
     
@@ -214,7 +225,7 @@ def domain_dist(boundaries, xyz0, grid_res, find_limited_index=True, eps_multipl
         obst_dist = _distance_to_boxes(xyz0, boxes)
 
     # Boundary distances via KDTree (subsampled for speed)
-    step = max(1, int(np.sqrt(obst.shape[0]) / 10)) if obst.shape[0] > 0 else 1
+    step = max(1, int(np.sqrt(obst.shape[0]) / 100)) if obst.shape[0] > 0 else 1
     
     def build_tree(arr):
         if arr.size == 0:

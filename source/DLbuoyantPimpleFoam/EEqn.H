@@ -1,5 +1,4 @@
 {
-    rho_prev = thermo.rho();
     volScalarField& he = thermo.he();
 
     fvScalarMatrix EEqn
@@ -34,5 +33,4 @@
     thermo.correct();
     radiation->correct();
     
-    delta_rho = thermo.rho() - rho_prev;
 }

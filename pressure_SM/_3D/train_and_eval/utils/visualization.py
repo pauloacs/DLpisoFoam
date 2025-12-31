@@ -191,7 +191,7 @@ def plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indi
         cfd_results: CFD results array
         field_deltap: Predicted delta_p field
         no_flow_bool: Boolean mask for no-flow regions
-        slices_indices: Indices of slices to plot
+        slices_indices: Indices of slices to plot (as a percentage value)
         fig_path: Optional path to save the figure
     """
     # Mask the error field
@@ -220,8 +220,10 @@ def plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indi
     norm = Normalize(vmin=vmin, vmax=vmax)
     error_norm = Normalize(vmin=0, vmax=25)
 
+    slices_list = [int((idx / 100) * masked_deltap.shape[0]) for idx in slices_indices]
+
     # --- Plot delta_p predicted ---
-    for idx in slices_indices:
+    for idx in slices_list:
         Z = np.full_like(X, idx)
         alpha = 0.9 if idx == 50 else 0.7  # Adjust transparency
         facecolors = get_facecolors(masked_deltap[idx, :, :], norm, cmap)
@@ -230,7 +232,7 @@ def plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indi
     ax_deltap.set_title("delta_p predicted", fontsize=14, fontweight='bold', pad=5)
 
     # --- Plot CFD results ---
-    for idx in slices_indices:
+    for idx in slices_list:
         Z = np.full_like(X, idx)
         alpha = 0.9 if idx == 50 else 0.7
         facecolors = get_facecolors(masked_cfd[idx, :, :], norm, cmap)
@@ -239,7 +241,7 @@ def plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indi
     ax_cfd.set_title("CFD results", fontsize=14, fontweight='bold', pad=5)
 
     # --- Plot error field ---
-    for idx in slices_indices:
+    for idx in slices_list:
         Z = np.full_like(X, idx)
         alpha = 0.9 if idx == 50 else 0.7
         facecolors = get_facecolors(masked_error[idx, :, :], error_norm, cmap)
@@ -272,7 +274,7 @@ def plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indi
         plt.show()
 
 
-def plot_cfd_results_3d_helper(cfd_results, no_flow_bool, slices_indices=None, fig_path=None, alpha_boundary=0.4):
+def plot_cfd_results_3d_helper(cfd_results, no_flow_bool, slices_indices=[25, 50, 75], fig_path=None, alpha_boundary=0.4):
     """
     Plot multiple slices of the CFD results field in 3D.
     
@@ -285,10 +287,6 @@ def plot_cfd_results_3d_helper(cfd_results, no_flow_bool, slices_indices=None, f
     """
     # Mask the CFD results
     masked_cfd = np.where(no_flow_bool, np.nan, cfd_results)
-
-    # Choose slices to plot
-    if slices_indices is None:
-        slices_indices = list(range(0, masked_cfd.shape[0], max(1, masked_cfd.shape[0] // 10)))
 
     # Create meshgrid
     X, Y = np.meshgrid(np.arange(masked_cfd.shape[2]), np.arange(masked_cfd.shape[1]))
@@ -303,10 +301,12 @@ def plot_cfd_results_3d_helper(cfd_results, no_flow_bool, slices_indices=None, f
     fig = plt.figure(figsize=(14, 10))
     ax = fig.add_subplot(111, projection='3d')
 
+    slices_list = [int((idx / 100) * masked_cfd.shape[0]) for idx in slices_indices]
+
     # Plot CFD results slices
-    for idx in slices_indices:
+    for idx in slices_list:
         Z = np.full_like(X, idx)
-        alpha = 1 if (idx == slices_indices[0] or idx == slices_indices[-1]) else 0.5
+        alpha = 1 if (idx == slices_list[0] or idx == slices_list[-1]) else 0.5
         facecolors = cmap(norm(masked_cfd[idx, :, :]))
         facecolors[..., 3] = alpha
         ax.plot_surface(X, Y, Z, facecolors=facecolors, rstride=1, cstride=1, linewidth=0, edgecolor='none', antialiased=False)
@@ -361,17 +361,20 @@ def plot_inputs_slices(ux, uy, uz, sdf, deltap, slices_indices=[5, 50, 95], fig_
         slices_indices: Indices of slices to plot
         fig_path: Optional path to save the figure
     """
+
+    slices_list = [int((idx / 100) * ux.shape[0]) for idx in slices_indices]
+
     # Create the figure and axes with a wide aspect ratio and reduced height
-    fig_height = 2.5 * len(slices_indices)
+    fig_height = 2.5 * len(slices_list)
     fig_width = 18  # Wide figure
-    fig, axs = plt.subplots(len(slices_indices), 5, figsize=(fig_width, fig_height), constrained_layout=True)
+    fig, axs = plt.subplots(len(slices_list), 5, figsize=(fig_width, fig_height), constrained_layout=True)
 
     # Set the column titles
     for col, title in enumerate(["ux", "uy", "uz", "SDF", "output - deltaP"]):
         axs[0, col].set_title(title, fontsize=14, fontweight='bold', pad=10)
 
     # Plot the slices for each field
-    for i, idx in enumerate(slices_indices):
+    for i, idx in enumerate(slices_list):
         for j, field in enumerate([ux, uy, uz, sdf, deltap]):
             im = axs[i, j].imshow(field[idx, :, :], cmap='viridis', origin='lower', aspect='auto')
             axs[i, j].set_title(f"Slice {idx}/100", fontsize=11, fontweight='bold', loc='left')
@@ -419,14 +422,16 @@ def plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slic
     norm = Normalize(vmin=vmin, vmax=vmax)
     error_norm = Normalize(vmin=0, vmax=25)
 
+    slices_list = [int((idx / 100) * masked_deltap.shape[0]) for idx in slices_indices]
+
     # Create figure and axes with improved aspect ratio
-    fig_height = 2.5 * len(slices_indices)
+    fig_height = 2.5 * len(slices_list)
     fig_width = 45  # Wide figure for better aspect
-    fig, axs = plt.subplots(len(slices_indices), 3, figsize=(fig_width, fig_height))
+    fig, axs = plt.subplots(len(slices_list), 3, figsize=(fig_width, fig_height))
     total_slices = masked_deltap.shape[0]
 
     # Plot slices
-    for i, idx in enumerate(slices_indices):
+    for i, idx in enumerate(slices_list):
         # Plot delta_p predicted
         axs[i, 0].imshow(masked_deltap[idx, :, :], cmap=cmap, norm=norm, origin='lower', aspect='auto')
         axs[i, 0].set_title(f"delta_p predicted (Slice {idx}/{total_slices})", fontsize=30, fontweight='bold')

@@ -1,9 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import Input, Model, regularizers
 from tensorflow.keras import layers
-import spektral
 from spektral.layers import GCNConv
-from tensorflow.keras.layers import Layer
 
 ################################################################################
 ## Neural Networks architectures

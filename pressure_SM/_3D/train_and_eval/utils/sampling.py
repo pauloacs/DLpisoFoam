@@ -3,13 +3,15 @@ Block sampling strategies and error computation.
 """
 
 import numpy as np
-import h5py
 import pickle as pk
 import tables
 from pyDOE import lhs
 from . import io_operations as utils_io
 
-def compute_in_block_error(pred, true, flow_bool):
+def compute_in_block_error(
+    pred: np.ndarray,
+    true: np.ndarray,
+    flow_bool: np.ndarray):
     """
     Compute normalized error metrics within blocks.
     
@@ -54,15 +56,15 @@ def compute_in_block_error(pred, true, flow_bool):
 
 
 def define_sample_indexes(
-    n_samples_per_frame,
-    block_size,
-    grid_res,
-    first_sim,
-    last_sim,
-    first_t,
-    last_t,
-    original_dataset_path,
-    output_pkl_path=None
+    n_samples_per_frame: int,
+    block_size: int,
+    grid_res: float,
+    first_sim: int,
+    last_sim: int,
+    first_t: int,
+    last_t: int,
+    original_dataset_path: str,
+    output_pkl_path: str = None
 ):
     """
     Define sampling indexes using Latin Hypercube Sampling.
@@ -116,13 +118,13 @@ def define_sample_indexes(
 
 
 def sample_blocks(
-    block_size,
-    sim_i,
-    t_start,
-    t_end,
-    calculate_maxs=False,
-    sample_indices=None,
-    gridded_h5_fn=None,
+    block_size: int,
+    sim_i: int,
+    t_start: int,
+    t_end: int,
+    calculate_maxs: bool = False,
+    sample_indices = None,
+    gridded_h5_fn: str = None,
 ):
     """
     Sample N blocks from each time step based on LHS.
@@ -207,13 +209,13 @@ def sample_blocks(
 
 
 def calculate_and_save_block_abs_max(
-    first_sim,
-    last_sim,
-    first_t,
-    last_t,
-    sample_indices_fn,
-    gridded_h5_fn,
-    block_size
+    first_sim: int,
+    last_sim: int,
+    first_t: int,
+    last_t: int,
+    sample_indices_fn: str,
+    gridded_h5_fn: str,
+    block_size: int
 ):
     """
     Calculate and save absolute maximum values for normalization.

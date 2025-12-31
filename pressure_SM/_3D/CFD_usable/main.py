@@ -12,7 +12,10 @@ import scipy.ndimage as ndimage
 import tensorly as tl
 
 from pressure_SM._3D.CFD_usable.utils import memory
-from pressure_SM._3D.train_and_eval.utils import interpolate_fill, interp_weights, domain_dist, create_uniform_grid, define_model_arch
+from pressure_SM._3D.train_and_eval.utils.data_processing import interpolate_fill, interp_weights, create_uniform_grid
+from pressure_SM._3D.train_and_eval.utils.domain_geometry import domain_dist
+from pressure_SM._3D.train_and_eval.utils.model_utils import define_model_arch
+
 from pressure_SM._3D.train_and_eval.assembly import assemble_prediction
 from pressure_SM._3D.train_and_eval.neural_networks import *
 
@@ -49,6 +52,7 @@ def load_tucker_and_NN(
 	grid_res,
 	dropout_rate,
 	regularization,
+	ranks,
 	verbose=True
 ):
 	"""
@@ -103,8 +107,8 @@ def load_tucker_and_NN(
 	n_layers, width = define_model_arch(model_arch)
 
 	global model
-	input_features_size = 4 * 4 * 4 * 4
-	output_features_size = 4 * 4 * 4
+	input_features_size = ranks * ranks * ranks * 4
+	output_features_size = ranks * ranks * ranks
 
 	model = MLP(n_layers, width, input_features_size, output_features_size, dropout_rate, regularization)
 	model.load_weights(weights_fn)
@@ -177,14 +181,17 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 	global vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF
 	global grid_shape_z, grid_shape_y, grid_shape_x
 
-	x_min = round(np.min(array_concat[...,3]), 6)
-	x_max = round(np.max(array_concat[...,3]), 6)
-	y_min = round(np.min(array_concat[...,4]), 6)
-	y_max = round(np.max(array_concat[...,4]), 6)
-	z_min = round(np.min(array_concat[...,5]), 6)
-	z_max = round(np.max(array_concat[...,5]), 6)
+	limits = {
+		'x_min': round(np.min(array_concat[...,3]), 6),
+		'x_max': round(np.max(array_concat[...,3]), 6),
+		'y_min': round(np.min(array_concat[...,4]), 6),
+		'y_max': round(np.max(array_concat[...,4]), 6),
+		'z_min': round(np.min(array_concat[...,5]), 6),
+		'z_max': round(np.max(array_concat[...,5]), 6)
+	}
 
-	X0, Y0, Z0 = create_uniform_grid(x_min, x_max, y_min, y_max, z_min, z_max, grid_res)
+	X0, Y0, Z0 = create_uniform_grid(limits, grid_res)
+
 	xyz0 = np.concatenate((np.expand_dims(X0, axis=1), np.expand_dims(Y0, axis=1), np.expand_dims(Z0, axis=1)), axis=-1)
 	points = array_concat[...,3:6] #coordinates
 
@@ -194,12 +201,19 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 
 	#print( 'Calculating domain bool' )
 	# You may need to update domain_dist to accept the new boundaries if needed
-	boundaries_list = [obst, y_bot, z_bot, y_top, z_top]
-	domain_bool, sdf = domain_dist(boundaries_list, xyz0, grid_res, find_limited_index=False)
+	boundaries = {
+		'obst_boundary': obst,
+		'y_bot_boundary': y_bot,
+		'z_bot_boundary': z_bot,
+		'y_top_boundary': y_top,
+		'z_top_boundary': z_top
+	}
 
-	grid_shape_z = int(round((z_max-z_min)/grid_res))
-	grid_shape_y = int(round((y_max-y_min)/grid_res)) 
-	grid_shape_x = int(round((x_max-x_min)/grid_res))
+	domain_bool, sdf = domain_dist(boundaries, xyz0, grid_res)
+
+	grid_shape_z = int(round((limits['z_max']-limits['z_min'])/grid_res))
+	grid_shape_y = int(round((limits['y_max']-limits['y_min'])/grid_res)) 
+	grid_shape_x = int(round((limits['x_max']-limits['x_min'])/grid_res))
 
 	x0 = np.min(X0)
 	y0 = np.min(Y0)
@@ -396,8 +410,9 @@ def py_func(array_in, U_max_norm, verbose=False):
 	if verbose_g:
 		print( "Model prediction time : " + str(t1-t0) + " s")
 
-	# PCA inverse transformation:
-	# PC_deltaP -> deltaP
+	# Tucker inverse transformation:
+	# Tensor code (TC)
+	# TC_deltaP -> deltaP
 	t0 = time.time()
 
 	# Getting the non-standerdized PCs
@@ -408,7 +423,7 @@ def py_func(array_in, U_max_norm, verbose=False):
 	res_concat = tl.tenalg.multi_mode_dot(res_concat, out_factors[1:], modes=[1, 2, 3], transpose=False)
 	t1 = time.time()
 	if verbose_g:
-		print( "PCA inverse transform : " + str(t1-t0) + " s")
+		print( "Tucker inverse transformation : " + str(t1-t0) + " s")
 
 	# Redimensionalizing the predicted pressure field
 	res_concat = res_concat * max_abs_delta_p * pow(U_max_norm, 2.0)

@@ -37,19 +37,19 @@ PyObject *array_3d_init(nullptr);
 /*// Placeholder to grab data before sending to Python*/
 int num_cells = mesh.cells().size();
 
-label z_top_patchID = mesh.boundaryMesh().findPatchID("geometry_z_top");
+label z_top_patchID = mesh.boundaryMesh().findPatchID("top");
 int num_cells_z_top = p.boundaryField()[z_top_patchID].size();
 
-label z_bot_patchID = mesh.boundaryMesh().findPatchID("geometry_z_bot");
+label z_bot_patchID = mesh.boundaryMesh().findPatchID("bot");
 int num_cells_z_bot = p.boundaryField()[z_bot_patchID].size();
 
-label y_bot_patchID = mesh.boundaryMesh().findPatchID("geometry_y_bot");
+label y_bot_patchID = mesh.boundaryMesh().findPatchID("front");
 int num_cells_y_bot = p.boundaryField()[y_bot_patchID].size();
 
-label y_top_patchID = mesh.boundaryMesh().findPatchID("geometry_y_top");
+label y_top_patchID = mesh.boundaryMesh().findPatchID("back");
 int num_cells_y_top = p.boundaryField()[y_top_patchID].size();
 
-label obst_patchID = mesh.boundaryMesh().findPatchID("geometry_obstacle");
+label obst_patchID = mesh.boundaryMesh().findPatchID("obstacle");
 int num_cells_obstacle = p.boundaryField()[obst_patchID].size();
 
 /*Done importing Python functionality*/

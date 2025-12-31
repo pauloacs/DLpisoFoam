@@ -6,7 +6,6 @@ for device in physical_devices:
 from numba import njit
 import os
 import shutil
-import time
 import numpy as np
 
 import pickle as pk
@@ -23,7 +22,15 @@ from .utils import sampling
 from .utils import visualization
 
 class Evaluation():
-	def __init__(self, delta, block_size, overlap, dataset_path, model_path, standardization_method, ranks):
+	def __init__(
+		self,
+		delta: float,
+		block_size: int,
+		overlap: float,
+		dataset_path: str,
+		model_path: str,
+		standardization_method: str,
+		ranks):
 		"""
 		Initialize Evaluation class. 
 
@@ -148,7 +155,16 @@ class Evaluation():
 
 		self.indices = indices.astype(int)
 
-	def timeStep(self, sim, time, plot_intermediate_fields, save_plots, show_plots, apply_filter, apply_deltaU_change_wgt, flatten_data):
+	def timeStep(
+		self,
+		sim: int,
+		time: int,
+		plot_intermediate_fields: bool,
+		save_plots: bool,
+		show_plots: bool,
+		apply_filter: bool,
+		apply_deltaU_change_wgt: bool,
+		flatten_data: bool):
 		"""
 		Performs a time step in the simulation.
 
@@ -158,7 +174,7 @@ class Evaluation():
 			plot_intermediate_fields (bool): Whether to plot intermediate fields during the time step.
 			save_plots (bool): Whether to save the plots.
 			show_plots (bool): Whether to display the plots.
-			apply_filter: The filter to apply.
+			apply_filter (bool): Whether to apply the filter.
 
 		Returns:
 			None
@@ -464,9 +480,19 @@ class Evaluation():
 		no_flow_bool = grid[0,:,:,:,3] == 0
 
 		if save_plots:
-			#visualization.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 50, 95], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
-			visualization.plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indices=[5, 10, 15, 20], fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
-			visualization.plot_delta_p_comparison_slices(cfd_results, field_deltap, no_flow_bool, slices_indices=[1, 5, 10, 15, 20, 24], fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
+			visualization.plot_delta_p_comparison(
+				cfd_results,
+				field_deltap,
+				no_flow_bool,
+				slices_indices=[5, 20, 40, 60, 80, 95],
+				fig_path=f'plots/sim{sim}/deltap_pred_t{time}.png')
+			
+			visualization.plot_delta_p_comparison_slices(
+				cfd_results,
+				field_deltap,
+				no_flow_bool,
+				slices_indices=[5, 20, 40, 60, 80, 95],
+				fig_path=f'plots/sim{sim}/deltap_pred_t{time}_slices.png')
 			
 			# if time == 9:
 			# 	visualization.plot_cfd_results_3d_helper(cfd_results[:,:, 20:150], no_flow_bool[:,:, 20:150], slices_indices=[0, 8, 16, 24], fig_path=f'plots/sim{sim}/deltap_p{time}_true.png')

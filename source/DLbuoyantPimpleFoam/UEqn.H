@@ -36,4 +36,6 @@ if (pimple.momentumPredictor())
     fvOptions.correct(U);
     K = 0.5*magSqr(U);
 }
+
+// Storing the velocity increment
 delta_U = U - U_prev;

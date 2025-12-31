@@ -9,6 +9,20 @@ autoPtr<fluidThermo> pThermo
 fluidThermo& thermo = pThermo();
 thermo.validate(args.executable(), "h", "e");
 
+// Cell center coordinates for surrogate model
+volVectorField C
+(
+    IOobject
+    (
+        "C",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::NO_WRITE
+    ),
+    mesh.C()
+);
+
 volScalarField& p = thermo.p();
 
 volScalarField rho
@@ -120,7 +134,7 @@ volScalarField delta_p_rgh
         IOobject::NO_WRITE
     ),
     mesh,
-    dimensionedScalar("delta_p_rgh", dimensionSet(0,2,-2,0,0,0,0), 0.0)
+    dimensionedScalar("delta_p_rgh", dimensionSet(1,-1,-2,0,0,0,0), 0.0)
 );
 
 volVectorField delta_U_prev
@@ -163,7 +177,7 @@ volScalarField p_rgh_prev
         IOobject::NO_WRITE
     ),
     mesh,
-    dimensionedScalar("p_rgh_prev", dimensionSet(0,2,-2,0,0,0,0), 0.0)
+    dimensionedScalar("p_rgh_prev", dimensionSet(1,-1,-2,0,0,0,0), 0.0)
 );
 
 
@@ -178,7 +192,7 @@ volScalarField delta_p_rgh_CFD
         IOobject::NO_WRITE
     ),
     mesh,
-    dimensionedScalar("delta_p_rgh_CFD", dimensionSet(0,2,-2,0,0,0,0), 0.0)
+    dimensionedScalar("delta_p_rgh_CFD", dimensionSet(1,-1,-2,0,0,0,0), 0.0)
 );
 
 volVectorField delta_U
@@ -195,33 +209,6 @@ volVectorField delta_U
     dimensionedVector("delta_U", dimensionSet(0,1,-1,0,0,0,0), vector::zero)
 );
 
-volScalarField rho_prev
-(
-    IOobject
-    (
-        "rho_prev",
-        runTime.timeName(),
-        mesh,
-        IOobject::NO_READ,
-        IOobject::NO_WRITE
-    ),
-    mesh,
-    dimensionedScalar("rho_prev", dimensionSet(0,1,-3,0,0,0,0), 0.0)
-);
-
-volScalarField delta_rho
-(
-    IOobject
-    (
-        "delta_rho",
-        runTime.timeName(),
-        mesh,
-        IOobject::NO_READ,
-        IOobject::NO_WRITE
-    ),
-    mesh,
-    dimensionedScalar("delta_rho", dimensionSet(0,1,-3,0,0,0,0), 0.0)
-);
 
 Info<< "Creating field kinetic energy K\n" << endl;
 volScalarField K("K", 0.5*magSqr(U));

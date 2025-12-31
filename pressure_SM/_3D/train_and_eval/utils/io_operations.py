@@ -2,11 +2,9 @@
 Functions for reading/writing datasets, boundaries, and serialization.
 """
 
-import os
 import h5py
 import numpy as np
 import tensorflow as tf
-import tables
 
 
 def read_boundaries(sim_i, original_dataset_path):
@@ -54,6 +52,7 @@ def read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t):
         data = np.array(f["sim_data"][sim_i:sim_i+1, first_t:(first_t + last_t), ...], dtype='float32')
 
     indice = index(data[0, 0, :, 0], -100.0)[0]
+    
     data_limited = data[0, :, :indice, :]
 
     limits = {

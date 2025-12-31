@@ -3,7 +3,18 @@ from scipy import ndimage
 
 #### ASSEMBLY ALGORITHM
 
-def correct_pred(field_block, bool_block, i, j, k, p_i, p_j, p_k, shape, overlap, n_x, n_z, BC_col, BC_rows, BC_depths, Ref_BC):
+def correct_pred(
+        field_block,
+        bool_block,
+        i, j, k,
+        p_i, p_j, p_k,
+        shape,
+        overlap,
+        n_x, n_z,
+        BC_col,
+        BC_rows,
+        BC_depths,
+        Ref_BC):
     """
     Standalone version of _correct_pred for block correction.
 
@@ -164,7 +175,7 @@ def assemble_prediction(
     BC_rows = np.zeros(n_x)
     BC_depths = np.zeros((n_y, n_x))
 
-    print(f'Shape: {(shape_z, shape_y, shape_x)}')
+    #print(f'Shape: {(shape_z, shape_y, shape_x)}')
 
     # i index where the lower blocks are located
     p_i = shape_z - ((shape - overlap) * (n_z - 2) + shape)
@@ -184,8 +195,8 @@ def assemble_prediction(
         # Applying the correction
         pred_field = correct_pred(
             pred_field, flow_bool, i, j, k, p_i, p_j, p_k,
-            shape=shape, overlap=overlap, n_x=n_x, n_z=n_z,
-            BC_col=BC_col, BC_rows=BC_rows, BC_depths=BC_depths, Ref_BC=Ref_BC
+            shape, overlap, n_x, n_z,
+            BC_col, BC_rows, BC_depths, Ref_BC
         )
 
         # Last reassembly step:

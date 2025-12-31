@@ -23,7 +23,10 @@ import scipy.ndimage as ndimage
 import tensorly as tl
 
 from pressure_SM._3D.CFD_usable.utils import memory
-from pressure_SM._3D.train_and_eval.utils import interpolate_fill, interp_weights, domain_dist, create_uniform_grid, define_model_arch
+from pressure_SM._3D.train_and_eval.utils.data_processing import interpolate_fill, interp_weights, create_uniform_grid
+from pressure_SM._3D.train_and_eval.utils.domain_geometry import domain_dist
+from pressure_SM._3D.train_and_eval.utils.model_utils import define_model_arch
+
 from pressure_SM._3D.train_and_eval.assembly import assemble_prediction
 from pressure_SM._3D.train_and_eval.neural_networks import *
 
@@ -201,29 +204,43 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		global vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF
 		global grid_shape_z, grid_shape_y, grid_shape_x
 
-		x_min = round(np.min(array_concat[...,3]), 6)
-		x_max = round(np.max(array_concat[...,3]), 6)
-		y_min = round(np.min(array_concat[...,4]), 6)
-		y_max = round(np.max(array_concat[...,4]), 6)
-		z_min = round(np.min(array_concat[...,5]), 6)
-		z_max = round(np.max(array_concat[...,5]), 6)
+		limits = {
+			'x_min': round(np.min(array_concat[...,3]), 2),
+			'x_max': round(np.max(array_concat[...,3]), 2),
+			'y_min': round(np.min(array_concat[...,4]), 2),
+			'y_max': round(np.max(array_concat[...,4]), 2),
+			'z_min': round(np.min(array_concat[...,5]), 2),
+			'z_max': round(np.max(array_concat[...,5]), 2)
+		}
 
-		X0, Y0, Z0 = create_uniform_grid(x_min, x_max, y_min, y_max, z_min, z_max, grid_res)
+		X0, Y0, Z0 = create_uniform_grid(limits, grid_res)
 		xyz0 = np.concatenate((np.expand_dims(X0, axis=1), np.expand_dims(Y0, axis=1), np.expand_dims(Z0, axis=1)), axis=-1)
 		points = array_concat[...,3:6] #coordinates
 
 		#print( 'Calculating verts and weights' )
 		vert_OFtoNP, weights_OFtoNP = interp_weights(points, xyz0)
+		assert np.all(np.isfinite(weights_OFtoNP)), "NaN values found in weights_OFtoNP"
+		assert np.all(np.isfinite(vert_OFtoNP)), "NaN values found in vert_OFtoNP"
+
 		vert_NPtoOF, weights_NPtoOF = interp_weights(xyz0, points)
+		assert np.all(np.isfinite(weights_NPtoOF)), "NaN values found in weights_NPtoOF"
+		assert np.all(np.isfinite(vert_NPtoOF)), "NaN values found in vert_NPtoOF"
 
 		#print( 'Calculating domain bool' )
 		# You may need to update domain_dist to accept the new boundaries if needed
-		boundaries_list = [obst, y_bot, z_bot, y_top, z_top]
-		domain_bool, sdf = domain_dist(boundaries_list, xyz0, grid_res, find_limited_index=False)
+		boundaries = {
+			'obst_boundary': obst,
+			'y_bot_boundary': y_bot,
+			'z_bot_boundary': z_bot,
+			'y_top_boundary': y_top,
+			'z_top_boundary': z_top
+		}
 
-		grid_shape_z = int(round((z_max-z_min)/grid_res))
-		grid_shape_y = int(round((y_max-y_min)/grid_res)) 
-		grid_shape_x = int(round((x_max-x_min)/grid_res))
+		domain_bool, sdf = domain_dist(boundaries, xyz0, grid_res)
+
+		grid_shape_z = int(round((limits['z_max']-limits['z_min'])/grid_res))
+		grid_shape_y = int(round((limits['y_max']-limits['y_min'])/grid_res)) 
+		grid_shape_x = int(round((limits['x_max']-limits['x_min'])/grid_res))
 
 		x0 = np.min(X0)
 		y0 = np.min(Y0)
@@ -276,7 +293,8 @@ def py_func(array_in, U_max_norm):
 	block_size = block_size_g
 
 	if rank == 0: #running all calculations at rank 0 
-		print('Starting call of SM')
+		if verbose_g:
+			print('Starting call of SM py_func...')
 
 		t0_py_func = time.time()
 
@@ -438,6 +456,11 @@ def py_func(array_in, U_max_norm):
 		# Redimensionalizing the predicted pressure field
 		res_concat = res_concat * max_abs_delta_p * pow(U_max_norm, 2.0)
 
+		number_of_nans = np.isnan(res_concat).sum()
+		if verbose_g:
+			print(f"Number of NaNs in res_concat before assembling: {number_of_nans}/{res_concat.size}")
+		assert number_of_nans == 0, "NaN values found in res_concat before assembling."
+		
 		for i, x in enumerate(x_list):
 			if (x[0,:,:,0] < 1e-5).all() and (x[0,:,:,1] < 1e-5).all():
 				res_concat[i] = np.zeros((block_size, block_size, 1))
@@ -470,6 +493,12 @@ def py_func(array_in, U_max_norm):
 
 		# Rearrange the prediction into a 1D array that it can be sent to OF
 		change_in_deltap = change_in_deltap[tuple(indices.T)]
+
+		number_of_nans = np.isnan(change_in_deltap).sum()
+		if verbose_g:
+			print(f"Max and min of change_in_deltap before filtering: {np.nanmax(change_in_deltap)}, {np.nanmin(change_in_deltap)}")		
+			print(f"Number of NaNs in change_in_deltap before filtering: {number_of_nans}/{change_in_deltap.size}")
+			assert number_of_nans == 0, "NaN values found in change_in_deltap before filtering."
 
 		t0 = time.time()
 		# Interpolation into the orginal grid
@@ -506,8 +535,19 @@ def py_func(array_in, U_max_norm):
 	else:
 		p_rankwise = None
 
+	for p_rank_i in p_rankwise:
+		if np.any(np.isnan(p_rank_i)):
+			nan_count = np.sum(np.isnan(p_rank_i))
+			if verbose_g:
+				print(f"Number of NaN values in p_rankwise: {nan_count}")
+			raise ValueError("Warning: NaN values detected in p_rankwise before scattering.")
+
 	# This scatters the value to each worker
 	p = comm.scatter(p_rankwise, root=0)
+
+	if np.any(np.isnan(p)):
+		print(f"Warning: NaN values detected in p at rank {rank} after scattering.")
+
 	if verbose_g:
 		print(f"Process {rank} received object with shape {p.shape}")
 
