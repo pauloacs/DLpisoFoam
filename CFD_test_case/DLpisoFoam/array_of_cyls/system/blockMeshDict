@@ -1,0 +1,201 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  8                                     |
+|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version         2.0;
+    format          ascii;
+    class           dictionary;
+    object          blockMeshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+convertToMeters 1;
+
+// Basic dimensions
+a	0.05;  // cube width
+b 	0.05;  // cube length
+h 	0.5;   // cube height
+
+// Calculated dimensions (static values)
+A	0.15;  // width of underlying surface area (3.0 * a)
+B	0.15;  // length of underlying surface area (3.0 * b)
+
+AmaHalf 0.05;   // half-width between buildings: 0.5 * (A - a) = 0.05
+BmbHalf 0.05;   // half-length between buildings: 0.5 * (B - b) = 0.05
+
+// x-coordinates marking cubes and their surroundings
+i00	0.0;    // 0.0 * B = 0.0
+i01	0.05;   // 0.0 * B + BmbHalf = 0.05
+i02	0.10;   // 0.0 * B + BmbHalf + b = 0.10
+i10	0.15;   // 1.0 * B = 0.15
+
+// y-coordinates marking cubes and their surroundings
+j00	0.0;    // 0.0 * A = 0.0
+j01	0.05;   // 0.0 * A + AmaHalf = 0.05
+j02	0.10;   // 0.0 * A + AmaHalf + a = 0.10
+j10	0.15;   // 1.0 * A = 0.15
+
+// horizontal grid dimensions
+na  3;   // cells across cylinder widthi
+nb  3;   // cells across cylinder length
+
+// Calculated grid dimensions
+NA  3;   // cells in spacing regions: floor(AmaHalf * na / a) = floor(0.05 * 5 / 0.05) = 5
+NB  3;   // cells in spacing regions: floor(BmbHalf * nb / b) = floor(0.05 * 5 / 0.05) = 5
+
+// z-coordinates
+Ztop    0.5;   // height of domain top: same as cube height
+
+// vertical grid dimensions
+nh  10;  // cells in vertical direction (increased resolution for small height)
+NH  0;   // no upper region since cube fills entire height
+
+vertices
+(
+    // wall region
+    ($i00  $j00   0)  // 0
+    ($i01  $j00   0)
+    ($i02  $j00   0)
+    ($i10  $j00   0)
+    ($i00  $j01   0)  // 4
+    ($i01  $j01   0)
+    ($i02  $j01   0)
+    ($i10  $j01   0)
+    ($i00  $j02   0)  // 8
+    ($i01  $j02   0)
+    ($i02  $j02   0)
+    ($i10  $j02   0)
+    ($i00  $j10   0)  // 12
+    ($i01  $j10   0)
+    ($i02  $j10   0)
+    ($i10  $j10   0)
+    // cube height (now at domain top)
+    ($i00  $j00  $h)  // 16
+    ($i01  $j00  $h)
+    ($i02  $j00  $h)
+    ($i10  $j00  $h)
+    ($i00  $j01  $h)  // 20
+    ($i01  $j01  $h)
+    ($i02  $j01  $h)
+    ($i10  $j01  $h)
+    ($i00  $j02  $h)  // 24
+    ($i01  $j02  $h)
+    ($i02  $j02  $h)
+    ($i10  $j02  $h)
+    ($i00  $j10  $h)  // 28
+    ($i01  $j10  $h)
+    ($i02  $j10  $h)
+    ($i10  $j10  $h)
+);
+
+blocks
+(
+    hex ( 0  1  5  4 16 17 21 20) inner ($NB $NA $nh) simpleGrading (1 1 1)  // SW
+    hex ( 1  2  6  5 17 18 22 21) inner ($nb $NA $nh) simpleGrading (1 1 1)  // S
+    hex ( 2  3  7  6 18 19 23 22) inner ($NB $NA $nh) simpleGrading (1 1 1)  // SE
+    hex ( 4  5  9  8 20 21 25 24) inner ($NB $na $nh) simpleGrading (1 1 1)  // W
+    hex ( 6  7 11 10 22 23 27 26) inner ($NB $na $nh) simpleGrading (1 1 1)  // E
+    hex ( 8  9 13 12 24 25 29 28) inner ($NB $NA $nh) simpleGrading (1 1 1)  // NW
+    hex ( 9 10 14 13 25 26 30 29) inner ($nb $NA $nh) simpleGrading (1 1 1)  // N
+    hex (10 11 15 14 26 27 31 30) inner ($NB $NA $nh) simpleGrading (1 1 1)  // NE
+);
+
+edges
+(
+);
+
+boundary
+(
+    inlet
+    {
+        type patch;
+        faces
+        (
+            (0 16 20  4)
+            (4 20 24  8)
+            (8 24 28 12)
+        );
+    }
+    outlet
+    {
+        type patch;
+        faces
+        (
+            (15 31 27 11)
+            (11 27 23  7)
+            ( 7 23 19  3)
+        );
+    }
+    front
+    {
+        type wall;
+        faces
+        (
+            (3 19 18 2)
+            (2 18 17 1)
+            (1 17 16 0)
+        );
+    }
+    back
+    {
+        type wall;
+        faces
+        (
+            (12 28 29 13)
+            (13 29 30 14)
+            (14 30 31 15)
+        );
+    }
+    top
+    {
+        type wall;
+        faces
+        (
+            (16 17 21 20)
+            (17 18 22 21)
+            (18 19 23 22)
+            (20 21 25 24)
+            (22 23 27 26)
+            (24 25 29 28)
+            (25 26 30 29)
+            (26 27 31 30)
+        );
+    }
+    bot
+    {
+        type wall;
+        faces
+        (
+            ( 0  4  5  1)
+            ( 4  8  9  5)
+            ( 8 12 13  9)
+            ( 9 13 14 10)
+            (10 14 15 11)
+            ( 6 10 11  7)
+            ( 2  6  7  3)
+            ( 1  5  6  2)
+        );
+    }
+    obstacle
+    {
+        type wall;
+        faces
+        (
+            ( 5  9 25 21) // west face
+            ( 6 10 26 22) // east face
+            ( 5  6 22 21) // south face
+            ( 9 10 26 25) // north face
+        );
+    }
+);
+
+mergePatchPairs
+(
+);
+
+// ************************************************************************* //
