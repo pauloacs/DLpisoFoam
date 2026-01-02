@@ -2,6 +2,8 @@
 
 #set -x
 
+source /opt/openfoam8/etc/bashrc
+
 # This activates the conda environment
 source /opt/conda/bin/activate
 conda activate python311
@@ -11,16 +13,17 @@ conda activate python311
 source /opt/openfoam8/etc/bashrc 
 cd /home/repo/source
 #
-echo "Installing DLpisoFoam - algorithm 1 version" 
-cd DLpisoFoam_alg1
+echo "Installing DLpisoFoam" 
+cd DLpisoFoam
 wclean
 wmake
 cd ..
 #
-echo "Installing DLpisoFoam - algorithm 2 version"
-cd DLpisoFoam_alg2
+echo "Installing DLbouyantPimpleFoam"
+cd DLbouyantPimpleFoam
 wclean
 wmake
+
 cd /home/repo
 #
 echo "Installing surrogate_model Python modules"

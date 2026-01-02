@@ -1,8 +1,9 @@
 # Start from the official Ubuntu Bionic (18.04 LTS) image
-FROM ubuntu:bionic
+FROM ubuntu:20.04
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Copy local files into the image
-COPY . /home/repo
+# Copy all files except generate_Data and train_SM directories
+#COPY --exclude=generate_Data --exclude=train_SM . /home/repo
 
 COPY env_311.yml /usr/bin/environment.yml
 COPY entrypoint_311.sh /usr/bin/entrypoint.sh
@@ -43,9 +44,11 @@ RUN sh -c "wget -O - http://dl.openfoam.org/gpg.key | apt-key add -" && \
         echo "export OMPI_MCA_btl_vader_single_copy_mechanism=none" >>  ~user/.bashrc
 
 # Install miniconda
-ENV CONDA_DIR /opt/conda
-RUN wget  https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
-  /bin/bash ~/miniconda.sh -b -p /opt/conda
+ENV CONDA_DIR=/opt/conda
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-py38_4.12.0-Linux-x86_64.sh -O /tmp/miniconda.sh && \
+        /bin/bash /tmp/miniconda.sh -b -p $CONDA_DIR && \
+        rm /tmp/miniconda.sh && \
+        $CONDA_DIR/bin/conda clean -afy
 
 # Creating python virtual environment
 ENV PATH=$CONDA_DIR/bin:$PATH
@@ -54,13 +57,17 @@ RUN conda env create -f /usr/bin/environment.yml
 
 
 # Giving enough permissions to the user
+RUN mkdir -p /home/repo
 # If more permissions are required the user can chown itself (user) with sudo inside the container
 RUN chown -R user:user /home/repo
 
 WORKDIR /home/repo/
+RUN sudo chmod 755 /usr/bin/entrypoint.sh
 
 # set the default container user to foam
 USER user
 
+ENTRYPOINT ["/bin/bash","-l"]
 # The solvers will be installed in the entrypoint when running this image in a container
-ENTRYPOINT ["/usr/bin/entrypoint.sh"]
+#ENTRYPOINT ["/usr/bin/entrypoint.sh"]
+

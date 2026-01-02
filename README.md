@@ -23,20 +23,29 @@ https://www.sciencedirect.com/science/article/pii/S004578252400389X
 
 ## Introduction
 
-This repository contains the solvers and test cases for the **DLpisoFoam** solver. This solver is based on the OpenFOAM v8 version and is developed to solve the incompressible Navier-Stokes equations using the PISO algorithm. The primary objective of this solver is to improve the pressure-velocity coupling using a Deep Learning surrogate model. The solver has three versions:
+This repository contains the solvers and test cases for the **DLpisoFoam** and **DLbuoyantPimpleFoam** solvers.
+These solvers are based on the OpenFOAM v8 version and are developed to solve the Navier-Stokes equations using the PISO/PIMPLE algorithm. The primary objective of this solver is to improve the pressure-velocity coupling using a Deep Learning surrogate model.
 
-### Latest: 
+This **all-in-one repository (Surrogate models + DL aided CFD Solvers)** builds upon the work from https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications.
 
-**DLpisoFoam-deltas**:
-  this solver is currently implemented. It makes use of the **deltau_to_delta surrogate models** in https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications. This solver use the **deltau_to_delta surrogate model** in surrogate_models/deltau_to_delta/. 
+### Surrogate Models
+
+Stored under pressure_SM/ and available in 2D or 3D versions. To be used to:
+
+1 - Train and evaluate the SM: pressure_SM/_3D/train_and_eval
+2 - Integrate the SM into the CFD solver: pressure_SM/_3D/CFD_usable
 
 
-### Old versions - stored under **other_solvers/**
+### Latest solvers:
 
-**DLpisoFoam-alg1 and DLpisoFoam-alg2**:
- the solvers developed in https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications. These solvers use the **U_to_p surrogate model** in surrogate_models/u_to_p/. 
+These make usage of the above surrogate models to accelerate OpenFOAM fluid flow solvers.
 
-Here, you can find the DLpisoFoam solvers, as well as test cases that utilize them. A DockerFile and everything that is needed to build the docker image is also provided here to ease the installation of the solver.
+**DLpisoFoam**:
+  This Deep-Learning aided CFD solver makes usage of the developed pressure surrogate models for accelerating **incompressible isothermal fluid flows**.
+
+**DLbuoyantPimpleFoam**:
+  This Deep-Learning aided CFD solver makes usage of the developed pressure surrogate models for accelerating **thermal fluid flows**.
+  
 
 ## How to start
 
@@ -91,7 +100,7 @@ $ ./prep_env311.sh
 
 Note: You may need to create your own `prep_env311.sh` file with the correct path to your conda environment.
 
-4. Finally, install the CFD solvers. For example, to install DLpisoFoam_deltas, navigate to the `source/DLpisoFoam_deltas` directory and run the following commands:
+4. Finally, install the CFD solvers. For example, to install DLpisoFoam, navigate to the `source/DLpisoFoam` directory and run the following commands:
 
 ```sh
 $ wclean
@@ -100,16 +109,25 @@ $ wmake
 
 ### Run your first tutorial
 
-To run your first tutorial, navigate to the directory of the solver you want to test. For example, if you want to run DLpisoFoam_deltas, follow these steps:
+To run your first tutorial, navigate to the directory of the solver you want to test. For example, if you want to run DLpisoFoam, follow these steps:
 
-1. Change to the `test_case_deltaU_deltaP/` directory:
+1. Change to the `CFD_test_case/` directory:
 
 ```sh
 $ cd test_case_deltaU_deltaP/
 ```
 
-2. Run the DLpisoFoam_deltas solver:
+2. Run the DLpisoFoam solver:
 
 ```sh
-$ DLpisoFoam_deltas
+$ cd DLpisoFoam/
+$ DLpisoFoam
 ```
+
+
+### Old versions - stored under **other_solvers/**
+
+**DLpisoFoam-alg1 and DLpisoFoam-alg2**:
+ the solvers developed in https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications. These solvers use the **U_to_p surrogate model** in surrogate_models/u_to_p/. 
+
+Here, you can find the DLpisoFoam solvers, as well as test cases that utilize them. A DockerFile and everything that is needed to build the docker image is also provided here to ease the installation of the solver.
