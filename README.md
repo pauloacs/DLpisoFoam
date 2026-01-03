@@ -4,23 +4,28 @@
 
 ## 📋 Contents
 
-- [Introduction](#introduction)
-- [Key Features](#key-features)
-- [Publications](#publications)
-- [Repository Structure](#repository-structure)
-- [Getting Started](#getting-started)
+- [Introduction](#-introduction)
+- [What This Repository Enables](#-what-this-repository-enables)
+- [Key Features](#-key-features)
+- [Publications](#-publications)
+- [Repository Structure](#-repository-structure)
+- [Getting Started](#-getting-started)
   - [Prerequisites](#prerequisites)
   - [Part 1: Environment Setup](#part-1-environment-setup)
     - [Option 1: Docker (Recommended)](#option-1-docker-recommended)
     - [Option 2: Local Installation](#option-2-local-installation)
-  - [Part 2: Training your Surrogate Model](#part-2-training-your-surrogate-model)
-  - [Part 3: Running Your First CFD using the Surrogate Model](#part-3--running-your-first-cfd-using-the-surrogate-model)
-- [Available Solvers](#available-solvers)
+  - [Part 2: Preparing Datasets & Training Your Surrogate Model](#part-2-preparing-datasets--training-your-surrogate-model)
+    - [Part 2.1: Generate CFD Training Data](#part-21-generate-cfd-training-data)
+    - [Part 2.2: Train the Surrogate Model](#part-22-train-the-surrogate-model)
+  - [Part 3: Running Your First CFD Simulation with the Surrogate Model](#part-3--running-your-first-cfd-simulation-with-the-surrogate-model)
+    - [Part 3.1: Run the DLpisoFoam Test Case with the PRE-TRAINED Surrogate Model](#part-31-run-the-dlpisofoam-test-case-with-the-pre-trained-surrogate-model)
+    - [Part 3.2: Run DLpisoFoam with YOUR trained Surrogate model](#part-32-run-dlpisofoam-with-your-trained-surrogate-model)
+- [Available Solvers](#-available-solvers)
   - [DLpisoFoam](#dlpisofoam)
   - [DLbuoyantPimpleFoam](#dlbuoyantpimplefoam)
-- [Legacy Solvers](#legacy-solvers)
-- [Citation](#citation)
-- [Contact](#contact)
+- [Legacy Solvers](#-legacy-solvers)
+- [Citation](#-citation)
+- [Contact](#-contact)
 - [Acknowledgments](#acknowledgments)
 
 
@@ -31,6 +36,15 @@ This repository contains **machine learning-enhanced OpenFOAM solvers** that acc
 **DLpisoFoam** and **DLbuoyantPimpleFoam** are based on OpenFOAM v8 and implement the PISO/PIMPLE algorithms with integrated neural network surrogate models for improved pressure-velocity coupling.
 
 This is an **all-in-one repository** containing both surrogate models and CFD solvers, building upon the work from [Solving-Poisson's-Equation-through-DL-for-CFD-applications](https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications).
+
+---
+
+## 🎯 What This Repository Enables
+
+This repository provides a complete workflow for accelerating CFD simulations with machine learning:
+1. **Generate Training Data**: Run CFD simulations to create comprehensive datasets from various flow scenarios (examples in `generate_Data/`)
+2. **Train Surrogate Models**: Develop neural network models that learn to predict pressure corrections in unsteady CFD simulations (examples in `train_SM/`)
+3. **Deploy in Production**: Integrate trained models with custom OpenFOAM-based solvers for accelerated simulations (examples in `CFD_test_case/`)
 
 ---
 
@@ -177,34 +191,85 @@ wclean
 wmake
 ```
 
-Verify installation:
+Verify installations:
 ```bash
 which DLpisoFoam
 DLpisoFoam -help
 ```
 
+```bash
+which DLbuoyantPimpleFoam
+DLbuoyantPimpleFoam -help
+```
+
 ---
 
-## Part 2: Training your Surrogate Model
+## Part 2: Preparing datasets & Training your Surrogate Model
 
-(TO BE WRITTEN)
+### Part 2.1: Generate CFD data datasets
 
-## Part 3: 🏃 Running Your First CFD using the Surrogate Model
+Use the scripts in `generate_data/` to generate training datasets from various flow scenarios:
 
-### Example: DLpisoFoam Test Case
+- **Confined flows over chip arrays**: Electronics cooling simulations
+- **Flow around squared cylinders**: Bluff body aerodynamics
+- **Flow over inclined plates**: Boundary layer studies
+
+All configurations support both **isothermal** and **thermal** conditions to match your application requirements.
+
+`pisoFoam` and `buoyantPimpleFoam` modified versions are also there to write the required flow field to train the surrogate models. Some simulation types allow for automatic dataset generation, while others allow for semi-automatic generation.
+
+## Part 2: Preparing Datasets & Training Your Surrogate Model
+
+### Part 2.1: Generate CFD Training Data
+
+Use the scripts in `generate_data/` to generate training datasets from various flow scenarios:
+
+- **Confined flows over chip arrays**: Electronics cooling simulations
+- **Flow around squared cylinders**: Bluff body aerodynamics
+- **Flow over inclined plates**: Boundary layer studies
+
+All configurations support both **isothermal** and **thermal** conditions to match your application requirements.
+
+Modified versions of `pisoFoam` and `buoyantPimpleFoam` are included to extract the necessary flow field data for training. Depending on the simulation type, generation can be fully or semi-automatic.
+
+---
+
+### Part 2.2: Train the Surrogate Model
+
+Navigate to `train_SM/` and use the `run_train.sh` scripts to train your model:
+
+```bash
+cd train_SM/
+# Edit run_train.sh to set your datasetPath
+./run_train.sh
+```
+
+**Key Configuration:**
+- **Required**: Set `datasetPath` to your training dataset location
+- **Optional**: Adjust hyperparameters (learning rate, batch size, dropout, etc.)
+
+**Training Outputs:**
+- **Model file**: HDF5 format TensorFlow model (e.g., `model_MLP_small-std-drop0.1-lr0.0005-regNone-batch1024.h5`)
+- **Compression artifacts**: Tucker factors (3D cases) or PCA vectors (2D cases) (required for CFD deployment)
+
+These files are ready to use with the CFD solvers - the model weights/biases load automatically via TensorFlow.
+
+---
+
+## Part 3: 🏃 Running Your First CFD Simulation with the Surrogate Model
+
+### Part 3.1: Run the DLpisoFoam Test Case with the PRE-TRAINED Surrogate Model
 
 ```bash
 # Navigate to test case
 cd CFD_test_case/DLpisoFoam/
 
 # Run mesh generation (if needed)
-blockMesh
+./genMesh.sh
 
 # Run the solver
 DLpisoFoam
 ```
-
-### Post-processing
 
 ```bash
 # Open in ParaView
@@ -215,6 +280,30 @@ postProcess -func 'mag(U)'
 ```
 
 ---
+
+### Part 3.2: Run DLpisoFoam with YOUR trained Surrogate model
+
+1. **Copy the example test case:**
+  ```bash
+  cp -r CFD_test_case/DLpisoFoam/array_of_cyks CFD_test_case/DLpisoFoam/my_custom_test
+  cd CFD_test_case/DLpisoFoam/my_custom_test
+  ```
+
+2. **Copy your trained surrogate model files:**
+  ```bash
+  # Copy your TensorFlow model
+  cp /path/to/your/model.h5 .
+  
+  # Copy compression artifacts (Tucker factors (3D cases) or PCA vectors (2D cases))
+  cp /path/to/your/tucker_factors.pkl .
+  
+  # Copy normalization files
+  cp /path/to/maxs .
+  cp /path/to/mean_std.npz .
+  ```
+
+---
+
 
 ## 🔧 Available Solvers
 
@@ -257,7 +346,20 @@ These use the older `u_to_p` surrogate models and are kept for reproducibility o
 
 ## 📖 Citation
 
-If you use this work in your research, please cite:
+If you use this work in your research, you can cite the papers that introduced it:
+
+```bibtex
+@article{firstPressureSM2024,
+  author = {Sousa, Paulo and Afonso, Alexandre and Veiga Rodrigues, Carlos},
+  year = {2024},
+  month = {05},
+  pages = {1-26},
+  title = {Application of machine learning to model the pressure poisson equation for fluid flow on generic geometries},
+  volume = {36},
+  journal = {Neural Computing and Applications},
+  doi = {10.1007/s00521-024-09935-0}
+}
+```
 
 ```bibtex
 @article{dlpisofoam2024,
@@ -274,6 +376,16 @@ If you use this work in your research, please cite:
 }
 ```
 
+```bibtex
+@unpublished{surrogateBasedPressureVelocity2024,
+  title = {Surrogate-Based Pressure–Velocity Coupling: Accelerating Incompressible CFD Flow Solvers with Machine Learning},
+  author = {Sousa, Paulo Araújo da Cunha and Afonso, Alexandre M. and Veiga Rodrigues, Carlos},
+  year = {2024},
+  note = {Preprint},
+  doi = {10.2139/ssrn.5364744},
+  url = {https://ssrn.com/abstract=5364744}
+}
+```
 ---
 
 ## 📧 Contact
