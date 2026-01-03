@@ -72,7 +72,7 @@ This repository provides a complete workflow for accelerating CFD simulations wi
 - Performance benchmarks and validation of DLpisoFoam solver
 
 ### 3. Improved Pressure-Velocity Coupling
-[SSRN Preprint (2024)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5364744)
+[SSRN Preprint (2025)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5364744)
 - Enhanced pressure surrogate model and integration methodology
 
 ### 4. 3D Extensions *(Coming Soon)*
