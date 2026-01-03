@@ -42,9 +42,9 @@ This is an **all-in-one repository** containing both surrogate models and CFD so
 ## 🎯 What This Repository Enables
 
 This repository provides a complete workflow for accelerating CFD simulations with machine learning:
-1. **Generate Training Data**: Run CFD simulations to create comprehensive datasets from various flow scenarios (examples in `generate_Data/`)
+1. **Generate Training Data**: Run CFD simulations to create comprehensive datasets from various flow scenarios (examples in `gen_datasets/`)
 2. **Train Surrogate Models**: Develop neural network models that learn to predict pressure corrections in unsteady CFD simulations (examples in `train_SM/`)
-3. **Deploy in Production**: Integrate trained models with custom OpenFOAM-based solvers for accelerated simulations (examples in `CFD_test_case/`)
+3. **Deploy in Production**: Integrate trained models with custom OpenFOAM-based solvers for accelerated simulations (examples in `tutorials/`)
 
 ---
 
@@ -94,7 +94,8 @@ DLpisoFoam/
 │   └── 3D/                     # 3D models
 │       ├── train_and_eval/
 │       └── CFD_usable/
-├── CFD_test_case/              # Example test cases
+├── tutorials/                   # Example test cases
+├── gen_datasets/                # Dataset generation scripts
 ├── other_solvers/              # Legacy solver versions
 ├── Dockerfile                  # Docker build configuration
 └── env_311.yml                 # Python environment specification
@@ -207,7 +208,7 @@ DLbuoyantPimpleFoam -help
 
 ### Part 2.1: Generate CFD Training Data
 
-Use the scripts in `generate_data/` to generate training datasets from various flow scenarios:
+Use the scripts in `gen_datasets/` to generate training datasets from various flow scenarios:
 
 - **Confined flows over chip arrays**: Electronics cooling simulations
 - **Flow around squared cylinders**: Bluff body aerodynamics
@@ -247,7 +248,7 @@ These files are ready to use with the CFD solvers - the model weights/biases loa
 
 ```bash
 # Navigate to test case
-cd CFD_test_case/DLpisoFoam/
+cd tutorials/DLpisoFoam/
 
 # Run mesh generation (if needed)
 ./genMesh.sh
@@ -270,8 +271,8 @@ postProcess -func 'mag(U)'
 
 1. **Copy the example test case:**
   ```bash
-  cp -r CFD_test_case/DLpisoFoam/array_of_cyks CFD_test_case/DLpisoFoam/my_custom_test
-  cd CFD_test_case/DLpisoFoam/my_custom_test
+  cp -r tutorials/DLpisoFoam/array_of_cyks tutorials/DLpisoFoam/my_custom_test
+  cd tutorials/DLpisoFoam/my_custom_test
   ```
 
 2. **Copy your trained surrogate model files:**
