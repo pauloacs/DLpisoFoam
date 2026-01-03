@@ -63,17 +63,16 @@ This repository provides a complete workflow for accelerating CFD simulations wi
 
 ### 1. Surrogate Model Development
 **Application of machine learning to model the pressure Poisson equation for fluid flow on generic geometries**  
-[Springer - Neural Computing and Applications (2024)](https://link.springer.com/article/10.1007/s00521-024-09935-0)
+[Neural Computing and Applications (2024)](https://link.springer.com/article/10.1007/s00521-024-09935-0)
 - Detailed description of the ML surrogate model architecture and training
 
 ### 2. DLpisoFoam Benchmark
 **Enhancing CFD solver with Machine Learning techniques**  
-[Computers & Fluids (2024)](https://www.sciencedirect.com/science/article/pii/S004578252400389X)
+[Computer Methods in Applied Mechanics and Engineering (2024)](https://www.sciencedirect.com/science/article/pii/S004578252400389X)
 - Performance benchmarks and validation of DLpisoFoam solver
 
 ### 3. Improved Pressure-Velocity Coupling
-**Surrogate-Based Pressure-Velocity Coupling: Accelerating Incompressible CFD Flow Solvers with Machine Learning**  
-[ResearchGate (2024)](https://www.researchgate.net/publication/394002762_Surrogate-Based_Pressure-Velocity_Coupling_Accelerating_Incompressible_Cfd_Flow_Solvers_with_Machine_Learning)
+[SSRN Preprint (2024)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=5364744)
 - Enhanced pressure surrogate model and integration methodology
 
 ### 4. 3D Extensions *(Coming Soon)*
