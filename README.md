@@ -204,20 +204,6 @@ DLbuoyantPimpleFoam -help
 
 ---
 
-## Part 2: Preparing datasets & Training your Surrogate Model
-
-### Part 2.1: Generate CFD data datasets
-
-Use the scripts in `generate_data/` to generate training datasets from various flow scenarios:
-
-- **Confined flows over chip arrays**: Electronics cooling simulations
-- **Flow around squared cylinders**: Bluff body aerodynamics
-- **Flow over inclined plates**: Boundary layer studies
-
-All configurations support both **isothermal** and **thermal** conditions to match your application requirements.
-
-`pisoFoam` and `buoyantPimpleFoam` modified versions are also there to write the required flow field to train the surrogate models. Some simulation types allow for automatic dataset generation, while others allow for semi-automatic generation.
-
 ## Part 2: Preparing Datasets & Training Your Surrogate Model
 
 ### Part 2.1: Generate CFD Training Data
