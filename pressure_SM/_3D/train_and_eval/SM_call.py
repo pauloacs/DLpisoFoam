@@ -112,7 +112,7 @@ class Evaluation():
 		xyz0 = np.concatenate((np.expand_dims(X0, axis=1), np.expand_dims(Y0, axis=1), np.expand_dims(Z0, axis=1)), axis=-1)
 		
 		points = data_t0[:, 4:7] #coordinates
-		self.vert, self.weights = data_processing.interp_weights(points, xyz0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
+		self.vert, self.weights = data_processing.interp_weights(points, xyz0, interp_method='IDW') #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
 
 		domain_bool, sdf = domain_geometry.domain_dist(boundaries, xyz0, self.delta)
 

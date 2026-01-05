@@ -3,9 +3,10 @@ Data interpolation, normalization, and grid operations.
 """
 
 import numpy as np
-import scipy.spatial.qhull as qhull
+from scipy.spatial import qhull
+from scipy.spatial import cKDTree
 import sklearn
-from numba import njit
+from numba import njit, prange
 
 
 def interp_weights(
@@ -32,10 +33,16 @@ def interp_weights(
     # For 3D data, baricentric interpolation is very slow - so IDW is the default
 
     if interp_method == "IDW":
-        tree = sklearn.neighbors.KDTree(xyz, leaf_size=40)
-        nndist, nni = tree.query(np.array(uvw), k=3)
-        vertices = list(nni)
-        wts = list((1./np.maximum(nndist**2, 1e-6)) / (1./np.maximum(nndist**2, 1e-6)).sum(axis=-1)[:,None])
+        tree = cKDTree(xyz)
+        nndist, nni = tree.query(np.array(uvw), k=4, workers=-1)
+        vertices = nni
+        #vertices = list(nni)
+        # IDW interpolation weights - two options:
+        # 1. Linear distance (similar to barycentric interpolation - smoother, more balanced)
+        wts = (1./np.maximum(nndist, 1e-6)) / (1./np.maximum(nndist, 1e-6)).sum(axis=-1)[:,None]
+        #wts = list(wts)
+        # 2. Squared distance (more peaked - gives stronger weight to nearest point)
+        # wts = list((1./np.maximum(nndist**2, 1e-6)) / (1./np.maximum(nndist**2, 1e-6)).sum(axis=-1)[:,None])
 
     elif interp_method == "barycentric":
         tri = qhull.Delaunay(xyz)
@@ -82,8 +89,44 @@ def interp_weights(
     return vertices, wts
 
 
+@njit(parallel=True)
+def interpolate_fill_njit(
+    values: np.ndarray,
+    vtx: np.ndarray,
+    wts: np.ndarray,
+    fill_value: float = np.nan) -> np.ndarray:
+    """
+    Interpolate based on previously computed vertices (vtx) and weights (wts) and fill.
+    """
+    n = vtx.shape[0]
+    ret = np.empty(n, dtype=values.dtype)
+    
+    for i in prange(n):
+        # Check for negative weights
+        has_negative = False
+        for j in range(wts.shape[1]):
+            if wts[i, j] < 0:
+                has_negative = True
+                break
+        
+        if has_negative:
+            ret[i] = fill_value
+        else:
+            # Manual dot product
+            val = 0.0
+            for j in range(vtx.shape[1]):
+                val += values[vtx[i, j]] * wts[i, j]
+            ret[i] = val
+    
+    return ret
+
+
 #@njit
-def interpolate_fill(values, vtx, wts, fill_value=np.nan):
+def interpolate_fill(
+    values: np.ndarray,
+    vtx: np.ndarray,
+    wts: np.ndarray,
+    fill_value = np.nan) -> np.ndarray:
     """
     Interpolate based on previously computed vertices (vtx) and weights (wts) and fill.
 

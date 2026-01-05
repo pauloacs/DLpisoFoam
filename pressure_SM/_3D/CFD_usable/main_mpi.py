@@ -24,10 +24,11 @@ import tensorly as tl
 
 from pressure_SM._3D.CFD_usable.utils import memory
 from pressure_SM._3D.train_and_eval.utils.data_processing import interpolate_fill, interp_weights, create_uniform_grid
+from pressure_SM._3D.train_and_eval.utils.data_processing import interpolate_fill_njit
 from pressure_SM._3D.train_and_eval.utils.domain_geometry import domain_dist
 from pressure_SM._3D.train_and_eval.utils.model_utils import define_model_arch
 
-from pressure_SM._3D.train_and_eval.assembly import assemble_prediction
+from pressure_SM._3D.train_and_eval.assembly_vec import assemble_prediction
 from pressure_SM._3D.train_and_eval.neural_networks import *
 
 ########
@@ -218,13 +219,24 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		points = array_concat[...,3:6] #coordinates
 
 		#print( 'Calculating verts and weights' )
-		vert_OFtoNP, weights_OFtoNP = interp_weights(points, xyz0)
+		vert_OFtoNP, weights_OFtoNP = interp_weights(points, xyz0, interp_method='IDW')
 		assert np.all(np.isfinite(weights_OFtoNP)), "NaN values found in weights_OFtoNP"
 		assert np.all(np.isfinite(vert_OFtoNP)), "NaN values found in vert_OFtoNP"
 
-		vert_NPtoOF, weights_NPtoOF = interp_weights(xyz0, points)
+		global vert_OFtoNP_array, weights_OFtoNP_array
+		vert_OFtoNP_array = vert_OFtoNP
+		weights_OFtoNP_array = weights_OFtoNP
+
+		vert_OFtoNP = list(vert_OFtoNP)
+		weights_OFtoNP = list(weights_OFtoNP)
+
+		vert_NPtoOF, weights_NPtoOF = interp_weights(xyz0, points, interp_method='IDW')
 		assert np.all(np.isfinite(weights_NPtoOF)), "NaN values found in weights_NPtoOF"
 		assert np.all(np.isfinite(vert_NPtoOF)), "NaN values found in vert_NPtoOF"
+
+		global vert_NPtoOF_array, weights_NPtoOF_array
+		vert_NPtoOF_array = vert_NPtoOF
+		weights_NPtoOF_array = weights_NPtoOF
 
 		#print( 'Calculating domain bool' )
 		# You may need to update domain_dist to accept the new boundaries if needed
@@ -254,8 +266,8 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		sdfunct = obst_bool.copy()
 
 		#to compute bool 
-		delta_ux = array_concat[...,0:1] #values
-		delta_ux_interp = interpolate_fill(delta_ux, vert_OFtoNP, weights_OFtoNP) 
+		delta_ux = array_concat[...,0] #values
+		delta_ux_interp = interpolate_fill_njit(delta_ux, vert_OFtoNP_array, weights_OFtoNP_array) 
 
 		for (step, x_y_z) in enumerate(xyz0):
 			if domain_bool[step] * (~np.isnan(delta_ux_interp[step])):
@@ -312,55 +324,58 @@ def py_func(array_in, U_max_norm):
 		# check where the deltaU has changed in the last time step
 		deltaU_changed = np.abs(deltaU - deltaU_prev).sum(axis=-1)
 		deltaU_changed = deltaU_changed / deltaU_changed.max()
+
 		# Normalize deltaU components by U_max_norm
 		deltaUx_adim = deltaU[...,0:1]/U_max_norm 
 		deltaUy_adim = deltaU[...,1:2]/U_max_norm
 		deltaUz_adim = deltaU[...,2:3]/U_max_norm
 
-		t1 = time.time()
+		# deltaUx_adim = deltaU[...,0]/U_max_norm 
+		# deltaUy_adim = deltaU[...,1]/U_max_norm
+		# deltaUz_adim = deltaU[...,2]/U_max_norm
+
+
 		if verbose_g: 
-			print( "Data pre-processing:" + str(t1-t0) + " s")
+			print(f"Data pre-processing: {time.time()-t0} s")
 
 		t0 = time.time()
 
-		# Interpolate all three velocity components
-		deltaUx_interp = interpolate_fill(deltaUx_adim, vert_OFtoNP, weights_OFtoNP)
-		deltaUy_interp = interpolate_fill(deltaUy_adim, vert_OFtoNP, weights_OFtoNP)
-		deltaUz_interp = interpolate_fill(deltaUz_adim, vert_OFtoNP, weights_OFtoNP)
-		
-		deltaU_changed_interp = interpolate_fill(deltaU_changed, vert_OFtoNP, weights_OFtoNP)
-		deltaP_prev_interp = interpolate_fill(deltaP_prev, vert_OFtoNP, weights_OFtoNP)
+		deltaUx_interp = interpolate_fill_njit(deltaUx_adim[:,0], vert_OFtoNP_array, weights_OFtoNP_array)
+		deltaUy_interp = interpolate_fill_njit(deltaUy_adim[:,0], vert_OFtoNP_array, weights_OFtoNP_array)
+		deltaUz_interp = interpolate_fill_njit(deltaUz_adim[:,0], vert_OFtoNP_array, weights_OFtoNP_array)
 
-		t1 = time.time()
+		deltaU_changed_interp = interpolate_fill_njit(deltaU_changed, vert_OFtoNP_array, weights_OFtoNP_array)
+		deltaP_prev_interp = interpolate_fill_njit(deltaP_prev, vert_OFtoNP_array, weights_OFtoNP_array)
+
 		if verbose_g:
-			print( "1st interpolation took:" + str(t1-t0) + " s")
+			print( f"1st interpolation took: {time.time()-t0}\ s")
 
 		t0 = time.time()
 
 		grid = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x, 4), dtype=np.float32)
+		deltaP_prev_grid = np.zeros(shape=(grid_shape_z, grid_shape_y, grid_shape_x), dtype=np.float32)
+		deltaU_change_grid = np.zeros(shape=(grid_shape_z, grid_shape_y, grid_shape_x), dtype=np.float32)
 
-		# Rearrange interpolated 1D arrays into 3D arrays
-		grid[:, :, :, 0:1][tuple(indices.T)] = deltaUx_interp.reshape(deltaUx_interp.shape[0], 1)
-		grid[:, :, :, 1:2][tuple(indices.T)] = deltaUy_interp.reshape(deltaUy_interp.shape[0], 1)
-		grid[:, :, :, 2:3][tuple(indices.T)] = deltaUz_interp.reshape(deltaUz_interp.shape[0], 1)
+        # Pre-compute tuple indices once
+		idx_i, idx_j, idx_k = indices[:, 0], indices[:, 1], indices[:, 2]
 
-		grid[:, :, :, 3:4] = sdfunct
+		# Stack all interpolated values and assign at once
+		interp_stack = np.column_stack([deltaUx_interp, deltaUy_interp, deltaUz_interp])
+		grid[idx_i, idx_j, idx_k, :3] = interp_stack
+		grid[:, :, :, 3] = sdfunct[:, :, :, 0]
 
-		deltaP_prev_grid = np.zeros(shape=(grid_shape_z, grid_shape_y, grid_shape_x))
-		deltaU_change_grid = np.zeros(shape=(grid_shape_z, grid_shape_y, grid_shape_x))
+		# Direct assignment
+		deltaP_prev_grid[idx_i, idx_j, idx_k] = deltaP_prev_interp
+		deltaU_change_grid[idx_i, idx_j, idx_k] = deltaU_changed_interp
 
-		deltaP_prev_grid[tuple(indices.T)] = deltaP_prev_interp.reshape(deltaP_prev_interp.shape[0])
-		deltaU_change_grid[tuple(indices.T)] = deltaU_changed_interp.reshape(deltaU_changed_interp.shape[0])
+		## Rescale using broadcasting with normalization array
+		norm_factors = np.array([max_abs_delta_Ux, max_abs_delta_Uy, max_abs_delta_Uz, max_abs_dist], dtype=np.float32)
+		grid /= norm_factors[None, None, None, :]
 
-		## Rescale input variables to [-1,1]
-		grid[:,:,:,0:1] = grid[0,:,:,0:1] / max_abs_delta_Ux
-		grid[:,:,:,1:2] = grid[0,:,:,1:2] / max_abs_delta_Uy
-		grid[:,:,:,2:3] = grid[0,:,:,2:3] / max_abs_delta_Uz
-		grid[:,:,:,3:4] = grid[0,:,:,3:4] / max_abs_dist
-
-		t1 = time.time()
 		if verbose_g:
-			print( "2nd interpolation took:" + str(t1-t0) + " s")
+			print( f"Filling grid with shape {grid.shape} took: {time.time()-t0} s")
+
+		t0 = time.time()
 
 		# Setting any nan value to 0 to avoid issues
 		grid[np.isnan(grid)] = 0
@@ -373,8 +388,6 @@ def py_func(array_in, U_max_norm):
 		n_x = int(np.ceil((grid_shape_x - block_size)/(block_size - overlap )) ) + 1
 		n_y = int(np.ceil((grid_shape_y - block_size)/(block_size - overlap )) ) + 1
 		n_z = int(np.ceil((grid_shape_z - block_size)/(block_size - overlap )) ) + 1
-
-		t0 = time.time()
 
 		# Sampling blocks of size [block_size X block_size] from the input fields (Ux, Uy and sdf)
 		# In the indices_list, the indices corresponding to each sampled block is stored to enable domain reconstruction later.
@@ -396,7 +409,8 @@ def py_func(array_in, U_max_norm):
 					x_f = x_0 + block_size
 
 					#DEBUGGING print
-					if verbose_g:
+					debug_mode = False
+					if verbose_g and debug_mode:
 						print(f"{(z_0,z_f, y_0,y_f, x_0,x_f)}")
 						print(f"indices: {(i, j, n_x -1 - k)}")
 					x_list.append(grid[z_0:z_f, y_0:y_f, x_0:x_f, 0:4])
@@ -404,10 +418,8 @@ def py_func(array_in, U_max_norm):
 
 		x_array = np.array(x_list)
 
-		t1 = time.time()
 		if verbose_g:
-			print( "Data extraction loop took:" + str(t1-t0) + " s")
-
+			print(f"Data extraction loop took: {time.time()-t0} s")
 
 		t0 = time.time()
 		N = x_array.shape[0]
@@ -423,9 +435,8 @@ def py_func(array_in, U_max_norm):
 		# Standardize input PCs
 		x_input = (input_transformed - mean_in) / std_in
 
-		t1 = time.time()
 		if verbose_g:
-			print( "Tucker transformation : " + str(t1-t0) + " s")
+			print(f"Tucker transformation : {time.time()-t0} s")
 
 		t0 = time.time()
 
@@ -435,9 +446,8 @@ def py_func(array_in, U_max_norm):
 		# res_concat = model.predict(x_input, batch_size=32)
 		res_concat = np.array(model(x_input))
 
-		t1 = time.time()
 		if verbose_g:
-			print( "Model prediction time : " + str(t1-t0) + " s")
+			print(f"Model prediction time : {time.time()-t0} s")
 
 		# PCA inverse transformation:
 		# PC_deltaP -> deltaP
@@ -449,10 +459,11 @@ def py_func(array_in, U_max_norm):
 
 		# Perform inverse transformation using Tucker factors
 		res_concat = tl.tenalg.multi_mode_dot(res_concat, out_factors[1:], modes=[1, 2, 3], transpose=False)
-		t1 = time.time()
+		
 		if verbose_g:
-			print( "PCA inverse transform : " + str(t1-t0) + " s")
+			print(f"PCA inverse transform : {time.time()-t0} s")
 
+		t0 = time.time()
 		# Redimensionalizing the predicted pressure field
 		res_concat = res_concat * max_abs_delta_p * pow(U_max_norm, 2.0)
 
@@ -464,6 +475,11 @@ def py_func(array_in, U_max_norm):
 		for i, x in enumerate(x_list):
 			if (x[0,:,:,0] < 1e-5).all() and (x[0,:,:,1] < 1e-5).all():
 				res_concat[i] = np.zeros((block_size, block_size, 1))
+
+		if verbose_g:
+			print(f"Processing before assembly : {time.time()-t0} s")
+
+		t0 = time.time()
 
 		# The boundary condition is a fixed pressure of 0 at the output
 		Ref_BC = 0 
@@ -487,10 +503,10 @@ def py_func(array_in, U_max_norm):
 			True,
 		)
 
-		t1 = time.time()
 		if verbose_g:
-			print( "Reassembly algorithm took:" + str(t1-t0) + " s")
+			print(f"Assembly algorithm took: {time.time()-t0} s")
 
+		t0 = time.time()
 		# Rearrange the prediction into a 1D array that it can be sent to OF
 		change_in_deltap = change_in_deltap[tuple(indices.T)]
 
@@ -499,21 +515,19 @@ def py_func(array_in, U_max_norm):
 			print(f"Max and min of change_in_deltap before filtering: {np.nanmax(change_in_deltap)}, {np.nanmin(change_in_deltap)}")		
 			print(f"Number of NaNs in change_in_deltap before filtering: {number_of_nans}/{change_in_deltap.size}")
 			assert number_of_nans == 0, "NaN values found in change_in_deltap before filtering."
-
+		    
+			print(f"Flatenning array to send to OF and checking NANs took: {time.time()-t0} s")
+		
 		t0 = time.time()
+		
 		# Interpolation into the orginal grid
-		# Takes virtually no time because "vert" and "weigths" where already calculated on the init_func
-		change_in_deltap = interpolate_fill(change_in_deltap, vert_NPtoOF, weights_NPtoOF)
+		change_in_deltap = interpolate_fill_njit(change_in_deltap, vert_NPtoOF_array, weights_NPtoOF_array)
 		#p_interp[np.isnan(p_interp)] = 0
-		t1 = time.time()
-		if verbose_g:
-			print( "Final Interpolation took:" + str(t1-t0) + " s")
 
 		p = deltaP_prev + change_in_deltap
 
-		t1_py_func = time.time()
 		if verbose_g:
-			print( "The whole python function took : " + str(t1_py_func-t0_py_func) + " s")
+			print(f"Final Interpolation took: {time.time()-t0} s")
 
 		init = 0
 
@@ -531,6 +545,9 @@ def py_func(array_in, U_max_norm):
 			end = init + length
 			p_rankwise.append(p[init:end,...])
 			init += length
+
+		if verbose_g:
+			print( f"The whole python function took : {time.time()-t0_py_func} s")
 
 	else:
 		p_rankwise = None

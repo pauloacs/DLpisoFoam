@@ -196,8 +196,8 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 	points = array_concat[...,3:6] #coordinates
 
 	#print( 'Calculating verts and weights' )
-	vert_OFtoNP, weights_OFtoNP = interp_weights(points, xyz0)
-	vert_NPtoOF, weights_NPtoOF = interp_weights(xyz0, points)
+	vert_OFtoNP, weights_OFtoNP = interp_weights(points, xyz0, interp_method='IDW')
+	vert_NPtoOF, weights_NPtoOF = interp_weights(xyz0, points, interp_method='IDW')
 
 	#print( 'Calculating domain bool' )
 	# You may need to update domain_dist to accept the new boundaries if needed

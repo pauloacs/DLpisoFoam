@@ -99,7 +99,7 @@ class CFDDataProcessor:
     
     points = sim_data_t0[..., 4:7]
 
-    vert, weights = utils_data.interp_weights(points, xyz0)
+    vert, weights = utils_data.interp_weights(points, xyz0, interp_method='IDW')
     domain_bool, sdf = utils_geo.domain_dist(boundaries, xyz0, self.grid_res)
 
     x0 = np.min(X0)
