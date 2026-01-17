@@ -56,10 +56,14 @@ RUN conda env create -f /usr/bin/environment.yml
 #RUN conda activate python39 && conda install mpi4py
 
 
+
 # Giving enough permissions to the user
 RUN mkdir -p /home/repo
 # If more permissions are required the user can chown itself (user) with sudo inside the container
 RUN chown -R user:user /home/repo
+
+# Copy repository contents to /home/repo
+COPY . /home/repo
 
 WORKDIR /home/repo/
 RUN sudo chmod 755 /usr/bin/entrypoint.sh
@@ -67,7 +71,7 @@ RUN sudo chmod 755 /usr/bin/entrypoint.sh
 # set the default container user to foam
 USER user
 
-ENTRYPOINT ["/bin/bash","-l"]
+#ENTRYPOINT ["/bin/bash","-l"]
 # The solvers will be installed in the entrypoint when running this image in a container
-#ENTRYPOINT ["/usr/bin/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/entrypoint.sh"]
 

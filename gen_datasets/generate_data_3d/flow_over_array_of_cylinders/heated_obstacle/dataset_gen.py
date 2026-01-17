@@ -15,9 +15,9 @@ def padding(array, max):
         x= np.array(x).reshape((max,))
         return x
 
-def extract_simulation_data_bound(serial, patch, path_to_sims, total_times, deltat, avance, max):
+def extract_simulation_data_bound(serial, patch, path_to_sims, first_t, last_t, deltat, avance, max):
     data = { 'Cx': [], 'Cy': [], 'Cz': [] }
-    for time in range(int(total_times)):
+    for time in range(first_t, last_t + 1):
 
         # Try multiple roundings if the file is not found
         found = False
@@ -61,7 +61,7 @@ def extract_simulation_data_bound(serial, patch, path_to_sims, total_times, delt
 
     return data
 
-def extract_simulation_data(serial, path_to_sims, total_times, deltat, avance, max):
+def extract_simulation_data(serial, path_to_sims, first_t, last_t, deltat, avance, max):
     data = {'Ux': [], 'Uy': [], 'Uz': [],
             'Cx': [], 'Cy': [], 'Cz': [],
             'delta_Ux': [], 'delta_Uy': [], 'delta_Uz': [],
@@ -69,7 +69,7 @@ def extract_simulation_data(serial, path_to_sims, total_times, deltat, avance, m
             }
 
     for entity in ['U_non_cons', 'Cx', 'Cy', 'Cz', 'delta_U', 'delta_p_rgh', 'p_rgh']:
-      for time in range(int(total_times)):
+      for time in range(first_t, last_t + 1):
 
         found = False
         # List all files in the directory
@@ -128,11 +128,11 @@ def extract_simulation_data(serial, path_to_sims, total_times, deltat, avance, m
                 data[entity].append(padding(mesh_cell_data[entity], max))
     return data
 
-def create_hdf5_file(hdf5_path, num_sims_actual, total_times, max_n_cells_sim, max_n_cells_patch):
-    train_shape = (num_sims_actual, int(total_times), max_n_cells_sim, 11)
+def create_hdf5_file(hdf5_path, num_sims_actual, num_time_steps, max_n_cells_sim, max_n_cells_patch):
+    train_shape = (num_sims_actual, num_time_steps, max_n_cells_sim, 11)
     #train_shape = (num_sims_actual, int(total_times), 600000, 12)
-    top_shape = (num_sims_actual, int(total_times), max_n_cells_patch, 3)
-    obst_shape = (num_sims_actual, int(total_times), max_n_cells_patch, 3)
+    top_shape = (num_sims_actual, num_time_steps, max_n_cells_patch, 3)
+    obst_shape = (num_sims_actual, num_time_steps, max_n_cells_patch, 3)
 
     if os.path.exists(hdf5_path):
         hdf5_file = h5py.File(hdf5_path, mode='a')
@@ -148,7 +148,7 @@ def create_hdf5_file(hdf5_path, num_sims_actual, total_times, max_n_cells_sim, m
 
     return hdf5_file
 
-def process_simulation(sim, path_to_sims, avance_list, hdf5_file, total_times, max_sim, max_patch):
+def process_simulation(sim, path_to_sims, avance_list, hdf5_file, first_t, last_t, max_sim, max_patch):
 
     # Read the deltaT_write
     control_dict_path = f"{path_to_sims}/{sim}/system/controlDict"
@@ -159,12 +159,12 @@ def process_simulation(sim, path_to_sims, avance_list, hdf5_file, total_times, m
                 break       
 
     avance = avance_list[sim]
-    data = extract_simulation_data(sim, path_to_sims, total_times, deltat, avance, max_sim)
-    data_obst = extract_simulation_data_bound(sim, 'cylinder', path_to_sims, total_times, deltat, avance, max_patch)
-    data_y_top = extract_simulation_data_bound(sim, 'back', path_to_sims, total_times, deltat, avance, max_patch)
-    data_z_bot = extract_simulation_data_bound(sim, 'bot', path_to_sims, total_times, deltat, avance, max_patch)
-    data_y_bot = extract_simulation_data_bound(sim, 'front', path_to_sims, total_times, deltat, avance, max_patch)
-    data_z_top = extract_simulation_data_bound(sim, 'top', path_to_sims, total_times, deltat, avance, max_patch)
+    data = extract_simulation_data(sim, path_to_sims, first_t, last_t, deltat, avance, max_sim)
+    data_obst = extract_simulation_data_bound(sim, 'cylinder', path_to_sims, first_t, last_t, deltat, avance, max_patch)
+    data_y_top = extract_simulation_data_bound(sim, 'back', path_to_sims, first_t, last_t, deltat, avance, max_patch)
+    data_z_bot = extract_simulation_data_bound(sim, 'bot', path_to_sims, first_t, last_t, deltat, avance, max_patch)
+    data_y_bot = extract_simulation_data_bound(sim, 'front', path_to_sims, first_t, last_t, deltat, avance, max_patch)
+    data_z_top = extract_simulation_data_bound(sim, 'top', path_to_sims, first_t, last_t, deltat, avance, max_patch)
 
     hdf5_file['sim_data'][sim, ..., 0] = data['Ux']
     hdf5_file['sim_data'][sim, ..., 1] = data['Uy']
@@ -203,18 +203,20 @@ def process_simulation(sim, path_to_sims, avance_list, hdf5_file, total_times, m
 def main():
     first_sim = 0
     last_sim = 4
-    total_times = 20
+    first_t = 0
+    last_t = 19
+    num_time_steps = last_t - first_t + 1
     hdf5_path = 'dataset_heat_5sim20t.hdf5'
-    path_to_sims = 'new_water/'
-    max_n_cells_sim = int(1.51e6)
+    path_to_sims = 'simulations/'
+    max_n_cells_sim = int(6e5)
     max_n_cells_patch = 150000
 
     avance_list = [1] * 20
 
-    hdf5_file = create_hdf5_file(hdf5_path, int(last_sim-first_sim +1), total_times, max_n_cells_sim, max_n_cells_patch)
+    hdf5_file = create_hdf5_file(hdf5_path, int(last_sim-first_sim +1), num_time_steps, max_n_cells_sim, max_n_cells_patch)
 
     for sim in tqdm(range(first_sim, last_sim + 1)):
-        process_simulation(sim, path_to_sims, avance_list, hdf5_file, total_times, max_n_cells_sim, max_n_cells_patch)
+        process_simulation(sim, path_to_sims, avance_list, hdf5_file, first_t, last_t, max_n_cells_sim, max_n_cells_patch)
 
     hdf5_file.close()
 

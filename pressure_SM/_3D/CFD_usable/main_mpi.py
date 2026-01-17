@@ -23,33 +23,13 @@ import scipy.ndimage as ndimage
 import tensorly as tl
 
 from pressure_SM._3D.CFD_usable.utils import memory
-from pressure_SM._3D.train_and_eval.utils.data_processing import interpolate_fill, interp_weights, create_uniform_grid
-from pressure_SM._3D.train_and_eval.utils.data_processing import interpolate_fill_njit
+from pressure_SM._3D.train_and_eval.utils.data_processing import interpolate_fill_njit, interp_weights, create_uniform_grid
 from pressure_SM._3D.train_and_eval.utils.domain_geometry import domain_dist
 from pressure_SM._3D.train_and_eval.utils.model_utils import define_model_arch
 
-from pressure_SM._3D.train_and_eval.assembly_vec import assemble_prediction
+from pressure_SM._3D.train_and_eval.assembly import assemble_prediction
 from pressure_SM._3D.train_and_eval.neural_networks import *
 
-########
-# TODO: Find ways to optimize performance:
-# Ideas:
-# 1 - Use numba jit to optimize the code.
-# 2 - Improve the reassembly method.
-# 3 - Identify and fix any inefficiencies in the code.
-
-## Typical running times 
-## (from running python tests/test_module.py):
-
-# Data pre-processing: 7.7009e-05 s
-# 1st interpolation took: 0.0406 s
-# 2nd interpolation took: 0.0285 s
-# Reassembly algorithm took: 0.0242 s
-# Applying Gaussian filter took: 4.7684e-07 s
-# Final Interpolation took: 0.0017 s
-# The whole python function took: 0.2002 s
-
-#########
 
 def load_tucker_and_NN(
 	tucker_fn,
@@ -104,6 +84,23 @@ def load_tucker_and_NN(
 			tucker_data = pk.load(f)
 		in_factors = tucker_data['input_factors']
 		out_factors = tucker_data['output_factors']
+
+		# ---- NEW: pretranspose factors for fast einsum paths (float32 + contiguous) ----
+		# x_array has shape (N, bs, bs, bs, 4)
+		# We need transpose=True for modes [1,2,3,4] => multiply by factor.T along each mode.
+		global in_factors_T, out_factors_c
+		in_factors_T = [None]  # keep 1-based indexing consistent with your existing list
+		for k in range(1, 5):
+			F = np.asarray(in_factors[k], dtype=np.float32)
+			in_factors_T.append(np.ascontiguousarray(F.T))
+
+		# For inverse Tucker (transpose=False), we want non-transposed factors contiguous.
+		out_factors_c = [None]
+		for k in range(1, 4):
+			F = np.asarray(out_factors[k], dtype=np.float32)
+			out_factors_c.append(np.ascontiguousarray(F))
+		# ------------------------------------------------------------------------------
+
 
 		## Loading values for blocks normalization
 		maxs = np.loadtxt(maxs_fn)
@@ -281,6 +278,13 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 				obst_bool[ii, jj, kk, :] = int(1)
 
 		indices = indices.astype(int)
+
+		# CHANGED: precompute and cache indices as int32 arrays for faster indexing
+		global indices_i, indices_j, indices_k
+		indices_i = indices[:, 0].astype(np.int32)
+		indices_j = indices[:, 1].astype(np.int32)
+		indices_k = indices[:, 2].astype(np.int32)
+
 		print('Init function ran successfully! :D')
 		#sys.stdout.flush()
 	return 0
@@ -315,124 +319,97 @@ def py_func(array_in, U_max_norm):
 		t0 = time.time()
 
 		#np.save('array.npy', array)
-		#U_max_norm = np.max( np.sqrt( np.square(array[...,0:1]) + np.square(array[...,1:2]) ) )
 
 		deltaU = array[...,0:3]
 		deltaU_prev = array[...,3:6]
 		deltaP_prev = array[...,6]
 
-		# check where the deltaU has changed in the last time step
 		deltaU_changed = np.abs(deltaU - deltaU_prev).sum(axis=-1)
-		deltaU_changed = deltaU_changed / deltaU_changed.max()
+		deltaU_changed /= deltaU_changed.max()
 
-		# Normalize deltaU components by U_max_norm
-		deltaUx_adim = deltaU[...,0:1]/U_max_norm 
-		deltaUy_adim = deltaU[...,1:2]/U_max_norm
-		deltaUz_adim = deltaU[...,2:3]/U_max_norm
-
-		# deltaUx_adim = deltaU[...,0]/U_max_norm 
-		# deltaUy_adim = deltaU[...,1]/U_max_norm
-		# deltaUz_adim = deltaU[...,2]/U_max_norm
-
+		# CHANGED: broadcast divide in one shot (avoid 3 separate divisions and slicing)
+		deltaU_adim = deltaU / U_max_norm
 
 		if verbose_g: 
 			print(f"Data pre-processing: {time.time()-t0} s")
 
 		t0 = time.time()
 
-		deltaUx_interp = interpolate_fill_njit(deltaUx_adim[:,0], vert_OFtoNP_array, weights_OFtoNP_array)
-		deltaUy_interp = interpolate_fill_njit(deltaUy_adim[:,0], vert_OFtoNP_array, weights_OFtoNP_array)
-		deltaUz_interp = interpolate_fill_njit(deltaUz_adim[:,0], vert_OFtoNP_array, weights_OFtoNP_array)
-
+		# CHANGED: access by column instead of adding extra dimension and slicing
+		deltaUx_interp = interpolate_fill_njit(deltaU_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
+		deltaUy_interp = interpolate_fill_njit(deltaU_adim[:, 1], vert_OFtoNP_array, weights_OFtoNP_array)
+		deltaUz_interp = interpolate_fill_njit(deltaU_adim[:, 2], vert_OFtoNP_array, weights_OFtoNP_array)
 		deltaU_changed_interp = interpolate_fill_njit(deltaU_changed, vert_OFtoNP_array, weights_OFtoNP_array)
 		deltaP_prev_interp = interpolate_fill_njit(deltaP_prev, vert_OFtoNP_array, weights_OFtoNP_array)
 
 		if verbose_g:
-			print( f"1st interpolation took: {time.time()-t0}\ s")
+			print(f"1st interpolation took: {time.time()-t0} s")
 
 		t0 = time.time()
 
 		grid = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x, 4), dtype=np.float32)
-		deltaP_prev_grid = np.zeros(shape=(grid_shape_z, grid_shape_y, grid_shape_x), dtype=np.float32)
-		deltaU_change_grid = np.zeros(shape=(grid_shape_z, grid_shape_y, grid_shape_x), dtype=np.float32)
+		deltaP_prev_grid = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x), dtype=np.float32)
+		deltaU_change_grid = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x), dtype=np.float32)
 
-        # Pre-compute tuple indices once
-		idx_i, idx_j, idx_k = indices[:, 0], indices[:, 1], indices[:, 2]
-
-		# Stack all interpolated values and assign at once
+		# CHANGED: use cached int32 index arrays (faster than recomputing slices)
 		interp_stack = np.column_stack([deltaUx_interp, deltaUy_interp, deltaUz_interp])
-		grid[idx_i, idx_j, idx_k, :3] = interp_stack
+		grid[indices_i, indices_j, indices_k, :3] = interp_stack
 		grid[:, :, :, 3] = sdfunct[:, :, :, 0]
 
-		# Direct assignment
-		deltaP_prev_grid[idx_i, idx_j, idx_k] = deltaP_prev_interp
-		deltaU_change_grid[idx_i, idx_j, idx_k] = deltaU_changed_interp
+		deltaP_prev_grid[indices_i, indices_j, indices_k] = deltaP_prev_interp
+		deltaU_change_grid[indices_i, indices_j, indices_k] = deltaU_changed_interp
 
-		## Rescale using broadcasting with normalization array
+		# CHANGED: in-place divide (avoid copy)
 		norm_factors = np.array([max_abs_delta_Ux, max_abs_delta_Uy, max_abs_delta_Uz, max_abs_dist], dtype=np.float32)
 		grid /= norm_factors[None, None, None, :]
 
 		if verbose_g:
-			print( f"Filling grid with shape {grid.shape} took: {time.time()-t0} s")
+			print(f"Filling grid with shape {grid.shape} took: {time.time()-t0} s")
 
 		t0 = time.time()
 
-		# Setting any nan value to 0 to avoid issues
 		grid[np.isnan(grid)] = 0
 
-		x_list = []
-		indices_list = []
+		# CHANGED: preallocate x_list and indices_list to avoid Python list appends
+		overlap = int(overlap_ratio_g * block_size)
+		n_x = int(np.ceil((grid_shape_x - block_size) / (block_size - overlap))) + 1
+		n_y = int(np.ceil((grid_shape_y - block_size) / (block_size - overlap))) + 1
+		n_z = int(np.ceil((grid_shape_z - block_size) / (block_size - overlap))) + 1
 
-		overlap = int(overlap_ratio_g*block_size)
+		total_blocks = n_x * n_y * n_z
+		x_list = np.empty((total_blocks, block_size, block_size, block_size, 4), dtype=np.float32)
+		indices_list = np.empty((total_blocks, 3), dtype=np.int32)
 
-		n_x = int(np.ceil((grid_shape_x - block_size)/(block_size - overlap )) ) + 1
-		n_y = int(np.ceil((grid_shape_y - block_size)/(block_size - overlap )) ) + 1
-		n_z = int(np.ceil((grid_shape_z - block_size)/(block_size - overlap )) ) + 1
-
-		# Sampling blocks of size [block_size X block_size] from the input fields (Ux, Uy and sdf)
-		# In the indices_list, the indices corresponding to each sampled block is stored to enable domain reconstruction later.
-		for i in range (n_z):
-			z_0 = i*block_size - i*overlap
-			if i == n_z - 1:
-				z_0 = grid_shape_z - block_size
+		b = 0
+		for i in range(n_z):
+			z_0 = i * block_size - i * overlap if i < n_z - 1 else grid_shape_z - block_size
 			z_f = z_0 + block_size
-			for j in range (n_y):
-				y_0 = j*block_size - j*overlap
-				if j == n_y - 1:
-					y_0 = grid_shape_y - block_size
+			for j in range(n_y):
+				y_0 = j * block_size - j * overlap if j < n_y - 1 else grid_shape_y - block_size
 				y_f = y_0 + block_size
 				for k in range(n_x):
-					# going right to left
-					x_0 = grid_shape_x - k*block_size + k*overlap - block_size
-					if k == n_x - 1:
-						x_0 = 0
+					x_0 = grid_shape_x - k * block_size + k * overlap - block_size if k < n_x - 1 else 0
 					x_f = x_0 + block_size
 
-					#DEBUGGING print
-					debug_mode = False
-					if verbose_g and debug_mode:
-						print(f"{(z_0,z_f, y_0,y_f, x_0,x_f)}")
-						print(f"indices: {(i, j, n_x -1 - k)}")
-					x_list.append(grid[z_0:z_f, y_0:y_f, x_0:x_f, 0:4])
-					indices_list.append([i, j, n_x -1 - k])
+					x_list[b] = grid[z_0:z_f, y_0:y_f, x_0:x_f, :4]
+					indices_list[b] = [i, j, n_x - 1 - k]
+					b += 1
 
-		x_array = np.array(x_list)
+		x_array = x_list  # already an array
 
 		if verbose_g:
 			print(f"Data extraction loop took: {time.time()-t0} s")
 
 		t0 = time.time()
 		N = x_array.shape[0]
-		features = x_array.shape[3]
 
-		#x_array_flat = x_array.reshape((N, grid_shape_z * grid_shape_y * grid_shape_x, features ))
-		#input_flat = x_array_flat.reshape((x_array_flat.shape[0],-1))
+		A = in_factors_T[1]
+		B = in_factors_T[2]
+		C = in_factors_T[3]
+		D = in_factors_T[4]
 
-		#input_transformed = pcainput.transform(input_flat)[:,:PC_input]
-		input_core = tl.tenalg.multi_mode_dot(x_array, in_factors[1:], modes=[1, 2, 3, 4], transpose=True)
+		input_core = np.einsum("nijkf,ai,bj,ck,df->nabcd", x_array, A, B, C, D, optimize=True)
 		input_transformed = input_core.reshape(N, -1)
-
-		# Standardize input PCs
 		x_input = (input_transformed - mean_in) / std_in
 
 		if verbose_g:
@@ -440,50 +417,50 @@ def py_func(array_in, U_max_norm):
 
 		t0 = time.time()
 
-		# Calling the NN to predict the principal components (PC) of the pressure field:
-		# PC_input -> PC_p (if necessary could be done in batches)
-
-		# res_concat = model.predict(x_input, batch_size=32)
 		res_concat = np.array(model(x_input))
 
 		if verbose_g:
 			print(f"Model prediction time : {time.time()-t0} s")
 
-		# PCA inverse transformation:
-		# PC_deltaP -> deltaP
 		t0 = time.time()
 
-		# Getting the non-standerdized PCs
 		res_concat = (res_concat * std_out) + mean_out
-		res_concat = res_concat.reshape(input_core[...,0].shape)
 
-		# Perform inverse transformation using Tucker factors
-		res_concat = tl.tenalg.multi_mode_dot(res_concat, out_factors[1:], modes=[1, 2, 3], transpose=False)
-		
+		# CHANGED: avoid extra copy in reshape
+		core = res_concat.reshape(input_core[..., 0].shape)
+		if core.dtype != np.float32:
+			core = core.astype(np.float32, copy=False)
+
+		U1 = out_factors_c[1]
+		U2 = out_factors_c[2]
+		U3 = out_factors_c[3]
+
+		res_concat = np.einsum("nabc,ia,jb,kc->nijk", core, U1, U2, U3, optimize=True)
+
 		if verbose_g:
-			print(f"PCA inverse transform : {time.time()-t0} s")
+			print(f"Tucker inverse transform : {time.time()-t0} s")
 
 		t0 = time.time()
-		# Redimensionalizing the predicted pressure field
-		res_concat = res_concat * max_abs_delta_p * pow(U_max_norm, 2.0)
+
+		# CHANGED: in-place multiply to avoid copy
+		res_concat *= max_abs_delta_p * pow(U_max_norm, 2.0)
 
 		number_of_nans = np.isnan(res_concat).sum()
 		if verbose_g:
 			print(f"Number of NaNs in res_concat before assembling: {number_of_nans}/{res_concat.size}")
 		assert number_of_nans == 0, "NaN values found in res_concat before assembling."
 		
-		for i, x in enumerate(x_list):
-			if (x[0,:,:,0] < 1e-5).all() and (x[0,:,:,1] < 1e-5).all():
-				res_concat[i] = np.zeros((block_size, block_size, 1))
+		# CHANGED: vectorized zero-block detection (avoid Python loop)
+		first_plane_sum = x_array[:, 0, :, :, :2].sum(axis=(1, 2, 3))
+		zero_blocks = first_plane_sum < 1e-5
+		res_concat[zero_blocks] = 0.0
 
 		if verbose_g:
 			print(f"Processing before assembly : {time.time()-t0} s")
 
 		t0 = time.time()
 
-		# The boundary condition is a fixed pressure of 0 at the output
-		Ref_BC = 0 
-
+		Ref_BC = 0
 		deltap_res, change_in_deltap = assemble_prediction(
 			res_concat,
 			indices_list,
@@ -507,47 +484,35 @@ def py_func(array_in, U_max_norm):
 			print(f"Assembly algorithm took: {time.time()-t0} s")
 
 		t0 = time.time()
-		# Rearrange the prediction into a 1D array that it can be sent to OF
-		change_in_deltap = change_in_deltap[tuple(indices.T)]
+
+		# CHANGED: use cached indices arrays for faster indexing
+		change_in_deltap = change_in_deltap[indices_i, indices_j, indices_k]
 
 		number_of_nans = np.isnan(change_in_deltap).sum()
 		if verbose_g:
 			print(f"Max and min of change_in_deltap before filtering: {np.nanmax(change_in_deltap)}, {np.nanmin(change_in_deltap)}")		
 			print(f"Number of NaNs in change_in_deltap before filtering: {number_of_nans}/{change_in_deltap.size}")
 			assert number_of_nans == 0, "NaN values found in change_in_deltap before filtering."
-		    
-			print(f"Flatenning array to send to OF and checking NANs took: {time.time()-t0} s")
+			print(f"Flattening array to send to OF and checking NANs took: {time.time()-t0} s")
 		
 		t0 = time.time()
-		
-		# Interpolation into the orginal grid
-		change_in_deltap = interpolate_fill_njit(change_in_deltap, vert_NPtoOF_array, weights_NPtoOF_array)
-		#p_interp[np.isnan(p_interp)] = 0
 
+		change_in_deltap = interpolate_fill_njit(change_in_deltap, vert_NPtoOF_array, weights_NPtoOF_array)
 		p = deltaP_prev + change_in_deltap
 
 		if verbose_g:
 			print(f"Final Interpolation took: {time.time()-t0} s")
 
-		init = 0
-
-		# Dividing p into a list of n elements (consistent with the OF domain decomposition)
-		# This is necessary to enable parallelization in OF
-		p_rankwise = [] 
-
-		# Check if len_rankwise matches the number of ranks and total length
+		# CHANGED: vectorized split using np.split (faster than manual loop)
 		if len(len_rankwise) != nprocs:
 			raise ValueError(f"len_rankwise ({len(len_rankwise)}) does not match number of ranks ({nprocs})")
 		if sum(len_rankwise) != len(p):
 			raise ValueError(f"Sum of len_rankwise ({sum(len_rankwise)}) does not match length of p ({len(p)})")
 
-		for length in len_rankwise:
-			end = init + length
-			p_rankwise.append(p[init:end,...])
-			init += length
+		p_rankwise = np.split(p, np.cumsum(len_rankwise)[:-1])
 
 		if verbose_g:
-			print( f"The whole python function took : {time.time()-t0_py_func} s")
+			print(f"The whole python function took : {time.time()-t0_py_func} s")
 
 	else:
 		p_rankwise = None
@@ -572,54 +537,3 @@ def py_func(array_in, U_max_norm):
 
 if __name__ == '__main__':
     print('This is the Python module for DLPoissonFOam')
-
-	# Debugging code 
-
-	#import h5py 
-	#from numba import njit
-
-	#@njit
-	#def index(array, item):
-	#    for idx, val in np.ndenumerate(array):
-	#        if val == item:
-	#            return idx
-	#    # If no item was found return None, other return types might be a problem due to
-	#    # numbas type inference.
-
-
-	##path = '/home/paulo/dataset_unsteadyCil_fu_bound.hdf5' #adjust path
-
-	##frame = 40
-	##hdf5_file = h5py.File(path, "r")
-	###data = hdf5_file["sim_data"][:1, frame-1:frame, ...]
-	##top_boundary = hdf5_file["top_bound"][0, frame, ...]
-	##obst_boundary = hdf5_file["obst_bound"][0, frame, ...]
-	##hdf5_file.close()
-
-	##indice_top = index(top_boundary[:,0] , -100.0 )[0]
-	##top_boundary = top_boundary[:indice_top,:]
-
-	##indice_obst = index(obst_boundary[:,0] , -100.0 )[0]
-	##obst_boundary = obst_boundary[:indice_obst,:]
-
-	##indice = index(data[0,0,:,0] , -100.0 )[0]
-	##array = data[0,0,:indice,:4]
-	##array[:,2:4] = data[0,0,:indice,3:5]
-
-	#array = np.load('array.npy')
-	#top_boundary = np.load('top.npy')
-	#obst_boundary = np.load('obst.npy')
-
-	#print(array.shape)
-
-	#plt.scatter(array[:,2],array[:,3], c = array[:,0])
-	#plt.show()
-
-	#plt.scatter(array[:,2],array[:,3], c = array[:,1])
-	#plt.show()
-
-	#init_func(array, top_boundary, obst_boundary)
-	#p = py_func(array)
-
-	#plt.scatter(array[:,2], array[:,3], c=p, cmap = 'jet')
-	#plt.show()

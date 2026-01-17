@@ -10,7 +10,7 @@ import pyvista as pv
 import imageio
 
 
-def createGIF(n_sims, n_ts):
+def createGIF(first_sim, last_sim, first_t, last_t):
     """
     Create a GIF with all the frames.
     
@@ -18,16 +18,17 @@ def createGIF(n_sims, n_ts):
         n_sims: Number of simulations
         n_ts: Number of time steps
     """
-    filenamesp = []
+    for sim in range(first_sim, last_sim+1):
+        
+        filenamesp = []
 
-    for sim in range(5):
-        for time in range(5):
-            filenamesp.append(f'plots/p_pred_sim{sim}t{time}.png')  # hardcoded to get the frames in order
+        for time in range(first_t, last_t):
+            filenamesp.append(f'plots/sim{sim}/deltap_pred_t{time}_slices.png')  # hardcoded to get the frames in order
 
-    with imageio.get_writer('plots/p_movie.gif', mode='I', duration=0.5) as writer:
-        for filename in filenamesp:
-            image = imageio.imread(filename)
-            writer.append_data(image)
+        with imageio.get_writer(f'plots/p_movie_sim{sim}.gif', mode='I', fps=2) as writer:
+            for filename in filenamesp:
+                image = imageio.imread(filename)
+                writer.append_data(image)
 
 
 def get_facecolors(data_slice, norm, cmap):
@@ -269,6 +270,91 @@ def plot_delta_p_comparison(cfd_results, field_deltap, no_flow_bool, slices_indi
     # Show or save the plot
     if fig_path:
         plt.savefig(fig_path)
+        plt.close(fig)
+    else:
+        plt.show()
+
+def plot_delta_p_comparison_volumetric(cfd_results, field_deltap, no_flow_bool, threshold_percentile=10, fig_path=None):
+    """
+    Plot 3D volumetric comparison of delta_p predicted, CFD results, and error using transparency.
+    
+    Args:
+        cfd_results: CFD results array, shape (Z, Y, X)
+        field_deltap: Predicted delta_p field, shape (Z, Y, X)
+        no_flow_bool: Boolean mask for no-flow regions
+        threshold_percentile: Percentile threshold for transparency (0-100). 
+                            Values below this percentile will be more transparent.
+        fig_path: Optional path to save the figure
+    """
+    # Mask the error field
+    error = np.abs((field_deltap - cfd_results) / (np.max(cfd_results) - np.min(cfd_results)) * 100)
+    masked_error = np.where(no_flow_bool, np.nan, error)
+
+    # Masking the predicted delta_p field
+    masked_deltap = np.where(no_flow_bool, np.nan, field_deltap)
+
+    # Mask the CFD results
+    masked_cfd = np.where(no_flow_bool, np.nan, cfd_results)
+
+    # Create figure with 3 subplots
+    fig = plt.figure(figsize=(24, 8))
+    ax_deltap = fig.add_subplot(131, projection='3d')
+    ax_cfd = fig.add_subplot(132, projection='3d')
+    ax_error = fig.add_subplot(133, projection='3d')
+
+    # Set colormap and normalization
+    cmap = cm.viridis
+    vmin = min(np.nanmin(masked_cfd), np.nanmin(masked_deltap))
+    vmax = max(np.nanmax(masked_cfd), np.nanmax(masked_deltap))
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    error_norm = Normalize(vmin=0, vmax=25)
+
+    # Helper function to create volumetric plot with transparency
+    def plot_volumetric(ax, data, norm, cmap, title):
+        # Get all voxel coordinates where data is not NaN
+        z_coords, y_coords, x_coords = np.where(~np.isnan(data))
+        values = data[z_coords, y_coords, x_coords]
+        
+        # Normalize values for coloring
+        colors = cmap(norm(values))
+        
+        # Calculate alpha based on value magnitude
+        threshold = np.nanpercentile(np.abs(values), threshold_percentile)
+        alphas = np.clip((np.abs(values) - threshold) / (np.nanmax(np.abs(values)) - threshold), 0.1, 0.9)
+        colors[:, 3] = alphas  # Set alpha channel
+        
+        # Plot voxels
+        ax.scatter(x_coords, y_coords, z_coords, c=colors, marker='s', 
+                  s=20, edgecolors='none', depthshade=True)
+        
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=10)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_box_aspect([data.shape[2], data.shape[1], data.shape[0]])
+        ax.view_init(elev=20, azim=-60)
+        ax.grid(True, alpha=0.3)
+    
+    # Plot delta_p predicted
+    plot_volumetric(ax_deltap, masked_deltap, norm, cmap, "delta_p predicted")
+    
+    # Plot CFD results
+    plot_volumetric(ax_cfd, masked_cfd, norm, cmap, "CFD results")
+    
+    # Plot error field
+    plot_volumetric(ax_error, masked_error, error_norm, cmap, "Error (%)")
+    
+    # Add colorbar for error field
+    mappable_error = cm.ScalarMappable(cmap=cmap, norm=error_norm)
+    mappable_error.set_array(masked_error)
+    cbar = fig.colorbar(mappable_error, ax=ax_error, shrink=0.6, orientation='vertical')
+    cbar.set_label("Error (%)", fontsize=12)
+    
+    plt.tight_layout()
+    
+    # Show or save the plot
+    if fig_path:
+        plt.savefig(fig_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
     else:
         plt.show()

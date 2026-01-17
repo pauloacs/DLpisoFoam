@@ -1,9 +1,35 @@
 import numpy as np
 from scipy import ndimage
+from numba import njit
 
 #### ASSEMBLY ALGORITHM
 
-def correct_pred(
+@njit(cache=True, fastmath=True, nogil=True, inline="always")  # CHANGED: remove parallel=True
+def masked_mean_3d_bounds(arr, mask, z0, z1, y0, y1, x0, x1):
+    """Mean of arr over bounds where mask != 0 (Numba, no temps)."""
+    total = 0.0
+    count = 0
+    for zz in range(z0, z1):  # CHANGED: range, not prange
+        for yy in range(y0, y1):
+            for xx in range(x0, x1):
+                if mask[zz, yy, xx] != 0:
+                    total += arr[zz, yy, xx]
+                    count += 1
+    return total / count if count > 0 else 0.0
+
+@njit(cache=True, fastmath=True, nogil=True, inline="always")
+def any_nonzero_outlet_plane(mask):
+    """Return True if any cell on the outlet x=-1 plane is non-zero (Numba)."""
+    sz, sy, sx = mask.shape
+    x = sx - 1
+    for z in range(sz):
+        for y in range(sy):
+            if mask[z, y, x] != 0:
+                return True
+    return False
+
+@njit(cache=True, fastmath=True, nogil=True, inline="always")  # CHANGED: inline to cut call overhead
+def correct_pred_jit(
         field_block,
         bool_block,
         i, j, k,
@@ -11,112 +37,102 @@ def correct_pred(
         shape,
         overlap,
         n_x, n_z,
-        BC_col,
+        BC_col_arr,
         BC_rows,
         BC_depths,
         Ref_BC):
-    """
-    Standalone version of _correct_pred for block correction.
+    sz = field_block.shape[0]
+    sy = field_block.shape[1]
+    sx = field_block.shape[2]
 
-    Args:
-        field_block (ndarray): Block of field values.
-        bool_block (ndarray): Boolean mask for the block.
-        i, j, k (int): Block indices (depth, row, column).
-        p_i, p_j, p_k (int): Index offsets for block placement.
-        shape (int): Block shape.
-        overlap (int): Overlap size.
-        n_x (int): Number of blocks in x-direction.
-        n_z (int): Number of blocks in z-direction.
-        BC_col, BC_rows, BC_depths: Boundary condition arrays (can be None for stateless use).
-        Ref_BC: Reference boundary condition (can be None for stateless use).
-
-    Returns:
-        ndarray: Corrected field block.
-    """
-
-    # i - depth index
-    # j - row index
-    # k - column index
-
-    intersect_zone_limit_i = (-p_i-overlap, -p_i)
-    intersect_zone_limit_j = (-p_j-overlap, -p_j)
-    intersect_zone_limit_k = overlap - p_k
-
-    # left_most_k = len(BC_rows) - 1
-    down_most_j = BC_depths.shape[0] - 1
-
-    # Case 1 - 1st correction - based on the outlet fixed pressure boundary condition (Ref_BC)
-    if (i, j, k) == (0, 0, n_x-1):
-        # check value at outlet BC
-        if ~(bool_block[:, :, -1] == 0).all():
-            BC_corr = np.mean(field_block[:, :, -1][bool_block[:, :, -1] != 0]) - Ref_BC
+    # Case 1
+    if i == 0 and j == 0 and k == n_x - 1:
+        if any_nonzero_outlet_plane(bool_block):
+            out_mean = masked_mean_3d_bounds(field_block, bool_block, 0, sz, 0, sy, sx - 1, sx)
         else:
-            BC_corr = np.mean(field_block[:, :, -2][bool_block[:, :, -2] != 0]) - Ref_BC
+            out_mean = masked_mean_3d_bounds(field_block, bool_block, 0, sz, 0, sy, sx - 2, sx - 1)
 
-        field_block -= BC_corr
-        BC_col = np.mean(field_block[:, :, :overlap][bool_block[:, :, :overlap] != 0])
-        BC_rows[k] = np.mean(field_block[:, -overlap:, :][bool_block[:, -overlap:, :] != 0])
-        BC_depths[j, k] = np.mean(field_block[-overlap:, :, :][bool_block[-overlap:, :, :] != 0])
+        BC_corr = out_mean - Ref_BC
+        sub_scalar_inplace(field_block, BC_corr)
 
-    # Case 2 - 1st depth and 1st row - correct from the left
-    elif (i, j) == (0, 0):
-        # Case 2 a)
+        BC_col_arr[0] = masked_mean_3d_bounds(field_block, bool_block, 0, sz, 0, sy, 0, overlap)
+        BC_rows[k] = masked_mean_3d_bounds(field_block, bool_block, 0, sz, sy - overlap, sy, 0, sx)
+        BC_depths[j, k] = masked_mean_3d_bounds(field_block, bool_block, sz - overlap, sz, 0, sy, 0, sx)
+
+    # Case 2
+    elif i == 0 and j == 0:
         if k > 0:
-            BC_corr = np.mean(field_block[:, :, -overlap:][bool_block[:, :, -overlap:] != 0]) - BC_col
-            field_block -= BC_corr
-            # left-most column
-            if k == 0:
-                BC_col = np.mean(field_block[:, :, :intersect_zone_limit_k][bool_block[:, :, :intersect_zone_limit_k] != 0])
-            else:
-                BC_col = np.mean(field_block[:, :, :overlap][bool_block[:, :, :overlap] != 0])
-        # Case 2 b) - Left-most block
+            m = masked_mean_3d_bounds(field_block, bool_block, 0, sz, 0, sy, sx - overlap, sx)
+            BC_corr = m - BC_col_arr[0]
+            sub_scalar_inplace(field_block, BC_corr)
+            BC_col_arr[0] = masked_mean_3d_bounds(field_block, bool_block, 0, sz, 0, sy, 0, overlap)
         else:
-            BC_corr = np.mean(field_block[:, :, -intersect_zone_limit_k:][bool_block[:, :, -intersect_zone_limit_k:] != 0]) - BC_col
-            field_block -= BC_corr
+            intersect_zone_limit_k = overlap - p_k
+            x0 = sx - intersect_zone_limit_k
+            m = masked_mean_3d_bounds(field_block, bool_block, 0, sz, 0, sy, x0, sx)
+            BC_corr = m - BC_col_arr[0]
+            sub_scalar_inplace(field_block, BC_corr)
 
-        BC_rows[k] = np.mean(field_block[:, -overlap:, :][bool_block[:, -overlap:, :] != 0])
-        BC_depths[j, k] = np.mean(field_block[-overlap:, :, :][bool_block[-overlap:, :, :] != 0])
+        BC_rows[k] = masked_mean_3d_bounds(field_block, bool_block, 0, sz, sy - overlap, sy, 0, sx)
+        BC_depths[j, k] = masked_mean_3d_bounds(field_block, bool_block, sz - overlap, sz, 0, sy, 0, sx)
 
-    # Case 3 - 1st depth (non 1st row and column)
-    # Correction based on the
+    # Case 3
     elif i == 0:
-        # Case 3 a)
+        down_most_j = BC_depths.shape[0] - 1
         if j < down_most_j:
-            BC_corr = np.mean(field_block[:, :overlap, :][bool_block[:, :overlap, :] != 0]) - BC_rows[k]
-            field_block -= BC_corr
+            m = masked_mean_3d_bounds(field_block, bool_block, 0, sz, 0, overlap, 0, sx)
+            BC_corr = m - BC_rows[k]
+            sub_scalar_inplace(field_block, BC_corr)
 
-            # Value stored to be used in the last row depends on p_i
             if j == down_most_j - 1:
-                BC_rows[k] = np.mean(field_block[:, -(shape-p_j):, :][bool_block[:, -(shape-p_j):, :] != 0])
+                y0 = sy - (shape - p_j)
+                BC_rows[k] = masked_mean_3d_bounds(field_block, bool_block, 0, sz, y0, sy, 0, sx)
             else:
-                BC_rows[k] = np.mean(field_block[:, -overlap:, :][bool_block[:, -overlap:, :] != 0])
-        # Case 3 b) - Last Row
+                BC_rows[k] = masked_mean_3d_bounds(field_block, bool_block, 0, sz, sy - overlap, sy, 0, sx)
         else:
-            # j_0 = #intersect_zone_limit_j[0]
-            # j_f = #intersect_zone_limit_j[1]
-            BC_corr = np.mean(field_block[:, :-p_j, :][bool_block[:, :-p_j, :] != 0]) - BC_rows[k]
-            field_block -= BC_corr
+            y1 = sy - p_j
+            m = masked_mean_3d_bounds(field_block, bool_block, 0, sz, 0, y1, 0, sx)
+            BC_corr = m - BC_rows[k]
+            sub_scalar_inplace(field_block, BC_corr)
 
-        BC_depths[j, k] = np.mean(field_block[-overlap:, :, :][bool_block[-overlap:, :, :] != 0])
+        BC_depths[j, k] = masked_mean_3d_bounds(field_block, bool_block, sz - overlap, sz, 0, sy, 0, sx)
 
-    # Case 4 - non 1st depth (any row and column)
-    # Correcting based on depth overlap -> correcting (i, j, k) = (i, 0, 0) for the pressure BC could improve respecting the outlet BC
+    # Case 4
     elif i < n_z - 1:
-        BC_corr = np.mean(field_block[:overlap, :, :][bool_block[:overlap, :, :] != 0]) - BC_depths[j, k]
-        field_block -= BC_corr
-        BC_depths[j, k] = np.mean(field_block[-overlap:, :, :][bool_block[-overlap:, :, :] != 0])
+        m = masked_mean_3d_bounds(field_block, bool_block, 0, overlap, 0, sy, 0, sx)
+        BC_corr = m - BC_depths[j, k]
+        sub_scalar_inplace(field_block, BC_corr)
+        BC_depths[j, k] = masked_mean_3d_bounds(field_block, bool_block, sz - overlap, sz, 0, sy, 0, sx)
 
-    # Case 5 - last depth
+    # Case 5
     else:
-        i_0 = intersect_zone_limit_j[0]
-        i_f = intersect_zone_limit_j[1]
-        BC_corr = np.mean(field_block[i_0:i_f, :, :][bool_block[i_0:i_f, :, :] != 0]) - BC_depths[j, k]
-        field_block -= BC_corr
+        i_0 = sz - p_i - overlap
+        i_f = sz - p_i
+        m = masked_mean_3d_bounds(field_block, bool_block, i_0, i_f, 0, sy, 0, sx)
+        BC_corr = m - BC_depths[j, k]
+        sub_scalar_inplace(field_block, BC_corr)
 
-    # # DEBUGGING print
-    # print(f"(i,j,k): {(i,j,k)}")
     return field_block
 
+
+@njit(cache=True, fastmath=True, nogil=True, inline="always")  # CHANGED: remove parallel=True
+def plane_combo_mean(result, a, x1, b, x2, denom):
+    """mean((a*result[:,:,x1] + b*result[:,:,x2]) / denom) without temporaries."""
+    sz, sy, _sx = result.shape
+    total = 0.0
+    count = sz * sy
+    for z in range(sz):  # CHANGED: range, not prange
+        for y in range(sy):
+            total += (a * result[z, y, x1] + b * result[z, y, x2]) / denom
+    return total / count if count > 0 else 0.0
+
+@njit(cache=True, fastmath=True, nogil=True, inline="always")  # CHANGED: remove parallel=True
+def sub_scalar_inplace(arr, val):
+    sz, sy, sx = arr.shape
+    for z in range(sz):
+        for y in range(sy):
+            for x in range(sx):
+                arr[z, y, x] -= val
 
 def assemble_prediction(
     array,
@@ -138,44 +154,19 @@ def assemble_prediction(
 ):
     """
     Reconstructs the flow domain based on squared blocks.
-    In the first row the correction is based on the outlet fixed value BC.
-
-    In the following rows the correction is based on the overlap region at the top of each new block.
-    This correction from the top ensures better agreement between different rows, leading to overall better results.
-
-    Args:
-        array (ndarray): The array containing the predicted flow fields for each block.
-        indices_list (list): The list of indices representing the position of each block in the flow domain.
-        n_x (int): The number of blocks in the x-direction.
-        n_y (int): The number of blocks in the y-direction.
-        n_z (int): The number of blocks in the z-direction.
-        overlap (int): Overlap size between blocks.
-        shape (int): Size of each block.
-        Ref_BC: Reference boundary condition (not used directly here).
-        x_array (ndarray): Array with block information.
-        apply_filter (bool): Whether to apply a Gaussian filter.
-        shape_x (int): Domain size in x.
-        shape_y (int): Domain size in y.
-        shape_z (int): Domain size in z.
-        deltaU_change_grid (ndarray): Grid for deltaU change weighting.
-        deltaP_prev_grid (ndarray): Previous deltaP grid.
-        apply_deltaU_change_wgt (bool): Whether to apply deltaU change weighting.
-
-    Returns:
-        tuple: (reconstructed domain, change_in_deltap if requested)
     """
 
-    result_array = np.empty(shape=(shape_z, shape_y, shape_x))
+    # Pre-allocate result array
+    result = np.empty((shape_z, shape_y, shape_x), dtype=np.float32)
+
+    if apply_filter or apply_deltaU_change_wgt:
+        tmp0 = np.empty_like(result, dtype=np.float32)
+        tmp1 = np.empty_like(result, dtype=np.float32)
 
     # Arrays to store average pressure in overlap regions
-    # BC_col - correction between side by side blocks
-    # BC_rows - correction between top and down blocks
-    # BC_depth - correction between blocks in the depth direction
-    BC_col = 0.0
-    BC_rows = np.zeros(n_x)
-    BC_depths = np.zeros((n_y, n_x))
-
-    #print(f'Shape: {(shape_z, shape_y, shape_x)}')
+    BC_col_arr = np.zeros(1, dtype=np.float32)
+    BC_rows = np.zeros(n_x, dtype=np.float32)
+    BC_depths = np.zeros((n_y, n_x), dtype=np.float32)
 
     # i index where the lower blocks are located
     p_i = shape_z - ((shape - overlap) * (n_z - 2) + shape)
@@ -184,124 +175,81 @@ def assemble_prediction(
     # k index where the left-most blocks are located
     p_k = shape_x - ((shape - overlap) * (n_x - 1) + shape)
 
-    result = result_array
+    # Vectorized range computation
+    z_idx = np.arange(n_z - 1, dtype=np.int32)
+    z_ranges = np.empty((n_z, 2), dtype=np.int32)
+    z_ranges[:-1, 0] = (shape - overlap) * z_idx
+    z_ranges[:-1, 1] = (shape - overlap) * z_idx + shape
+    z_ranges[-1] = [shape_z - p_i, shape_z]
+    
+    y_idx = np.arange(n_y - 1, dtype=np.int32)
+    y_ranges = np.empty((n_y, 2), dtype=np.int32)
+    y_ranges[:-1, 0] = (shape - overlap) * y_idx
+    y_ranges[:-1, 1] = (shape - overlap) * y_idx + shape
+    y_ranges[-1] = [shape_y - p_j, shape_y]
+    
+    x_idx = np.arange(n_x, dtype=np.int32)
+    x_idx_rev = n_x - x_idx - 1
+    x_ranges = np.empty((n_x, 2), dtype=np.int32)
+    x_ranges[:, 0] = shape_x - shape - x_idx_rev * (shape - overlap)
+    x_ranges[:, 1] = shape_x - x_idx_rev * (shape - overlap)
+    x_ranges[0, 0] = 0
+    x_ranges[0, 1] = shape
+    
+    if not isinstance(indices_list, np.ndarray):
+        indices_list = np.array(indices_list, dtype=np.int32)
 
-    # Loop over all the blocks and apply corrections to ensure consistency between overlapping blocks
-    for i_block in range(x_array.shape[0]):
-        i, j, k = indices_list[i_block]
-        flow_bool = x_array[i_block, :, :, :, 3]
-        pred_field = array[i_block, ...]
+    # CHANGED: revert to simple Python loop (process_blocks_jit wrapper added overhead)
+    n_blocks = indices_list.shape[0]
+    for b in range(n_blocks):
+        i, j, k = indices_list[b]
+        flow_bool = x_array[b, :, :, :, 3]
+        pred_field = array[b]
 
-        # Applying the correction
-        pred_field = correct_pred(
+        pred_field = correct_pred_jit(
             pred_field, flow_bool, i, j, k, p_i, p_j, p_k,
             shape, overlap, n_x, n_z,
-            BC_col, BC_rows, BC_depths, Ref_BC
+            BC_col_arr, BC_rows, BC_depths, Ref_BC
         )
 
-        # Last reassembly step:
-        # Assigning the block to the right location in the flow domain
+        z0, z1 = z_ranges[i]; y0, y1 = y_ranges[j]; x0, x1 = x_ranges[k]
 
-        # # DEBUGGING print
-        # print(f"(i,j,k): {(i,j,k)}")
-
-        # Non last depth
-        if i < n_z - 1:
-            # Last row, first column (right-most)
-            if (j, k) == (n_y - 1, 0):
-                # # DEBUGGING print
-                # print((shape - overlap) * i, (shape - overlap) * i + shape, shape_y - p_j, shape_y, 0, shape)
-                result[(shape - overlap) * i:(shape - overlap) * i + shape,
-                       -p_j:shape_y, :shape] = pred_field[:, -p_j:, :]
-            # Last column (left-most)
-            elif k == 0:
-                # # DEBUGGING print
-                # print((shape - overlap) * i, (shape - overlap) * i + shape,
-                #       (shape - overlap) * j, (shape - overlap) * j + shape,
-                #       0, shape)
-                result[(shape - overlap) * i:(shape - overlap) * i + shape,
-                       (shape - overlap) * j:(shape - overlap) * j + shape,
-                       0:shape] = pred_field
-            # Last row
-            elif j == (n_y - 1):
-                k_ = n_x - k - 1
-                # # DEBUGGING print
-                # print((shape - overlap) * i, (shape - overlap) * i + shape,
-                #       shape_y - p_j, shape_y, shape_x - shape - k_ * (shape - overlap), shape_x - k_ * (shape - overlap))
-                result[(shape - overlap) * i:(shape - overlap) * i + shape,
-                       -p_j:,
-                       shape_x - shape - k_ * (shape - overlap): shape_x - k_ * (shape - overlap)] = pred_field[:, -p_j:, :]
+        if i == n_z - 1:
+            if j == n_y - 1:
+                result[z0:z1, y0:y1, x0:x1] = pred_field[-p_i:, -p_j:, :]
             else:
-                k_ = n_x - k - 1
-                # # DEBUGGING print
-                # print((shape - overlap) * i, (shape - overlap) * i + shape,
-                #       (shape - overlap) * j, (shape - overlap) * j + shape,
-                #       shape_x - shape - k_ * (shape - overlap), shape_x - k_ * (shape - overlap))
-                result[(shape - overlap) * i:(shape - overlap) * i + shape,
-                       (shape - overlap) * j:(shape - overlap) * j + shape,
-                       shape_x - shape - k_ * (shape - overlap): shape_x - k_ * (shape - overlap)] = pred_field
-        # Last depth
+                result[z0:z1, y0:y1, x0:x1] = pred_field[-p_i:, :, :]
         else:
-            # Last row, first column (right-most)
-            if (j, k) == (n_y - 1, 0):
-                # # DEBUGGING print
-                # print((shape_z - p_i, shape_z), (shape_y - p_j, shape_y), 0, shape)
-                result[-p_i:,
-                       -p_j:, :shape] = pred_field[-p_i:, -p_j:, :]
-            # Last column (left-most)
-            elif k == 0:
-                # # DEBUGGING print
-                # print(shape_z - p_i, shape_z, shape_y - p_j, shape_y, 0, shape)
-                result[-p_i:,
-                       (shape - overlap) * j:(shape - overlap) * j + shape,
-                       0:shape] = pred_field[-p_i:, :, :]
-            # Last row
-            elif j == (n_y - 1):
-                k_ = n_x - k - 1
-                # # DEBUGGING print
-                # print(shape_z - p_i, shape_z, shape_y - p_j, shape_y, shape_x - shape - k_ * (shape - overlap), shape_x - k_ * (shape - overlap))
-                result[-p_i:,
-                       -p_j:,
-                       shape_x - shape - k_ * (shape - overlap): shape_x - k_ * (shape - overlap)] = pred_field[-p_i:, -p_j:, :]
+            if j == n_y - 1:
+                result[z0:z1, y0:y1, x0:x1] = pred_field[:, -p_j:, :]
             else:
-                k_ = n_x - k - 1
-                # # DEBUGGING print
-                # print(shape_z - p_i, shape_z, (shape - overlap) * j, (shape - overlap) * j + shape, shape_x - shape - k_ * (shape - overlap), shape_x - k_ * (shape - overlap))
-                result[-p_i:,
-                       (shape - overlap) * j:(shape - overlap) * j + shape,
-                       shape_x - shape - k_ * (shape - overlap): shape_x - k_ * (shape - overlap)] = pred_field[-p_i:, :, :]
+                result[z0:z1, y0:y1, x0:x1] = pred_field
 
-        # # DEBUGGING: plot slices
-        # if i==0: # and j==3:
-        #     fig, axs = plt.subplots(7, 1, figsize=(15, 5))
-        #     axs[0].imshow(result[(shape-overlap) * i + 1, :, :])
-        #     axs[1].imshow(result[(shape-overlap) * i + 3, :,:])
-        #     axs[2].imshow(result[(shape-overlap) * i + 5, :,:])
-        #     axs[3].imshow(result[(shape-overlap) * i + 7, :,:])
-        #     axs[4].imshow(result[(shape-overlap) * i + 9,:,:])
-        #     axs[5].imshow(result[(shape-overlap) * i + 11,:,:])
-        #     axs[6].imshow(result[(shape-overlap) * i + 13,:,:])
-        #     for ax in axs:
-        #         plt.colorbar(ax.images[0], ax=ax)
-        #     plt.savefig(f"reconstruct/reconstructed_{i_block}.png")
-        #     plt.close(fig)
+    outlet_has_fluid = np.any(x_array[:, :, :, -1, 3] != 0)
 
-    # Correction based on the fact the BC is applied at the last cell center and not the cell face...
-    if ~(flow_bool[:, :, -1] == 0).all():
-        result -= np.mean(3 * result[:, :, -1] - result[:, :, -2]) / 3
+    if outlet_has_fluid:
+        correction = plane_combo_mean(result, 3.0, -1, -1.0, -2, 3.0)
     else:
-        result -= np.mean(3 * result[:, :, -2] - result[:, :, -3]) / 3
+        correction = plane_combo_mean(result, 3.0, -2, -1.0, -3, 3.0)
+    sub_scalar_inplace(result, correction)
 
-    ################### this applies a gaussian filter to remove boundary artifacts #################
-    filter_tuple = (10, 10, 10)
     if apply_filter:
-        result = ndimage.gaussian_filter(result, sigma=filter_tuple, order=0)
+        ndimage.gaussian_filter1d(result, sigma=10, axis=0, order=0, mode="constant", truncate=3.0, output=tmp0)
+        ndimage.gaussian_filter1d(tmp0, sigma=10, axis=1, order=0, mode="constant", truncate=3.0, output=tmp1)
+        ndimage.gaussian_filter1d(tmp1, sigma=10, axis=2, order=0, mode="constant", truncate=3.0, output=result)
 
     change_in_deltap = None
     if apply_deltaU_change_wgt:
-        deltaU_change_grid = ndimage.gaussian_filter(deltaU_change_grid, sigma=(5, 5, 5), order=0)
-        change_in_deltap = result - deltaP_prev_grid
-        change_in_deltap = change_in_deltap * deltaU_change_grid
-        change_in_deltap = ndimage.gaussian_filter(change_in_deltap, sigma=filter_tuple, order=0)
+        ndimage.gaussian_filter1d(deltaU_change_grid, sigma=5, axis=0, order=0, mode="constant", truncate=3.0, output=tmp0)
+        ndimage.gaussian_filter1d(tmp0, sigma=5, axis=1, order=0, mode="constant", truncate=3.0, output=tmp1)
+        ndimage.gaussian_filter1d(tmp1, sigma=5, axis=2, order=0, mode="constant", truncate=3.0, output=deltaU_change_grid)
+
+        np.subtract(result, deltaP_prev_grid, out=tmp0)
+        np.multiply(tmp0, deltaU_change_grid, out=tmp0)
+
+        ndimage.gaussian_filter1d(tmp0, sigma=10, axis=0, order=0, mode="constant", truncate=3.0, output=tmp1)
+        ndimage.gaussian_filter1d(tmp1, sigma=10, axis=1, order=0, mode="constant", truncate=3.0, output=tmp0)
+        ndimage.gaussian_filter1d(tmp0, sigma=10, axis=2, order=0, mode="constant", truncate=3.0, output=tmp1)
+        change_in_deltap = tmp1
 
     return result, change_in_deltap

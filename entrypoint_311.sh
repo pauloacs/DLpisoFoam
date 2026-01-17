@@ -6,7 +6,7 @@ source /opt/openfoam8/etc/bashrc
 
 # This activates the conda environment
 source /opt/conda/bin/activate
-conda activate python311
+conda activate python311_solver
 . /home/repo/prep_env311.sh
 
 # This compiles the solver
