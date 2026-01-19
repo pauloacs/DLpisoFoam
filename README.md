@@ -20,7 +20,7 @@
   - [Part 3: Running Your First CFD Simulation with the Surrogate Model](#part-3--running-your-first-cfd-simulation-with-the-surrogate-model)
     - [Part 3.1: Run the DLpisoFoam Test Case with the PRE-TRAINED Surrogate Model](#part-31-run-the-dlpisofoam-test-case-with-the-pre-trained-surrogate-model)
     - [Part 3.2: Run DLpisoFoam with YOUR trained Surrogate model](#part-32-run-dlpisofoam-with-your-trained-surrogate-model)
-- [Available Solvers](#-available-solvers)
+- [Available CFD Solvers](#-available-cfd-solvers)
   - [DLpisoFoam](#dlpisofoam)
   - [DLbuoyantPimpleFoam](#dlbuoyantpimplefoam)
 - [Legacy Solvers](#-legacy-solvers)
@@ -84,21 +84,21 @@ This repository provides a complete workflow for accelerating CFD simulations wi
 
 ```
 DLpisoFoam/
-├── source/                      # Solver source code
-│   ├── DLpisoFoam/             # Incompressible isothermal solver
-│   └── DLbuoyantPimpleFoam/    # Thermal flow solver
-├── pressure_SM/                 # Surrogate models
-│   ├── 2D/                     # 2D models
+├── source/                  # Solver source code
+│   ├── DLpisoFoam/           # Incompressible isothermal solver
+│   └── DLbuoyantPimpleFoam/  # Thermal flow solver
+├── pressure_SM/             # Surrogate models
+│   ├── 2D/                   # 2D models
 │   │   ├── train_and_eval/    # Training & evaluation scripts
-│   │   └── CFD_usable/        # Production-ready models
-│   └── 3D/                     # 3D models
-│       ├── train_and_eval/
-│       └── CFD_usable/
-├── tutorials/                   # Example test cases
-├── gen_datasets/                # Dataset generation scripts
-├── other_solvers/              # Legacy solver versions
-├── Dockerfile                  # Docker build configuration
-└── env_311.yml                 # Python environment specification
+│   │   └── CFD_usable/        # Interface for integration with CFD solver
+│   └── 3D/                   # 3D models
+│       ├── train_and_eval/    # Training & evaluation scripts
+│   │   └── CFD_usable/        # Interface for integration with CFD solver
+├── tutorials/                # Example test cases
+├── gen_datasets/             # Dataset generation scripts
+├── other_solvers/            # Legacy solver versions
+├── Dockerfile                # Docker build configuration
+└── env_311.yml               # Python environment specification
 ```
 
 ---
@@ -291,7 +291,7 @@ postProcess -func 'mag(U)'
 ---
 
 
-## 🔧 Available Solvers
+## 🔧 Available CFD Solvers
 
 ### DLpisoFoam
 **For incompressible, isothermal flows**

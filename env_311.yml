@@ -277,3 +277,5 @@ dependencies:
   - pip:
       - mpi4py==3.1.5
       - shapely==2.0.2
+      - tensorly==0.9.0
+      - spektral==1.3.1

@@ -8,16 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 COPY env_311.yml /usr/bin/environment.yml
 COPY entrypoint_311.sh /usr/bin/entrypoint.sh
 
-# Create a new user called user
-RUN useradd -ms /bin/bash user
-RUN usermod -aG sudo user
-
-RUN mkdir -p /etc/sudoers.d
-
-
-# Edit the /etc/sudoers file to allow the user to run sudo without a password prompt
-RUN echo "user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/user-nopasswd
-RUN chmod 440 /etc/sudoers.d/user-nopasswd
+RUN useradd -ms /bin/bash -u 0 -o user
 
 # Install any extra things we might need
 RUN apt-get update \
@@ -53,25 +44,18 @@ RUN wget https://repo.anaconda.com/miniconda/Miniconda3-py38_4.12.0-Linux-x86_64
 # Creating python virtual environment
 ENV PATH=$CONDA_DIR/bin:$PATH
 RUN conda env create -f /usr/bin/environment.yml
-#RUN conda activate python39 && conda install mpi4py
-
-
 
 # Giving enough permissions to the user
 RUN mkdir -p /home/repo
-# If more permissions are required the user can chown itself (user) with sudo inside the container
-RUN chown -R user:user /home/repo
 
 # Copy repository contents to /home/repo
-COPY . /home/repo
+COPY --exclude=other_solvers_2d . /home/repo
 
 WORKDIR /home/repo/
-RUN sudo chmod 755 /usr/bin/entrypoint.sh
 
 # set the default container user to foam
 USER user
 
-#ENTRYPOINT ["/bin/bash","-l"]
 # The solvers will be installed in the entrypoint when running this image in a container
 ENTRYPOINT ["/usr/bin/entrypoint.sh"]
 

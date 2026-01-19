@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Check if script is being sourced
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "Error: This script must be sourced, not executed directly."
+    echo "Usage: source prep_env311.sh"
+    echo "   or: . prep_env311.sh"
+    exit 1
+fi
+
 # This script sets up the environment for the Python 3.11 build for the docker image
 # You need to adjust the paths to your own installation paths if not using docker
 
@@ -12,3 +20,5 @@ export PYTHON_LIB_NAME=lpython3.11
 export LD_LIBRARY_PATH=$PYTHON_LIB_PATH:$LD_LIBRARY_PATH
 export LIBRARY_PATH=$PYTHON_LIB_PATH:$LIBRARY_PATH
 export PATH=$PYTHON_BIN_PATH:$PATH
+
+echo "Python 3.11 environment configured successfully."
