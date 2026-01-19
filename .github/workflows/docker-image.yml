@@ -2,9 +2,9 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    tags:
+      - 'v*'  # Triggers on tags like v1.0.0, v2.1.3, etc.
+      - '*'   # Or use this to trigger on any tag
 
 jobs:
 
