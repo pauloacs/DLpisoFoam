@@ -49,7 +49,8 @@ RUN conda env create -f /usr/bin/environment.yml
 RUN mkdir -p /home/repo
 
 # Copy repository contents to /home/repo
-COPY --exclude=other_solvers_2d . /home/repo
+COPY . /home/repo
+RUN rm -rf /home/repo/other_solvers_2d
 
 WORKDIR /home/repo/
 
