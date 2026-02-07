@@ -2,8 +2,9 @@ import re
 import csv
 import os 
 import numpy as np
+import argparse
 
-def parse_logs(log_content):
+def parse_logs(log_content, max_time=None):
     # Regular expression to find each Time block and capture the necessary data for DLbuoyantPimpleFoam
     time_block_pattern = re.compile(
         r'Time = (?P<time>\d+\.\d+)\n'
@@ -28,6 +29,10 @@ def parse_logs(log_content):
 
     # Extract all matches
     matches = time_block_pattern.findall(log_content)
+
+    # Filter matches by max_time if specified
+    if max_time is not None:
+        matches = [m for m in matches if float(m[0]) <= max_time]
 
     return matches
 
@@ -87,9 +92,13 @@ def calculate_averages(matches):
     uy_iters = [int(m[5]) for m in matches]
     uz_iters = [int(m[7]) for m in matches]
     h_iters = [int(m[9]) for m in matches]
+    p_iter1_1_initial_residuals = [float(m[10]) for m in matches]
     p_iter1_1_iters = [int(m[11]) for m in matches]
+    p_iter1_2_initial_residuals = [float(m[12]) for m in matches]
     p_iter1_2_iters = [int(m[13]) for m in matches]
+    p_iter2_1_initial_residuals = [float(m[15]) for m in matches]
     p_iter2_1_iters = [int(m[16]) for m in matches]
+    p_iter2_2_initial_residuals = [float(m[17]) for m in matches]
     p_iter2_2_iters = [int(m[18]) for m in matches]
     omega_iters = [int(m[21]) for m in matches]
     k_iters = [int(m[23]) for m in matches]
@@ -109,9 +118,13 @@ def calculate_averages(matches):
         'avg_uy_iterations': np.mean(uy_iters),
         'avg_uz_iterations': np.mean(uz_iters),
         'avg_h_iterations': np.mean(h_iters),
+        'avg_p_iter1_1_initial_residual': np.mean(p_iter1_1_initial_residuals),
         'avg_p_iter1_1_iterations': np.mean(p_iter1_1_iters),
+        'avg_p_iter1_2_initial_residual': np.mean(p_iter1_2_initial_residuals),
         'avg_p_iter1_2_iterations': np.mean(p_iter1_2_iters),
+        'avg_p_iter2_1_initial_residual': np.mean(p_iter2_1_initial_residuals),
         'avg_p_iter2_1_iterations': np.mean(p_iter2_1_iters),
+        'avg_p_iter2_2_initial_residual': np.mean(p_iter2_2_initial_residuals),
         'avg_p_iter2_2_iterations': np.mean(p_iter2_2_iters),
         'avg_total_p_iterations': np.mean(total_p_iters),
         'avg_omega_iterations': np.mean(omega_iters),
@@ -122,12 +135,18 @@ def calculate_averages(matches):
     
     return averages
 
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description='Parse buoyantPimpleFoam simulation logs and generate summary.')
+parser.add_argument('--max-time', type=float, default=None, 
+                    help='Maximum simulation time to include in the analysis (default: include all)')
+args = parser.parse_args()
+
 # Read the log content from a file
 with open('./buoyant.log', 'r') as file:
     log_content = file.read()
 
 # Parse the logs to get the time and initial residuals
-matches = parse_logs(log_content)
+matches = parse_logs(log_content, max_time=args.max_time)
 
 # Folder name (assuming it's the current directory)
 folder_name = os.path.basename(os.getcwd())
@@ -140,6 +159,8 @@ save_initial_residuals(matches, output_file)
 averages = calculate_averages(matches)
 if averages:
     print(f'\n=== Simulation Summary (buoyantPimpleFoam) ===')
+    if args.max_time is not None:
+        print(f'Analysis limited to time <= {args.max_time}')
     print(f'Parsed {averages["num_timesteps"]} timesteps')
     print(f'\nAverage Iterations:')
     print(f'  Ux: {averages["avg_ux_iterations"]:.2f}')
@@ -148,11 +169,11 @@ if averages:
     print(f'  h:  {averages["avg_h_iterations"]:.2f}')
     print(f'  omega: {averages["avg_omega_iterations"]:.2f}')
     print(f'  k:     {averages["avg_k_iterations"]:.2f}')
-    print(f'\nAverage Pressure Iterations:')
-    print(f'  Iter1_1: {averages["avg_p_iter1_1_iterations"]:.2f}')
-    print(f'  Iter1_2: {averages["avg_p_iter1_2_iterations"]:.2f}')
-    print(f'  Iter2_1: {averages["avg_p_iter2_1_iterations"]:.2f}')
-    print(f'  Iter2_2: {averages["avg_p_iter2_2_iterations"]:.2f}')
+    print(f'\nAverage Pressure Iterations (Initial Residual):')
+    print(f'  Iter1_1: {averages["avg_p_iter1_1_iterations"]:.2f} ({averages["avg_p_iter1_1_initial_residual"]:.6e})')
+    print(f'  Iter1_2: {averages["avg_p_iter1_2_iterations"]:.2f} ({averages["avg_p_iter1_2_initial_residual"]:.6e})')
+    print(f'  Iter2_1: {averages["avg_p_iter2_1_iterations"]:.2f} ({averages["avg_p_iter2_1_initial_residual"]:.6e})')
+    print(f'  Iter2_2: {averages["avg_p_iter2_2_iterations"]:.2f} ({averages["avg_p_iter2_2_initial_residual"]:.6e})')
     print(f'  Total:   {averages["avg_total_p_iterations"]:.2f}')
     print(f'\nExecution Time:')
     print(f'  Average per iteration: {averages["avg_time_per_iteration"]:.2f} s')

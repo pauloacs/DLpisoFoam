@@ -2,37 +2,42 @@ import re
 import csv
 import os 
 import numpy as np
+import argparse
 
-def parse_logs(log_content):
+def parse_logs(log_content, max_time=None):
     # Regular expression to find each Time block and capture the necessary data for DLbuoyantPimpleFoam
     time_block_pattern = re.compile(
-        r'Time = (?P<time>\d+\.\d+)\n'
+        r'Time = (?P<time>[\d.]+(?:e[+-]?\d+)?)\n'
         r'.*?diagonal:\s+Solving for rho, Initial residual = .*?, Final residual = .*?, No Iterations (?P<rho_iterations>\d+)\n'
-        r'smoothSolver:\s+Solving for Ux, Initial residual = (?P<ux_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<ux_iterations>\d+)\n'
-        r'smoothSolver:\s+Solving for Uy, Initial residual = (?P<uy_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<uy_iterations>\d+)\n'
-        r'smoothSolver:\s+Solving for Uz, Initial residual = (?P<uz_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<uz_iterations>\d+)\n'
-        r'DILUPBiCGStab:\s+Solving for h, Initial residual = (?P<h_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<h_iterations>\d+)\n'
+        r'smoothSolver:\s+Solving for Ux, Initial residual = (?P<ux_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<ux_iterations>\d+)\n'
+        r'smoothSolver:\s+Solving for Uy, Initial residual = (?P<uy_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<uy_iterations>\d+)\n'
+        r'smoothSolver:\s+Solving for Uz, Initial residual = (?P<uz_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<uz_iterations>\d+)\n'
+        r'DILUPBiCGStab:\s+Solving for h, Initial residual = (?P<h_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<h_iterations>\d+)\n'
         r'>>> Setting arguments <<<\n'
         r'>>> Calling python function <<<\n'
         r'.*?'
         r'>>>  delta_p_rgh filled <<<\n'
-        r'DL pressure prediction & data transport: (?P<dl_time>\d+\.\d+) ms\n'
-        r'GAMG:\s+Solving for p_rgh, Initial residual = (?P<p_iter1_1_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<p_iter1_1_iterations>\d+)\n'
-        r'GAMG:\s+Solving for p_rgh, Initial residual = (?P<p_iter1_2_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<p_iter1_2_iterations>\d+)\n'
+        r'DL pressure prediction & data transport: (?P<dl_time>[\d.]+) ms\n'
+        r'GAMG:\s+Solving for p_rgh, Initial residual = (?P<p_iter1_1_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<p_iter1_1_iterations>\d+)\n'
+        r'GAMG:\s+Solving for p_rgh, Initial residual = (?P<p_iter1_2_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<p_iter1_2_iterations>\d+)\n'
         r'diagonal:\s+Solving for rho, Initial residual = .*?, Final residual = .*?, No Iterations (?P<rho2_iterations>\d+)\n'
         r'time step continuity errors : sum local = .*?, global = .*?, cumulative = .*?\n'
-        r'GAMG:\s+Solving for p_rgh, Initial residual = (?P<p_iter2_1_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<p_iter2_1_iterations>\d+)\n'
-        r'GAMG:\s+Solving for p_rgh, Initial residual = (?P<p_iter2_2_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<p_iter2_2_iterations>\d+)\n'
+        r'GAMG:\s+Solving for p_rgh, Initial residual = (?P<p_iter2_1_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<p_iter2_1_iterations>\d+)\n'
+        r'GAMG:\s+Solving for p_rgh, Initial residual = (?P<p_iter2_2_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<p_iter2_2_iterations>\d+)\n'
         r'diagonal:\s+Solving for rho, Initial residual = .*?, Final residual = .*?, No Iterations (?P<rho3_iterations>\d+)\n'
         r'time step continuity errors : sum local = .*?, global = .*?, cumulative = .*?\n'
-        r'smoothSolver:\s+Solving for omega, Initial residual = (?P<omega_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<omega_iterations>\d+)\n'
-        r'smoothSolver:\s+Solving for k, Initial residual = (?P<k_initial_residual>\d+\.?\d*e?-?\d*), Final residual = .*?, No Iterations (?P<k_iterations>\d+)\n'
-        r'ExecutionTime = (?P<execution_time>\d+\.\d+) s',
+        r'smoothSolver:\s+Solving for omega, Initial residual = (?P<omega_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<omega_iterations>\d+)\n'
+        r'smoothSolver:\s+Solving for k, Initial residual = (?P<k_initial_residual>[\d.]+(?:e[+-]?\d+)?), Final residual = .*?, No Iterations (?P<k_iterations>\d+)\n'
+        r'ExecutionTime = (?P<execution_time>[\d.]+) s',
         re.DOTALL
     )
 
     # Extract all matches
     matches = time_block_pattern.findall(log_content)
+
+    # Filter matches by max_time if specified
+    if max_time is not None:
+        matches = [m for m in matches if float(m[0]) <= max_time]
 
     return matches
 
@@ -98,9 +103,13 @@ def calculate_averages(matches):
     uz_iters = [int(m[7]) for m in matches]
     h_iters = [int(m[9]) for m in matches]
     dl_times = [float(m[10]) for m in matches]
+    p_iter1_1_initial_residuals = [float(m[11]) for m in matches]
     p_iter1_1_iters = [int(m[12]) for m in matches]
+    p_iter1_2_initial_residuals = [float(m[13]) for m in matches]
     p_iter1_2_iters = [int(m[14]) for m in matches]
+    p_iter2_1_initial_residuals = [float(m[16]) for m in matches]
     p_iter2_1_iters = [int(m[17]) for m in matches]
+    p_iter2_2_initial_residuals = [float(m[18]) for m in matches]
     p_iter2_2_iters = [int(m[19]) for m in matches]
     omega_iters = [int(m[22]) for m in matches]
     k_iters = [int(m[24]) for m in matches]
@@ -121,9 +130,13 @@ def calculate_averages(matches):
         'avg_uz_iterations': np.mean(uz_iters),
         'avg_h_iterations': np.mean(h_iters),
         'avg_dl_time_ms': np.mean(dl_times),
+        'avg_p_iter1_1_initial_residual': np.mean(p_iter1_1_initial_residuals),
         'avg_p_iter1_1_iterations': np.mean(p_iter1_1_iters),
+        'avg_p_iter1_2_initial_residual': np.mean(p_iter1_2_initial_residuals),
         'avg_p_iter1_2_iterations': np.mean(p_iter1_2_iters),
+        'avg_p_iter2_1_initial_residual': np.mean(p_iter2_1_initial_residuals),
         'avg_p_iter2_1_iterations': np.mean(p_iter2_1_iters),
+        'avg_p_iter2_2_initial_residual': np.mean(p_iter2_2_initial_residuals),
         'avg_p_iter2_2_iterations': np.mean(p_iter2_2_iters),
         'avg_total_p_iterations': np.mean(total_p_iters),
         'avg_omega_iterations': np.mean(omega_iters),
@@ -134,13 +147,18 @@ def calculate_averages(matches):
     
     return averages
 
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description='Parse DLbuoyantPimpleFoam simulation logs and generate summary.')
+parser.add_argument('--max-time', type=float, default=None, 
+                    help='Maximum simulation time to include in the analysis (default: include all)')
+args = parser.parse_args()
+
 # Read the log content from a file
 with open('./DL.log', 'r') as file:
     log_content = file.read()
 
-import pdb; pdb.set_trace()
 # Parse the logs to get the time and initial residuals
-matches = parse_logs(log_content)
+matches = parse_logs(log_content, max_time=args.max_time)
 
 # Folder name (assuming it's the current directory)
 folder_name = os.path.basename(os.getcwd())
@@ -153,6 +171,8 @@ save_initial_residuals(matches, output_file)
 averages = calculate_averages(matches)
 if averages:
     print(f'\n=== Simulation Summary (DLbuoyantPimpleFoam) ===')
+    if args.max_time is not None:
+        print(f'Analysis limited to time <= {args.max_time}')
     print(f'Parsed {averages["num_timesteps"]} timesteps')
     print(f'\nAverage Iterations:')
     print(f'  Ux: {averages["avg_ux_iterations"]:.2f}')
@@ -161,11 +181,11 @@ if averages:
     print(f'  h:  {averages["avg_h_iterations"]:.2f}')
     print(f'  omega: {averages["avg_omega_iterations"]:.2f}')
     print(f'  k:     {averages["avg_k_iterations"]:.2f}')
-    print(f'\nAverage Pressure Iterations:')
-    print(f'  Iter1_1: {averages["avg_p_iter1_1_iterations"]:.2f}')
-    print(f'  Iter1_2: {averages["avg_p_iter1_2_iterations"]:.2f}')
-    print(f'  Iter2_1: {averages["avg_p_iter2_1_iterations"]:.2f}')
-    print(f'  Iter2_2: {averages["avg_p_iter2_2_iterations"]:.2f}')
+    print(f'\nAverage Pressure Iterations (Initial Residual):')
+    print(f'  Iter1_1: {averages["avg_p_iter1_1_iterations"]:.2f} ({averages["avg_p_iter1_1_initial_residual"]:.6e})')
+    print(f'  Iter1_2: {averages["avg_p_iter1_2_iterations"]:.2f} ({averages["avg_p_iter1_2_initial_residual"]:.6e})')
+    print(f'  Iter2_1: {averages["avg_p_iter2_1_iterations"]:.2f} ({averages["avg_p_iter2_1_initial_residual"]:.6e})')
+    print(f'  Iter2_2: {averages["avg_p_iter2_2_iterations"]:.2f} ({averages["avg_p_iter2_2_initial_residual"]:.6e})')
     print(f'  Total:   {averages["avg_total_p_iterations"]:.2f}')
     print(f'\nAverage DL prediction time: {averages["avg_dl_time_ms"]:.2f} ms')
     print(f'\nExecution Time:')

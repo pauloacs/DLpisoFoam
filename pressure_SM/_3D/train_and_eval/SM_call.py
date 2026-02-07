@@ -102,7 +102,7 @@ class Evaluation():
 
 		boundaries = utils_io.read_boundaries(sim, self.dataset_path)
 
-		data, limits = utils_io.read_cells_and_limits(self.dataset_path, sim, 0, 1)
+		data, limits = utils_io.read_cells_and_limits(self.dataset_path, sim, 0, 1, self.delta)
 		data_t0 = data[0, ...]
 
 		######### -------------------- Assuming constant mesh, the following can be done out of the for cycle ------------------------------- ##########
@@ -180,7 +180,7 @@ class Evaluation():
 			None
 		"""
 
-		data, _ = utils_io.read_cells_and_limits(self.dataset_path, sim, time, time+1)
+		data, _ = utils_io.read_cells_and_limits(self.dataset_path, sim, time, time+1, self.delta)
 		data = data[0, ...]  #shape: (n_cells, n_features)
 
 		Ux =  data[:,0:1]

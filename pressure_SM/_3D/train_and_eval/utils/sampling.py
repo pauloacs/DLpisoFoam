@@ -87,7 +87,7 @@ def define_sample_indexes(
     indices_per_sim_per_time = []
     for sim_i in range(first_sim, last_sim + 1):
 
-        _, limits = utils_io.read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t)
+        _, limits = utils_io.read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t, grid_res)
 
         indices_per_time = []
         for time_i in range(last_t - first_t):

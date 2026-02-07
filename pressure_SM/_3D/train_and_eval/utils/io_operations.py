@@ -42,7 +42,7 @@ def read_boundaries(sim_i, original_dataset_path):
     return boundaries
 
 
-def read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t):
+def read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t, grid_res):
     """
     Read cell data and limits for a given simulation index.
     """
@@ -55,13 +55,16 @@ def read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t):
     
     data_limited = data[0, :, :indice, :]
 
+    # Define the numbe of places for the rounding limits
+    decimal_places = int(-np.log10(grid_res)) - 1
+
     limits = {
-        'x_min': round(np.min(data_limited[0, :, 4]), 2),
-        'x_max': round(np.max(data_limited[0, :, 4]), 2),
-        'y_min': round(np.min(data_limited[0, :, 5]), 2),
-        'y_max': round(np.max(data_limited[0, :, 5]), 2),
-        'z_min': round(np.min(data_limited[0, :, 6]), 2),
-        'z_max': round(np.max(data_limited[0, :, 6]), 2)
+        'x_min': round(data_limited[0, :, 4].min(), decimal_places),
+        'x_max': round(data_limited[0, :, 4].max(), decimal_places),
+        'y_min': round(data_limited[0, :, 5].min(), decimal_places),
+        'y_max': round(data_limited[0, :, 5].max(), decimal_places),
+        'z_min': round(data_limited[0, :, 6].min(), decimal_places), 
+        'z_max': round(data_limited[0, :, 6].max(), decimal_places) 
     }
 
     return data_limited, limits

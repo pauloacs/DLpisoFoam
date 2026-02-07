@@ -202,13 +202,16 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		global vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF
 		global grid_shape_z, grid_shape_y, grid_shape_x
 
+		# Define the numbe of places for the rounding limits
+		decimal_places = int(-np.log10(grid_res)) - 1
+		
 		limits = {
-			'x_min': round(np.min(array_concat[...,3]), 2),
-			'x_max': round(np.max(array_concat[...,3]), 2),
-			'y_min': round(np.min(array_concat[...,4]), 2),
-			'y_max': round(np.max(array_concat[...,4]), 2),
-			'z_min': round(np.min(array_concat[...,5]), 2),
-			'z_max': round(np.max(array_concat[...,5]), 2)
+			'x_min': round(np.min(array_concat[...,3]), decimal_places),
+			'x_max': round(np.max(array_concat[...,3]), decimal_places),
+			'y_min': round(np.min(array_concat[...,4]), decimal_places),
+			'y_max': round(np.max(array_concat[...,4]), decimal_places),
+			'z_min': round(np.min(array_concat[...,5]), decimal_places),
+			'z_max': round(np.max(array_concat[...,5]), decimal_places)
 		}
 
 		X0, Y0, Z0 = create_uniform_grid(limits, grid_res)
