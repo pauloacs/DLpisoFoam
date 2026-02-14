@@ -50,7 +50,7 @@ This repository provides a complete workflow for accelerating CFD simulations wi
 
 ## ✨ Key Features
 
-- 🚀 **Accelerated simulations**: Up to 20% less iterations required to convergence when compared to standard OpenFOAM solvers
+- 🚀 **Accelerated simulations**: Up to 40% less iterations required to convergence when compared to standard OpenFOAM solvers
 - 🧠 **ML-powered**: Machine Learning surrogate models enhance pressure Poisson solver
 - 🌡️ **Multiple physics**: Supports isothermal and thermal flows
 - 🔧 **OpenFOAM compatible**: Drop-in replacement for `pisoFoam` and `buoyantPimpleFoam`
