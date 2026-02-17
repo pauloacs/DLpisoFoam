@@ -1,4 +1,4 @@
-# DLpisoFoam
+# DLpisoFoam & DLbuoyantPimpleFoam
 
 **Deep Learning-Enhanced CFD Solvers for Accelerated Fluid Flow Simulations**
 
