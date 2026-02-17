@@ -35,8 +35,8 @@
 
 ## Surrogate Model overview
 
-<p align="center">
-<img src="figures/SM_integration.png" alt="Surrogate Model Integration" width="700px" style="background:white; padding:10px;"/>
+<p align="center" style="background:white; padding:20px;">
+<img src="figures/SM_integration.png" alt="Surrogate Model Integration" width="700px"/>
 </p>
 
 
