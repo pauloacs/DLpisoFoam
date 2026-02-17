@@ -2,8 +2,13 @@
 
 **Deep Learning-Enhanced CFD Solvers for Accelerated Fluid Flow Simulations**
 
+<p align="center">
+  <img src="figures/solvers_overview.pdf" alt="Solvers Overview" width="700px"/>
+</p>
+
 ## 📋 Contents
 
+- [Surrogate Model Overview](#surrogate-model-overview)
 - [Introduction](#-introduction)
 - [What This Repository Enables](#-what-this-repository-enables)
 - [Key Features](#-key-features)
@@ -27,6 +32,12 @@
 - [Citation](#-citation)
 - [Contact](#-contact)
 - [Acknowledgments](#acknowledgments)
+
+## Surrogate Model overview
+
+<p align="center">
+  <img src="figures/SM_integration.png" alt="Surrogate Model Integration" width="700px"/>
+</p>
 
 
 ## 🎯 Introduction
