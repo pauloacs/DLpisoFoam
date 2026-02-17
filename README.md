@@ -8,8 +8,8 @@
 
 ## 📋 Contents
 
-- [Surrogate Model Overview](#surrogate-model-overview)
 - [Introduction](#-introduction)
+- [Surrogate Model Overview](#surrogate-model-overview)
 - [What This Repository Enables](#-what-this-repository-enables)
 - [Key Features](#-key-features)
 - [Publications](#-publications)
@@ -33,13 +33,6 @@
 - [Contact](#-contact)
 - [Acknowledgments](#acknowledgments)
 
-## Surrogate Model overview
-
-<p align="center" style="background:white; padding:20px;">
-<img src="figures/SM_integration.png" alt="Surrogate Model Integration" width="700px"/>
-</p>
-
-
 ## 🎯 Introduction
 
 This repository contains **machine learning-enhanced OpenFOAM solvers** that accelerate computational fluid dynamics (CFD) simulations by replacing the computationally expensive pressure Poisson equation solver with a deep learning surrogate model.
@@ -47,6 +40,14 @@ This repository contains **machine learning-enhanced OpenFOAM solvers** that acc
 **DLpisoFoam** and **DLbuoyantPimpleFoam** are based on OpenFOAM v8 and implement the PISO/PIMPLE algorithms with integrated neural network surrogate models for improved pressure-velocity coupling.
 
 This is an **all-in-one repository** containing both surrogate models and CFD solvers, building upon the work from [Solving-Poisson's-Equation-through-DL-for-CFD-applications](https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications).
+
+---
+
+## Surrogate Model overview
+
+<p align="center">
+  <img src="figures/SM_integration.jpg" alt="Surrogate Model integration with the CFD solver" width="700px"/>
+</p>
 
 ---
 
