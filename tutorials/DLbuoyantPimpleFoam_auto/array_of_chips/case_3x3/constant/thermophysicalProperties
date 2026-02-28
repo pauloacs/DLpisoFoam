@@ -1,0 +1,53 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+        =========                 |
+        \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+         \\    /   O peration     | Website:  https://openfoam.org
+                \\  /    A nd           | Version:  8
+                 \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+                version     2.0;
+                format      ascii;
+                class       dictionary;
+                location    "constant";
+                object      thermophysicalProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+thermoType
+{
+        type            heRhoThermo;
+        mixture         pureMixture;
+        transport       const;
+        thermo          hConst;
+        equationOfState Boussinesq;        // ← Buoyancy-driven flow enabled
+        specie          specie;
+        energy          sensibleEnthalpy;
+}
+
+pRef            100000;
+
+mixture
+{
+        specie
+        {
+                molWeight   18.015;          // Water molecular weight (g/mol)
+        }
+        equationOfState
+        {
+                rho0        998.2;           // Water reference density (kg/m3)
+                T0          293.15;          // Reference temperature (K)
+                beta        2.07e-04;        // Water thermal expansion (1/K)
+        }
+        thermodynamics
+        {
+                Cp          4182;            // Water specific heat (J/(kg·K))
+                Hf          0;
+        }
+        transport
+        {
+                mu          1.0e-03;         // Water dynamic viscosity (Pa·s)
+                Pr          7.0;             // Water Prandtl number
+        }
+}

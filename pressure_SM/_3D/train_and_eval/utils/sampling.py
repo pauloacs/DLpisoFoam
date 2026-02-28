@@ -91,21 +91,8 @@ def define_sample_indexes(
 
         indices_per_time = []
         for time_i in range(last_t - first_t):
-            lower_bound = np.array([
-                0 + block_size * grid_res / 2,
-                0 + block_size * grid_res / 2,
-                0 + block_size * grid_res / 2
-            ])
-
-            upper_bound = np.array([
-                (limits['z_max'] - limits['z_min']) - block_size * grid_res / 2,
-                (limits['y_max'] - limits['y_min']) - block_size * grid_res / 2,
-                (limits['x_max'] - limits['x_min']) - block_size * grid_res / 2
-            ])
-            ZYX = lower_bound + (upper_bound - lower_bound) * lhs(3, n_samples_per_frame)
-            ZYX_indices = (np.round(ZYX / grid_res)).astype(int)
-            ZYX_indices = np.unique([tuple(row) for row in ZYX_indices], axis=0)
-            indices_per_time.append(ZYX_indices)
+            sampling_indices = get_sampling_indices(block_size, grid_res, limits, n_samples_per_frame)
+            indices_per_time.append(sampling_indices)
 
         indices_per_sim_per_time.append(indices_per_time)
 
@@ -116,6 +103,25 @@ def define_sample_indexes(
 
     return indices_per_sim_per_time
 
+def get_sampling_indices(block_size, grid_res, limits, n_samples_per_frame):
+    """Get sampling indices for a single time step based on LHS."""
+
+    lower_bound = np.array([
+        0 + block_size * grid_res / 2,
+        0 + block_size * grid_res / 2,
+        0 + block_size * grid_res / 2
+    ])
+
+    upper_bound = np.array([
+        (limits['z_max'] - limits['z_min']) - block_size * grid_res / 2,
+        (limits['y_max'] - limits['y_min']) - block_size * grid_res / 2,
+        (limits['x_max'] - limits['x_min']) - block_size * grid_res / 2
+    ])
+    ZYX = lower_bound + (upper_bound - lower_bound) * lhs(3, n_samples_per_frame)
+    ZYX_indices = (np.round(ZYX / grid_res)).astype(int)
+    ZYX_indices = np.unique([tuple(row) for row in ZYX_indices], axis=0)
+
+    return ZYX_indices
 
 def sample_blocks(
     block_size: int,
@@ -216,7 +222,7 @@ def calculate_and_save_block_abs_max(
     sample_indices_fn: str,
     gridded_h5_fn: str,
     block_size: int
-):
+) -> list:
     """
     Calculate and save absolute maximum values for normalization.
     
@@ -263,10 +269,12 @@ def calculate_and_save_block_abs_max(
             max_abs_dist     = max(max_abs_dist, maxs_dict['max_abs_dist'])    
             max_abs_delta_p  = max(max_abs_delta_p, maxs_dict['max_abs_delta_p'])
 
-    np.savetxt('maxs', [
+    maxs_list =  [
         max_abs_delta_Ux,
         max_abs_delta_Uy,
         max_abs_delta_Uz,
         max_abs_dist,
         max_abs_delta_p
-    ])
+    ]
+
+    return maxs_list

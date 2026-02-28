@@ -109,10 +109,11 @@ def main_train(
         sample_indices_fn
         )
 
-  Train = Training(standardization_method)
-
-  if not os.path.isfile('maxs'):
-    utils_sampling.calculate_and_save_block_abs_max(
+  if os.path.isfile('maxs'):
+    print('Numpy gridded data is available... loading it\n')
+    maxs_list = np.loadtxt('maxs')
+  else:
+    maxs_list = utils_sampling.calculate_and_save_block_abs_max(
       first_sim,
       last_sim,
       first_t,
@@ -121,14 +122,6 @@ def main_train(
       gridded_h5_fn,
       block_size
     )
-  else:
-    print('Numpy gridded data is available... loading it\n')
-    maxs = np.loadtxt('maxs')
-    Train.max_abs_delta_Ux, \
-      Train.max_abs_delta_Uy, \
-      Train.max_abs_delta_Uz, \
-      Train.max_abs_dist, \
-      Train.max_abs_delta_p = maxs
 
   if not os.path.isfile(outarray_flat_fn):
     print('Data after tucker decomposition is not available... Applying Tucker decomposition \n')
@@ -143,13 +136,24 @@ def main_train(
       last_t=last_t,
       standardization_method=standardization_method,
       chunk_size=chunk_size,
+      ranks=ranks,
       gridded_h5_fn=gridded_h5_fn,
-      flatten_data=flatten_data
+      flatten_data=flatten_data,
+      maxs_list=maxs_list
     )
-    feature_writer.write_features_to_h5(outarray_flat_fn, chunk_size, ranks)
 
+    if os.path.exists('tucker_factors.pkl'):
+      compute_tucker_factors = False
+      print("Tucker factors file found. Using existing factors for feature extraction.")
+    else:
+      compute_tucker_factors = True
+      print("Tucker factors file not found. Computing Tucker factors from the data.")
+      
+    feature_writer(outarray_flat_fn, compute_tucker_factors=compute_tucker_factors)
+
+  Train = Training(standardization_method)
   # If you want to read the crude dataset (hdf5) again, delete the gridded_h5_fn file
-  Train.prepare_data_to_tf(gridded_h5_fn, outarray_flat_fn, flatten_data) #prepare and save data to tf records
+  Train.prepare_data_to_tf(outarray_flat_fn, flatten_data) #prepare and save data to tf records
   Train.load_data_and_train(lr, batch_size, model_name, beta, num_epoch, n_layers, width, dropout_rate, regularization, model_architecture, new_model, ranks, flatten_data)
 
 if __name__ == '__main__':

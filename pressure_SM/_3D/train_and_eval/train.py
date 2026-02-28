@@ -78,14 +78,12 @@ class Training:
 
   def prepare_data_to_tf(
     self,
-    gridded_h5_fn: str = 'gridded_sim_data.h5',
     outarray_flat_fn: str= 'features_data.h5',
     flatten_data: bool = False):
 
-    self.gridded_h5_fn = gridded_h5_fn
     filename_flat = outarray_flat_fn
      
-    print('Loading Blocks data\n')
+    print('Loading feature data (tucker cores extracted from blocks)\n')
     with tables.open_file(filename_flat, mode='r') as f:
       input = f.root.inputs[...] 
       output = f.root.outputs[...] 
@@ -221,14 +219,14 @@ class Training:
         break
 
       if epoch > 5:
-        mod = 'model_' + model_name + '.h5'
+        model_fn = 'model_' + model_name + '.h5'
         if losses_val_mean < min_yet:
-          print(f'saving model: {mod}', flush=True)
-          self.model.save(mod)
+          print(f'saving model: {model_fn}', flush=True)
+          self.model.save(model_fn)
+          self.model.save_weights(f'weights.h5')
           min_yet = losses_val_mean
     
     print("Terminating training")
-    mod = 'model_' + model_name + '.h5'
     ## Plot loss vs epoch
     plt.plot(list(range(len(epochs_train_losses))), epochs_train_losses, label ='train')
     plt.plot(list(range(len(epochs_val_losses))), epochs_val_losses, label ='val')

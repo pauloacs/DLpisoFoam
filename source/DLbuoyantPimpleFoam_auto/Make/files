@@ -1,0 +1,3 @@
+DLbuoyantPimpleFoam_auto.C
+
+EXE = $(FOAM_APPBIN)/DLbuoyantPimpleFoam_auto

@@ -56,8 +56,8 @@ def read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t, grid_re
     data_limited = data[0, :, :indice, :]
 
     # Define the numbe of places for the rounding limits
-    decimal_places = int(-np.log10(grid_res)) - 1
-
+    #decimal_places = int(-np.log10(grid_res)) - 1
+    decimal_places = 3
     limits = {
         'x_min': round(data_limited[0, :, 4].min(), decimal_places),
         'x_max': round(data_limited[0, :, 4].max(), decimal_places),
