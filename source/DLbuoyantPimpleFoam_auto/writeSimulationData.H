@@ -33,15 +33,18 @@ if (firstRun) {
     firstRun = false;
 }
 
-// Write delta_U and delta_p_rgh to raw binary files for Python (current sample)
-std::vector<float> deltaUx(nCells), deltaUy(nCells), deltaUz(nCells), deltaP(nCells);
+float* deltaUx = new float[nCells];
+float* deltaUy = new float[nCells];
+float* deltaUz = new float[nCells];
+float* deltaP  = new float[nCells];
 for (label i = 0; i < nCells; ++i) {
-    const vector& u = delta_U.internalField()[i];
-    deltaUx[i] = static_cast<float>(u.x());
-    deltaUy[i] = static_cast<float>(u.y());
-    deltaUz[i] = static_cast<float>(u.z());
+    const vector& delta_u = delta_U.internalField()[i];
+    deltaUx[i] = static_cast<float>(delta_u.x());
+    deltaUy[i] = static_cast<float>(delta_u.y());
+    deltaUz[i] = static_cast<float>(delta_u.z());
     deltaP[i]  = static_cast<float>(delta_p_rgh.internalField()[i]);
 }
+
 std::string curDeltaUx = autoMlDataDir + "delta_Ux_" + std::to_string(timeStepCounter) + ".bin";
 std::string curDeltaUy = autoMlDataDir + "delta_Uy_" + std::to_string(timeStepCounter) + ".bin";
 std::string curDeltaUz = autoMlDataDir + "delta_Uz_" + std::to_string(timeStepCounter) + ".bin";
@@ -50,11 +53,16 @@ std::ofstream outUx(curDeltaUx, std::ios::binary);
 std::ofstream outUy(curDeltaUy, std::ios::binary);
 std::ofstream outUz(curDeltaUz, std::ios::binary);
 std::ofstream outP(curDeltaP, std::ios::binary);
-outUx.write(reinterpret_cast<const char*>(deltaUx.data()), nCells * sizeof(float));
-outUy.write(reinterpret_cast<const char*>(deltaUy.data()), nCells * sizeof(float));
-outUz.write(reinterpret_cast<const char*>(deltaUz.data()), nCells * sizeof(float));
-outP.write(reinterpret_cast<const char*>(deltaP.data()), nCells * sizeof(float));
+outUx.write(reinterpret_cast<const char*>(deltaUx), nCells * sizeof(float));
+outUy.write(reinterpret_cast<const char*>(deltaUy), nCells * sizeof(float));
+outUz.write(reinterpret_cast<const char*>(deltaUz), nCells * sizeof(float));
+outP.write(reinterpret_cast<const char*>(deltaP), nCells * sizeof(float));
 outUx.close();
 outUy.close();
 outUz.close();
 outP.close();
+
+delete[] deltaUx;
+delete[] deltaUy;
+delete[] deltaUz;
+delete[] deltaP;

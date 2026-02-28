@@ -102,6 +102,28 @@ int main(int argc, char *argv[])
 
     int timeStepCounter = 0;
     int sampleCounter = 0;
+
+    double U_MAX_NORM = 0.0;
+    double (*input_vals_init)[10] = nullptr;
+    double (*input_vals)[7] = nullptr;
+    double (*input_vals_z_top)[3] = nullptr;
+    double (*input_vals_z_bot)[3] = nullptr;
+    double (*input_vals_y_top)[3] = nullptr;
+    double (*input_vals_y_bot)[3] = nullptr;
+    double (*input_vals_obst)[3] = nullptr;
+    PyObject *py_func = nullptr;
+    PyObject *py_args = nullptr;
+    PyObject *init_func = nullptr;
+    PyObject *init_args = nullptr;
+    PyObject *array_3d = nullptr;
+    PyObject *array_3d_z_top = nullptr;
+    PyObject *array_3d_z_bot = nullptr;
+    PyObject *array_3d_y_top = nullptr;
+    PyObject *array_3d_y_bot = nullptr;
+    PyObject *array_3d_obst = nullptr;
+    PyObject *array_3d_init = nullptr;
+    npy_intp dim[2] = {0, 0};
+
     while (pimple.run(runTime))
     {
         #include "readDyMControls.H"
@@ -132,18 +154,29 @@ int main(int argc, char *argv[])
         runTime++;
 
         // This is the folder used for the SM train data handling
-        autoMlDataDir = "ML_data";
+        std::string autoMlDataDir = "ML_data";
         if (!Foam::isDir(autoMlDataDir))
         {
             Foam::mkDir(autoMlDataDir);
         }
-
+        bool callSurrogate = false;
+        bool firstRun = false;
+        const label nCells = mesh.nCells();
+        Info << "Number of cells in the mesh: " << nCells << endl;
 
         Info<< "Time = " << runTime.timeName() << nl << endl;
 
         // --- Pressure-velocity PIMPLE corrector loop
         while (pimple.loop())
         {
+
+            if (firstRun) {
+                Info << "Initializing DL Surrogate Model static parameters." << endl;
+                #include "dlSMCall_init.H"
+                firstRun = false;
+                callSurrogate = true;
+            }
+                        
             int counter = 0;
             if (pimple.firstPimpleIter() || moveMeshOuterCorrectors)
             {
@@ -195,7 +228,7 @@ int main(int argc, char *argv[])
             #include "UEqn.H"
             #include "EEqn.H"
 
-            if (pimple.firstPimpleIter())
+            if (pimple.firstPimpleIter() && callSurrogate)
             {
                 // only call the Surrogate Model in the first PIMPLE correction
                 clock_gettime(CLOCK_MONOTONIC, &tw1); // POSIX
@@ -207,6 +240,7 @@ int main(int argc, char *argv[])
                 
                 int counter = 0;
             }
+
             // --- Pressure corrector loop
             while (pimple.correct())
             {
@@ -262,12 +296,6 @@ int main(int argc, char *argv[])
                 Info << "Python update_and_train_nn.py failed!" << endl;
             }
             lastPythonCall = timeStepCounter;
-        }
-
-        if firstRun {
-            Info << "Initializing DL Surrogate Model static parameters." << endl;
-            #include "dlSMCall_init.H"
-            firstRun = false;
         }
 
         runTime.write();

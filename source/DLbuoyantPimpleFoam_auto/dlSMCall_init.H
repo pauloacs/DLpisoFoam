@@ -15,23 +15,24 @@ PyObject *pName = PyUnicode_DecodeFSDefault("python_module"); // Python filename
 PyObject *pModule = PyImport_Import(pName);
 Py_DECREF(pName);
 
-PyObject *init_func = PyObject_GetAttrString(pModule, "init_func");
-PyObject *init_args = PyTuple_New(6);
 
-PyObject *py_func = PyObject_GetAttrString(pModule, "py_func");
-PyObject *py_args = PyTuple_New(2);
+init_func = PyObject_GetAttrString(pModule, "init_func");
+init_args = PyTuple_New(6);
+
+py_func = PyObject_GetAttrString(pModule, "py_func");
+py_args = PyTuple_New(2);
 
 Info<< ">>> Python functions defined <<<" << endl;
 
 Py_DECREF(pModule);
 
-PyObject *array_3d(nullptr);
-PyObject *array_3d_z_top(nullptr);
-PyObject *array_3d_z_bot(nullptr);
-PyObject *array_3d_y_top(nullptr);
-PyObject *array_3d_y_bot(nullptr);
-PyObject *array_3d_obst(nullptr);
-PyObject *array_3d_init(nullptr);
+array_3d = nullptr;
+array_3d_z_top = nullptr;
+array_3d_z_bot = nullptr;
+array_3d_y_top = nullptr;
+array_3d_y_bot = nullptr;
+array_3d_obst = nullptr;
+array_3d_init = nullptr;
 //PyArrayObject *pValue;
 
 /*// Placeholder to grab data before sending to Python*/
@@ -68,14 +69,14 @@ const int row_obst = num_cells_obstacle;
 
 const int col_boundaries = 3;
 
-double(*input_vals_init)[col_init]{ new double[row][col_init] };
-double(*input_vals)[col]{ new double[row][col] };
 
-double(*input_vals_z_top)[col_boundaries]{ new double[row_z_top][col_boundaries] };
-double(*input_vals_z_bot)[col_boundaries]{ new double[row_z_bot][col_boundaries] };
-double(*input_vals_y_top)[col_boundaries]{ new double[row_y_top][col_boundaries] };
-double(*input_vals_y_bot)[col_boundaries]{ new double[row_y_bot][col_boundaries] };
-double(*input_vals_obst)[col_boundaries]{ new double[row_obst][col_boundaries] };
+input_vals_init = new double[row][col_init];
+input_vals = new double[row][col];
+input_vals_z_top = new double[row_z_top][col_boundaries];
+input_vals_z_bot = new double[row_z_bot][col_boundaries];
+input_vals_y_top = new double[row_y_top][col_boundaries];
+input_vals_y_bot = new double[row_y_bot][col_boundaries];
+input_vals_obst = new double[row_obst][col_boundaries];
 
 
 forAll(p.internalField(), id)
@@ -166,4 +167,4 @@ Py_DECREF(array_3d);
 
 // Py_DECREF(init_args);
 
-double U_MAX_NORM = 0.0;
+U_MAX_NORM = 0.0;
