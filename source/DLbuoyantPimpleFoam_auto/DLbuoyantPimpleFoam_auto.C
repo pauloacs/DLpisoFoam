@@ -49,19 +49,9 @@ Description
 #include "POSIX.H"
 
 #include <time.h>
+#include "SurrogateModel.H"
+#include "MLSampling.H"
 
-/*The following stuff is for Python interoperability*/
-#include <Python.h>
-#define NPY_NO_DEPRECATED_API NPY_1_8_API_VERSION
-#define PY_ARRAY_UNIQUE_SYMBOL POD_ARRAY_API
-#include <numpy/arrayobject.h>
-
-//void init_numpy() {
-//  import_array1();
-//}
-
-/*Done importing Python functionality*/
-#include <cmath>
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 int main(int argc, char *argv[])
@@ -72,10 +62,6 @@ int main(int argc, char *argv[])
     {
         Foam::FatalError.exit();
     }
-
-    // Some time related variables
-    struct timespec tw1, tw2;
-    double posix_wall;
 
     #include "postProcess.H"
 
@@ -100,29 +86,18 @@ int main(int argc, char *argv[])
 
     Info<< "\nStarting time loop\n" << endl;
 
-    int timeStepCounter = 0;
-    int sampleCounter = 0;
+    // Surrogate model (encapsulates all Python/NumPy state)
+    SurrogateModel surrogate
+    (
+        mesh, p_rgh, p, U, rho,
+        delta_U, delta_U_prev,
+        delta_p_rgh, delta_p_rgh_CFD
+    );
+    bool surrogateActive = false;
 
-    double U_MAX_NORM = 0.0;
-    double (*input_vals_init)[10] = nullptr;
-    double (*input_vals)[7] = nullptr;
-    double (*input_vals_z_top)[3] = nullptr;
-    double (*input_vals_z_bot)[3] = nullptr;
-    double (*input_vals_y_top)[3] = nullptr;
-    double (*input_vals_y_bot)[3] = nullptr;
-    double (*input_vals_obst)[3] = nullptr;
-    PyObject *py_func = nullptr;
-    PyObject *py_args = nullptr;
-    PyObject *init_func = nullptr;
-    PyObject *init_args = nullptr;
-    PyObject *array_3d = nullptr;
-    PyObject *array_3d_z_top = nullptr;
-    PyObject *array_3d_z_bot = nullptr;
-    PyObject *array_3d_y_top = nullptr;
-    PyObject *array_3d_y_bot = nullptr;
-    PyObject *array_3d_obst = nullptr;
-    PyObject *array_3d_init = nullptr;
-    npy_intp dim[2] = {0, 0};
+    // Data sampler (encapsulates sampling schedule and ML training calls)
+    //   warmUp=10, burst=20, regularInterval=5, retrainInterval=10
+    DataSampler dataSampler(mesh, delta_U, delta_p_rgh, "ML_data", 10, 20, 5, 10);
 
     while (pimple.run(runTime))
     {
@@ -153,30 +128,11 @@ int main(int argc, char *argv[])
 
         runTime++;
 
-        // This is the folder used for the SM train data handling
-        std::string autoMlDataDir = "ML_data";
-        if (!Foam::isDir(autoMlDataDir))
-        {
-            Foam::mkDir(autoMlDataDir);
-        }
-        bool callSurrogate = false;
-        bool firstRun = false;
-        const label nCells = mesh.nCells();
-        Info << "Number of cells in the mesh: " << nCells << endl;
-
         Info<< "Time = " << runTime.timeName() << nl << endl;
 
         // --- Pressure-velocity PIMPLE corrector loop
         while (pimple.loop())
         {
-
-            if (firstRun) {
-                Info << "Initializing DL Surrogate Model static parameters." << endl;
-                #include "dlSMCall_init.H"
-                firstRun = false;
-                callSurrogate = true;
-            }
-                        
             int counter = 0;
             if (pimple.firstPimpleIter() || moveMeshOuterCorrectors)
             {
@@ -206,7 +162,6 @@ int main(int argc, char *argv[])
                         // Calculate absolute flux
                         // from the mapped surface velocity
                         phi = mesh.Sf() & rhoUf();
-
                         #include "correctPhi.H"
 
                         // Make the fluxes relative to the mesh-motion
@@ -228,17 +183,17 @@ int main(int argc, char *argv[])
             #include "UEqn.H"
             #include "EEqn.H"
 
-            if (pimple.firstPimpleIter() && callSurrogate)
+            if (pimple.firstPimpleIter() && surrogateActive)
             {
-                // only call the Surrogate Model in the first PIMPLE correction
-                clock_gettime(CLOCK_MONOTONIC, &tw1); // POSIX
-                // Call the Surrogate Model to predict the pressure field
-                #include "dlSMCall.H"
-                clock_gettime(CLOCK_MONOTONIC, &tw2); // POSIX
-                posix_wall = 1000.0*tw2.tv_sec + 1e-6*tw2.tv_nsec - (1000.0*tw1.tv_sec + 1e-6*tw1.tv_nsec);
-                printf("DL pressure prediction & data transport: %.2f ms\n", posix_wall);
-                
-                int counter = 0;
+                struct timespec tw1, tw2;
+                double posix_wall;
+                clock_gettime(CLOCK_MONOTONIC, &tw1);
+                surrogate.predict();
+                clock_gettime(CLOCK_MONOTONIC, &tw2);
+                posix_wall = 1000.0*tw2.tv_sec + 1e-6*tw2.tv_nsec
+                           - (1000.0*tw1.tv_sec + 1e-6*tw1.tv_nsec);
+                Info<< "DL pressure prediction: "
+                    << posix_wall << " ms" << nl;
             }
 
             // --- Pressure corrector loop
@@ -258,44 +213,13 @@ int main(int argc, char *argv[])
 
         rho = thermo.rho();
 
-       
-
-        // Sampling and writing logic for delta_U and delta_p
-        timeStepCounter++;
-        bool doSample = false;
-        int firstTimeToSample = 10; // Start sampling after 10 steps to allow initial transients to settle
-
-        if (timeStepCounter == firstTimeToSample) {
-            bool firstRun = true;
-        }
-        // After 10 steps, sample for 20 steps
-        if (timeStepCounter > firstTimeToSample && timeStepCounter <= firstTimeToSample + 20) {
-            doSample = true;
-            sampleCounter++;
-        }
-        // After 30 steps, sample every 5 steps
-        else if (timeStepCounter > firstTimeToSample + 20 && ((timeStepCounter - (firstTimeToSample + 21)) % 5 == 0)) {
-            doSample = true;
-        }
-        if (doSample) {
-            #include "writeSimulationData.H"
-        }
-
-        // After 20 samples, call Python script
-        // Run Python script after every 10 new samples
-        static int lastPythonCall = firstTimeToSample + 20;
-        if (timeStepCounter == firstTimeToSample + 20) {
-            int ret = system(("python init_interpolation_and_tucker.py --data_dir " + autoMlDataDir).c_str());
-            if (ret != 0) {
-                Info << "Python init_interpolation_and_tucker.py failed!" << endl;
-            }
-            lastPythonCall = timeStepCounter;
-        } else if (timeStepCounter > firstTimeToSample + 20 && (timeStepCounter - lastPythonCall) >= 10 && ((timeStepCounter - (firstTimeToSample + 21)) % 5 == 0)) {
-            int ret = system(("python update_and_train_nn.py --data_dir " + autoMlDataDir).c_str());
-            if (ret != 0) {
-                Info << "Python update_and_train_nn.py failed!" << endl;
-            }
-            lastPythonCall = timeStepCounter;
+        // --- Sampling, writing, and ML training ---
+        bool shouldActivate = dataSampler.update();
+        if (shouldActivate && !surrogateActive)
+        {
+            Info<< "Initializing DL Surrogate Model." << nl;
+            surrogate.init();
+            surrogateActive = true;
         }
 
         runTime.write();

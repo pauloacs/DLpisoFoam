@@ -20,12 +20,13 @@ forAll(delta_p_rgh.internalField(), id) // for boundary field use u_.boundaryFie
         U_MAX_NORM = std::max(U_MAX_NORM, u_norm);
 }
 
-
-PyObject *array_3d = PyArray_SimpleNewFromData(2, dim, NPY_DOUBLE, &input_vals[0]);
+// Re-create the numpy array wrapping the updated input_vals buffer
+Py_XDECREF(array_3d_);
+array_3d_ = PyArray_SimpleNewFromData(2, dim, NPY_DOUBLE, &input_vals[0]);
 
 Info<< ">>> Setting arguments <<<" << endl;
 
-PyTuple_SetItem(py_args, 0, array_3d);
+PyTuple_SetItem(py_args, 0, array_3d_);
 PyTuple_SetItem(py_args, 1, PyFloat_FromDouble(U_MAX_NORM));
 
 Info<< ">>> Calling python function <<<" << endl;
@@ -57,10 +58,13 @@ Info<< ">>> Filling delta_p_rgh <<<" << endl;
 
 forAll (delta_p_rgh.internalField(),id)
 {
-         // Here we assume that pValue has a numpy array of dimension 2 with 1 column only
          delta_p_rgh[id] = *((double*)PyArray_GETPTR2(deltaPRghValue , id , 0));
 }
 
 Info<< ">>>  delta_p_rgh filled <<<" << endl;
 
 Py_DECREF(deltaPRghValue);
+
+// PyTuple_SetItem stole the reference to array_3d_, so set to nullptr
+// to avoid double-free in destructor
+array_3d_ = nullptr;

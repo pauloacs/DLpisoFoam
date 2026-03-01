@@ -5,9 +5,12 @@ PyRun_SimpleString("import sys");
 PyRun_SimpleString("sys.path.append(\".\")");
 Info<< ">>> Python Initialized <<<" << endl;
 
-// initialize numpy array library
-import_array1(-1);
-//init_numpy();
+// initialize numpy array library (via non-void wrapper)
+if (initNumpy() < 0)
+{
+    FatalErrorInFunction
+        << "Failed to import numpy" << Foam::abort(FatalError);
+}
 Info<< ">>> Numpy lib initialized <<<" << endl;
 
 Info<< ">>> Decoding and importing Python module <<<" << endl;
@@ -33,7 +36,6 @@ array_3d_y_top = nullptr;
 array_3d_y_bot = nullptr;
 array_3d_obst = nullptr;
 array_3d_init = nullptr;
-//PyArrayObject *pValue;
 
 /*// Placeholder to grab data before sending to Python*/
 int num_cells = mesh.cells().size();
@@ -129,22 +131,22 @@ forAll(p.boundaryField()[y_bot_patchID], id)
 }
 
 // Numpy array dimensions for all boundaries
-npy_intp dim_init[] = {row, col_init};
-npy_intp dim[] = {row, col};
-npy_intp dim_z_top[] = {row_z_top, col_boundaries};
-npy_intp dim_z_bot[] = {row_z_bot, col_boundaries};
-npy_intp dim_y_top[] = {row_y_top, col_boundaries};
-npy_intp dim_y_bot[] = {row_y_bot, col_boundaries};
-npy_intp dim_obst[] = {row_obst, col_boundaries};
+npy_intp dim_init_np[] = {row, col_init};
+npy_intp dim_np[] = {row, col};
+npy_intp dim_z_top_np[] = {row_z_top, col_boundaries};
+npy_intp dim_z_bot_np[] = {row_z_bot, col_boundaries};
+npy_intp dim_y_top_np[] = {row_y_top, col_boundaries};
+npy_intp dim_y_bot_np[] = {row_y_bot, col_boundaries};
+npy_intp dim_obst_np[] = {row_obst, col_boundaries};
 
 // create numpy arrays from C++ data
-array_3d_init = PyArray_SimpleNewFromData(2, dim_init, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_init));
-array_3d = PyArray_SimpleNewFromData(2, dim, NPY_DOUBLE, reinterpret_cast<void*>(input_vals));
-array_3d_z_top = PyArray_SimpleNewFromData(2, dim_z_top, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_z_top));
-array_3d_z_bot = PyArray_SimpleNewFromData(2, dim_z_bot, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_z_bot));
-array_3d_y_top = PyArray_SimpleNewFromData(2, dim_y_top, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_y_top));
-array_3d_y_bot = PyArray_SimpleNewFromData(2, dim_y_bot, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_y_bot));
-array_3d_obst = PyArray_SimpleNewFromData(2, dim_obst, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_obst));
+array_3d_init = PyArray_SimpleNewFromData(2, dim_init_np, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_init));
+array_3d = PyArray_SimpleNewFromData(2, dim_np, NPY_DOUBLE, reinterpret_cast<void*>(input_vals));
+array_3d_z_top = PyArray_SimpleNewFromData(2, dim_z_top_np, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_z_top));
+array_3d_z_bot = PyArray_SimpleNewFromData(2, dim_z_bot_np, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_z_bot));
+array_3d_y_top = PyArray_SimpleNewFromData(2, dim_y_top_np, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_y_top));
+array_3d_y_bot = PyArray_SimpleNewFromData(2, dim_y_bot_np, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_y_bot));
+array_3d_obst = PyArray_SimpleNewFromData(2, dim_obst_np, NPY_DOUBLE, reinterpret_cast<void*>(input_vals_obst));
 
 // Set up arguments for init_func
 PyTuple_SetItem(init_args, 0, array_3d_init);
@@ -156,15 +158,7 @@ PyTuple_SetItem(init_args, 5, array_3d_obst);
 
 (void) PyObject_CallObject(init_func, init_args);
 
-// No need to DECREF arrays after PyTuple_SetItem, as ownership is transferred to the tuple
-Py_DECREF(array_3d_init);
-Py_DECREF(array_3d_z_top);
-Py_DECREF(array_3d_z_bot);
-Py_DECREF(array_3d_y_top);
-Py_DECREF(array_3d_y_bot);
-Py_DECREF(array_3d_obst);
-Py_DECREF(array_3d);
-
-// Py_DECREF(init_args);
+// Note: PyTuple_SetItem steals references, so don't DECREF those arrays again.
+// Only DECREF the tuple if you're done with it (but we keep init_args alive).
 
 U_MAX_NORM = 0.0;
