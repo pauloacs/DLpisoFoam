@@ -41,6 +41,9 @@ This repository contains **machine learning-enhanced OpenFOAM solvers** that acc
 
 This is an **all-in-one repository** containing both surrogate models and CFD solvers, building upon the work from [Solving-Poisson's-Equation-through-DL-for-CFD-applications](https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications).
 
+
+### UPCOMING: AUTO-trainable ML-enhanced CFD Solvers (surrogate train and simulation in a single command)
+
 ---
 
 ## Surrogate Model overview
