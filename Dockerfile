@@ -60,7 +60,7 @@ WORKDIR /home/repo/
 
 # set the default container user to foam
 USER user
+RUN echo "source /opt/conda/bin/activate && conda activate python311_solver" >> ~/.bashrc
 
 # The solvers will be installed in the entrypoint when running this image in a container
 ENTRYPOINT ["/usr/bin/entrypoint.sh"]
-
