@@ -43,10 +43,11 @@ RUN wget https://repo.anaconda.com/miniconda/Miniconda3-py38_4.12.0-Linux-x86_64
 
 # Creating python virtual environment
 ENV PATH=$CONDA_DIR/bin:$PATH
-RUN conda env create -f /usr/bin/environment.yml && \
-        pip uninstall mpi4py -y && \
-        CC=mpicc pip install --no-cache-dir --no-binary mpi4py mpi4py
-        # Solve issue with OpenFOAM and conda's python both trying to use the same MPI libraries
+RUN conda env create -f /usr/bin/environment.yml
+
+# Install mpi4py compiled against OpenFOAM's MPI (run directly, no conda activate needed)
+RUN $CONDA_DIR/envs/python311_solver/bin/pip uninstall mpi4py -y && \
+    CC=mpicc $CONDA_DIR/envs/python311_solver/bin/pip install --no-cache-dir --no-binary mpi4py mpi4py
 
 # Giving enough permissions to the user
 RUN mkdir -p /home/repo

@@ -2,13 +2,14 @@
 
 #set -x
 
-source /opt/openfoam8/etc/bashrc
+#source /opt/openfoam8/etc/bashrc
 
 # This activates the conda environment
-#source /opt/conda/bin/activate
+source /opt/conda/bin/activate
 source /opt/conda/etc/profile.d/conda.sh
 conda activate python311_solver
 source /home/repo/prep_env311.sh
+
 
 # This compiles the solver
 source /opt/openfoam8/etc/bashrc 
