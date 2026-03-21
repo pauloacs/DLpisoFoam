@@ -28,3 +28,12 @@ def read_component_bin_files(n_sample_frames, n_cells):
     delta_U_grid = np.stack(delta_U_list)  # (N, n_cells, 3)
     delta_p_grid = np.stack(delta_p_list)  # (N, n_cells)
     return delta_U_grid, delta_p_grid
+
+
+def load_train_params():
+    with open('train_params.txt', 'r') as f:
+        params = {}
+        for line in f:
+            key, value = line.strip().split('=')
+            params[key] = value
+    return params

@@ -204,7 +204,7 @@ def domain_dist(
     
     # Visualize if requested
     if visualize and len(boxes) > 0:
-        _visualize_clusters_3d(obst, boxes, fig_path='obstacle_clusters_3d.png')
+        _visualize_clusters_3d(obst, boxes, fig_path='visualize_obstacles.png')
 
     # Point-in-box test (vectorized)
     x = xyz0[:, 0]; y = xyz0[:, 1]; z = xyz0[:, 2]

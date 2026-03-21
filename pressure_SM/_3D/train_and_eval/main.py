@@ -151,7 +151,7 @@ def main_train(
       
     feature_writer(outarray_flat_fn, compute_tucker_factors=compute_tucker_factors)
 
-  Train = Training(standardization_method)
+  Train = Training(standardization_method, train_tfrecord_fn='train_data.tfrecords', test_tfrecord_fn='test_data.tfrecords')
   # If you want to read the crude dataset (hdf5) again, delete the gridded_h5_fn file
   Train.prepare_data_to_tf(outarray_flat_fn, flatten_data) #prepare and save data to tf records
   Train.load_data_and_train(lr, batch_size, model_name, beta, num_epoch, n_layers, width, dropout_rate, regularization, model_architecture, new_model, ranks, flatten_data)

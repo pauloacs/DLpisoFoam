@@ -127,7 +127,7 @@ def parse_single_image(input_parse, output_parse):
 
 def write_images_to_tfr_short(input, output, filename: str = "images"):
     """Write input/output pairs to TFRecord file."""
-    filename = filename + ".tfrecords"
+    # filename = filename + ".tfrecords"
     # Create a writer that'll store our data to disk
     writer = tf.io.TFRecordWriter(filename)
     count = 0

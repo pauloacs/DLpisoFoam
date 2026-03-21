@@ -3,6 +3,7 @@
 Py_Initialize();
 PyRun_SimpleString("import sys");
 PyRun_SimpleString("sys.path.append(\".\")");
+PyRun_SimpleString("import mpi4py; mpi4py.rc.initialize = False; mpi4py.rc.finalize = False");
 Info<< ">>> Python Initialized <<<" << endl;
 
 // initialize numpy array library (via non-void wrapper)
@@ -18,10 +19,11 @@ PyObject *pName = PyUnicode_DecodeFSDefault("python_module"); // Python filename
 PyObject *pModule = PyImport_Import(pName);
 Py_DECREF(pName);
 
-
+Info<< ">>> Reading init_func <<<" << endl;
 init_func = PyObject_GetAttrString(pModule, "init_func");
 init_args = PyTuple_New(6);
 
+Info<< ">>> Reading py_func <<<" << endl;
 py_func = PyObject_GetAttrString(pModule, "py_func");
 py_args = PyTuple_New(2);
 

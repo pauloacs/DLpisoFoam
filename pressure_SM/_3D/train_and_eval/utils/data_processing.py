@@ -160,32 +160,48 @@ def index(array, item):
     # numbas type inference.
 
 
-def create_uniform_grid(limits, grid_res):
+def get_grid_shape(limits: dict, grid_res: float) -> tuple[int, int, int]:
     """
-    Creates an uniform 3D grid (should envolve every cell of the mesh).
+    Compute the number of grid points along each axis for a uniform grid
+    that fully covers the domain (extends grid_res/2 beyond each limit).
 
     Args:
         limits (dict): Dictionary with keys 'x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max'
         grid_res (float): Grid resolution
-        
+
+    Returns:
+        tuple: (nx, ny, nz) number of grid points along x, y, z axes
+    """
+    x_start = limits['x_min'] - grid_res / 2
+    x_end   = limits['x_max'] + grid_res / 2
+    y_start = limits['y_min'] - grid_res / 2
+    y_end   = limits['y_max'] + grid_res / 2
+    z_start = limits['z_min'] - grid_res / 2
+    z_end   = limits['z_max'] + grid_res / 2
+
+    nx = int(round((x_end - x_start) / grid_res) + 1)
+    ny = int(round((y_end - y_start) / grid_res) + 1)
+    nz = int(round((z_end - z_start) / grid_res) + 1)
+    return nx, ny, nz
+
+
+def create_uniform_grid(limits: dict, grid_res: float):
+    """
+    Creates a uniform 3D grid that fully covers the domain
+    (extends grid_res/2 beyond each limit in every direction).
+
+    Args:
+        limits (dict): Dictionary with keys 'x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max'
+        grid_res (float): Grid resolution
+
     Returns:
         tuple: Three flattened arrays (XX0, YY0, ZZ0) representing the grid coordinates
     """
-    X0 = np.linspace(
-        limits['x_min'] + grid_res/2,
-        limits['x_max'] - grid_res/2,
-        num = int(round( (limits['x_max'] - limits['x_min'])/grid_res )) 
-    )
-    Y0 = np.linspace(
-        limits['y_min'] + grid_res/2,
-        limits['y_max'] - grid_res/2,
-        num = int(round( (limits['y_max'] - limits['y_min'])/grid_res )) 
-    )
-    Z0 = np.linspace(
-        limits['z_min'] + grid_res/2,
-        limits['z_max'] - grid_res/2,
-        num = int(round( (limits['z_max'] - limits['z_min'])/grid_res )) 
-    )
+    nx, ny, nz = get_grid_shape(limits, grid_res)
+
+    X0 = np.linspace(limits['x_min'] - grid_res / 2, limits['x_max'] + grid_res / 2, num=nx)
+    Y0 = np.linspace(limits['y_min'] - grid_res / 2, limits['y_max'] + grid_res / 2, num=ny)
+    Z0 = np.linspace(limits['z_min'] - grid_res / 2, limits['z_max'] + grid_res / 2, num=nz)
 
     XX0, YY0, ZZ0 = np.meshgrid(X0, Y0, Z0)
     return XX0.flatten(), YY0.flatten(), ZZ0.flatten()
@@ -198,7 +214,7 @@ def unison_shuffled_copies(a, b):
     return a[p], b[p]
     
 
-def normalize_feature_data(input, output, standardization_method: str = "std"):
+def normalize_feature_data(input, output, standardization_method: str = "std", normalization_factors_fn: str = "mean_std.npz"):
     """
     Normalize input and output data using different standardization methods.
     
@@ -218,7 +234,7 @@ def normalize_feature_data(input, output, standardization_method: str = "std"):
         min_out = np.min(output, axis=0)
         max_out = np.max(output, axis=0)
 
-        np.savez('min_max_values.npz', min_in=min_in, max_in=max_in, min_out=min_out, max_out=max_out)
+        np.savez(normalization_factors_fn, min_in=min_in, max_in=max_in, min_out=min_out, max_out=max_out)
 
         # Perform min-max scaling
         x = (input - min_in) / (max_in - min_in)
@@ -232,7 +248,7 @@ def normalize_feature_data(input, output, standardization_method: str = "std"):
         mean_out = np.mean(output, axis=0)
         std_out = np.std(output, axis=0)
 
-        np.savez('mean_std.npz', mean_in=mean_in, std_in=std_in, mean_out=mean_out, std_out=std_out)
+        np.savez(normalization_factors_fn, mean_in=mean_in, std_in=std_in, mean_out=mean_out, std_out=std_out)
 
         x = (input - mean_in) /std_in
         y = (output - mean_out) /std_out
@@ -243,7 +259,7 @@ def normalize_feature_data(input, output, standardization_method: str = "std"):
         max_abs_p_PCA = np.max(np.abs(output))
         print( max_abs_input_PCA, max_abs_p_PCA)
 
-        np.savetxt('maxs_PCA', [max_abs_input_PCA, max_abs_p_PCA] )
+        np.savez(normalization_factors_fn, max_abs_input_PCA=max_abs_input_PCA, max_abs_p_PCA=max_abs_p_PCA)
 
         x = input/max_abs_input_PCA
         y = output/max_abs_p_PCA

@@ -3,6 +3,7 @@
 
 #include "fvCFD.H"
 #include <string>
+#include <hdf5.h>
 
 class DataSampler
 {
@@ -17,13 +18,16 @@ class DataSampler
     int sampleCount_;
     int samplesSinceRetrain_;
     bool initialTrainingDone_;
+    bool coordinatesWritten_;
+    hid_t masterFile_;
 
     // --- References ---
     const Foam::fvMesh& mesh_;
     Foam::volVectorField& delta_U_;
-    Foam::volScalarField& delta_p_rgh_;
+    Foam::volScalarField& delta_p_rgh_CFD_;
 
     std::string dataDir_;
+    std::string sourceDir_;  // Path to source scripts
 
     // --- Internal helpers ---
     bool shouldSample() const;
@@ -35,6 +39,9 @@ class DataSampler
         const Foam::volScalarField& sf,
         int step
     );
+    void writeCoordinatesAndBoundaries();
+    void closeHDF5File();      // Close file before Python access
+    void reopenHDF5File();     // Reopen file after Python finishes
 
 public:
 
@@ -43,13 +50,16 @@ public:
     (
         const Foam::fvMesh& mesh,
         Foam::volVectorField& delta_U,
-        Foam::volScalarField& delta_p_rgh,
+        Foam::volScalarField& delta_p_rgh_CFD,
         const std::string& dataDir = "ML_data",
+        const std::string& sourceDir = ".",  // Add source directory parameter
         int warmUpSteps = 10,
         int burstSteps = 20,
         int regularInterval = 5,
         int retrainInterval = 10
     );
+
+    ~DataSampler();
 
     // Call once per time step after the PIMPLE loop.
     // Returns true if surrogate model should be activated.

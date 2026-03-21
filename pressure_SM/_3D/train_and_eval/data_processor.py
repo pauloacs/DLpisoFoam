@@ -65,9 +65,7 @@ class CFDDataProcessor:
 
         _, limits = utils_io.read_cells_and_limits(self.original_dataset_path, sim_i, self.first_t, self.last_t, self.grid_res)
 
-        self.grid_shape_z = int(round((limits['z_max'] - limits['z_min']) / self.grid_res))
-        self.grid_shape_y = int(round((limits['y_max'] - limits['y_min']) / self.grid_res))
-        self.grid_shape_x = int(round((limits['x_max'] - limits['x_min']) / self.grid_res))
+        self.grid_shape_x, self.grid_shape_y, self.grid_shape_z = utils_data.get_grid_shape(limits, self.grid_res)
 
         file.create_earray(file.root, 'data', atom, (0, self.grid_shape_z, self.grid_shape_y, self.grid_shape_x, NUM_COLUMNS))
 
@@ -118,13 +116,13 @@ class CFDDataProcessor:
     p_interp = utils_data.interpolate_fill(delta_p, vert, weights)
 
     for (step, x_y_z) in enumerate(xyz0):
+      ii = int(round((x_y_z[..., 2] - z0) / dz))
+      jj = int(round((x_y_z[..., 1] - y0) / dy))
+      kk = int(round((x_y_z[..., 0] - x0) / dx))
+      indices[step, 0] = ii
+      indices[step, 1] = jj
+      indices[step, 2] = kk      
       if domain_bool[step] * (~np.isnan(p_interp[step])):
-        ii = int(round((x_y_z[..., 2] - z0) / dz))
-        jj = int(round((x_y_z[..., 1] - y0) / dy))
-        kk = int(round((x_y_z[..., 0] - x0) / dx))
-        indices[step, 0] = ii
-        indices[step, 1] = jj
-        indices[step, 2] = kk
         sdfunct[ii, jj, kk, :] = sdf[step]
         obst_bool[ii, jj, kk, :] = int(1)
 
@@ -232,6 +230,7 @@ class FeatureExtractAndWrite:
         gridded_h5_fn: str = 'gridded_data.h5',
         sample_indices_fn: str = 'sample_indices_per_sim_per_time.pkl',
         tucker_factors_fn: str = 'tucker_factors.pkl',
+        gridded_h5_filenames: list = None,
         flatten_data: bool = False,
         maxs_list: list = None
     ):
@@ -247,11 +246,15 @@ class FeatureExtractAndWrite:
     self.chunk_size = chunk_size
     self.ranks = ranks
     self.original_dataset_path = original_dataset_path
-    self.gridded_h5_filenames = utils_io.get_gridded_h5_filenames(
-      gridded_h5_fn,
-      first_sim,
-      last_sim
-      )
+    if gridded_h5_fn is not None:
+      self.gridded_h5_filenames = utils_io.get_gridded_h5_filenames(
+        gridded_h5_fn,
+        first_sim,
+        last_sim
+        )
+    else:
+      self.gridded_h5_filenames = gridded_h5_filenames
+
     self.sample_indices_fn = sample_indices_fn
     self.tucker_factors_fn = tucker_factors_fn
     self.flatten_data = flatten_data
@@ -283,7 +286,20 @@ class FeatureExtractAndWrite:
     else:
         raise FileNotFoundError(f"Tucker factors file {self.tucker_factors_fn} not found. "
                                 f"Set compute_tucker_factors=True to compute them from the data.")
-        
+
+    # Create the core data file and write transformed features to it
+    with tables.open_file(core_data_fn, mode='w') as file:
+        atom = tables.Float32Atom()
+        if self.flatten_data:
+          input_shape = (0, self.ranks * self.ranks * self.ranks * 4)
+          output_shape = (0, self.ranks * self.ranks * self.ranks)
+        else:
+          input_shape = (0, self.ranks, self.ranks, self.ranks, 4)
+          output_shape = (0, self.ranks, self.ranks, self.ranks)
+    
+        file.create_earray(file.root, 'inputs', atom, input_shape)
+        file.create_earray(file.root, 'outputs', atom, output_shape)
+
     self.transform_and_write_blocks_to_core_data(
       core_data_fn,
       input_factors,
@@ -337,16 +353,16 @@ class FeatureExtractAndWrite:
 
     for sim in range(self.first_sim, self.last_sim + 1):
         inputs_u, inputs_obst, outputs = self.sample_blocks_chunked(
-            self.gridded_h5_filenames[sim],
-            sim,
-            t_start=self.first_t,
-            t_end=self.last_t,
-            block_size=self.block_size,
-            first_sim=self.first_sim,
-            i_chunk=None,
-            n_chunks=False,
-            sample_indices=sample_indices_per_sim_per_time_representative
-            )
+          self.gridded_h5_filenames[sim],
+          sim,
+          t_start=self.first_t,
+          t_end=self.last_t,
+          block_size=self.block_size,
+          first_sim=self.first_sim,
+          i_chunk=None,
+          n_chunks=False,
+          sample_indices=sample_indices_per_sim_per_time_representative
+        )
         all_inputs_u.append(inputs_u)
         all_inputs_obst.append(inputs_obst)
         all_outputs.append(outputs)
@@ -359,7 +375,6 @@ class FeatureExtractAndWrite:
     input_factors, output_factors = self.get_representative_factors(representative_blocks, ranks=ranks)
     
     return input_factors, output_factors
-
 
 
   def transform_and_write_blocks_to_core_data(self,
@@ -384,11 +399,15 @@ class FeatureExtractAndWrite:
         print(f'Transforming data from sim {sim + 1}/[{self.first_sim + 1}, {self.last_sim + 1}]...')
         for i_chunk in range(n_chunks_per_sim):
             for sub_chunk in range(n_sub_chunks):
-                print(f' -Sampling block data for chunk {i_chunk + 1}/{n_chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)
+                print(f' -Sampling block data for chunk {i_chunk + 1}/{n_chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)                
+                                          
                 blocks_data = self.sample_blocks_chunked(
+                  self.gridded_h5_filenames[sim],
                   sim,
                   t_start=i_chunk * n_times_per_chunk,
                   t_end=min((i_chunk + 1) * n_times_per_chunk, self.last_t),
+                  block_size=self.block_size,
+                  first_sim=self.first_sim,
                   i_chunk=sub_chunk,
                   n_chunks=n_sub_chunks,
                   sample_indices=sample_indices_per_sim_per_time
@@ -497,7 +516,7 @@ class FeatureExtractAndWrite:
 
     return input_factors, output_factors
 
-  def transform_data_with_tucker(self, blocks_data: np.ndarray, input_factors, output_factors, n_representative_blocks) -> np.ndarray:
+  def transform_data_with_tucker(self, blocks_data: np.ndarray, input_factors, output_factors) -> np.ndarray:
     inputs_u, inputs_obst, outputs = blocks_data
     chunk_size = inputs_u.shape[0]
     print(f'ACTUAL Chunk size: {chunk_size}')

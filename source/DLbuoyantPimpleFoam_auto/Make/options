@@ -8,6 +8,9 @@ ifeq (,$(strip $(FOAM_MODULE_LIBBIN)))
     FOAM_MODULE_LIBBIN = $(FOAM_USER_LIBBIN)
 endif
 
+/* Capture absolute source directory at compile time */
+SOLVER_SOURCE_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
+
 /* Python */
 PY_INCS := \
     -Wno-old-style-cast \
@@ -18,6 +21,13 @@ PY_INCS := \
 PY_LIBS := \
     -$(PYTHON_LIB_NAME)
 
+/* HDF5 - from conda environment */
+HDF5_INCS := \
+    -I$(PYTHON_LIB_PATH)/../include
+
+HDF5_LIBS := \
+    -L$(PYTHON_LIB_PATH) \
+    -lhdf5
 
 #ifdef OPENFOAM
 /* openfoam.com */
@@ -45,6 +55,7 @@ TRANSPORT_LIBS := \
 #endif
 
 EXE_INC = \
+    -DSOLVER_SOURCE_DIR=\"$(SOLVER_SOURCE_DIR)\" \
     -I. \
     -I$(WM_PROJECT_DIR)/applications/solvers/compressible/rhoPimpleFoam \
     $(TRANSPORT_INCS) \
@@ -56,7 +67,8 @@ EXE_INC = \
     -I$(LIB_SRC)/meshTools/lnInclude \
     -I$(LIB_SRC)/sampling/lnInclude \
     -I$(LIB_SRC)/dynamicFvMesh/lnInclude \
-    $(PY_INCS)
+    $(PY_INCS) \
+    $(HDF5_INCS)
 
 EXE_LIBS = \
     -lfluidThermophysicalModels \
@@ -70,4 +82,5 @@ EXE_LIBS = \
     -lmeshTools \
     -lsampling \
     -lfvOptions \
+    $(HDF5_LIBS) \
     $(PY_LIBS)

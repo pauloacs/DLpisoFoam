@@ -45,6 +45,10 @@ RUN wget https://repo.anaconda.com/miniconda/Miniconda3-py38_4.12.0-Linux-x86_64
 ENV PATH=$CONDA_DIR/bin:$PATH
 RUN conda env create -f /usr/bin/environment.yml
 
+# Install mpi4py compiled against OpenFOAM's MPI (run directly, no conda activate needed)
+RUN $CONDA_DIR/envs/python311_solver/bin/pip uninstall mpi4py -y && \
+    CC=mpicc $CONDA_DIR/envs/python311_solver/bin/pip install --no-cache-dir --no-binary mpi4py mpi4py
+
 # Giving enough permissions to the user
 RUN mkdir -p /home/repo
 
@@ -56,6 +60,7 @@ WORKDIR /home/repo/
 
 # set the default container user to foam
 USER user
+RUN echo "source /opt/conda/bin/activate && conda activate python311_solver" >> ~/.bashrc
 
 # The solvers will be installed in the entrypoint when running this image in a container
 ENTRYPOINT ["/usr/bin/entrypoint.sh"]

@@ -49,8 +49,14 @@ Description
 #include "POSIX.H"
 
 #include <time.h>
+#include <string>
 #include "SurrogateModel.H"
 #include "MLSampling.H"
+
+// Macro to extract directory from __FILE__ at compile time
+// __FILE__ is expanded by preprocessor, then we use substring operations
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -95,9 +101,16 @@ int main(int argc, char *argv[])
     );
     bool surrogateActive = false;
 
-    // Data sampler (encapsulates sampling schedule and ML training calls)
-    //   warmUp=10, burst=20, regularInterval=5, retrainInterval=10
-    DataSampler dataSampler(mesh, delta_U, delta_p_rgh, "ML_data", 10, 20, 5, 10);
+    // Source script directory is baked in at compile time via -DSOLVER_SOURCE_DIR
+    std::string sourceScriptDir(SOLVER_SOURCE_DIR);
+    
+    Info<< "Source script directory: " << sourceScriptDir << nl << endl;
+    
+    DataSampler dataSampler(
+        mesh, delta_U, delta_p_rgh_CFD, "ML_data",
+        sourceScriptDir,
+        5, 5, 2, 5  // TESTING: warmUp=5, burst=5, regularInterval=2, retrainInterval=5
+    );
 
     while (pimple.run(runTime))
     {

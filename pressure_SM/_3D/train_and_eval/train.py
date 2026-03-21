@@ -39,8 +39,14 @@ warnings.filterwarnings("ignore", message="full garbage collections took")
 
 class Training:
 
-  def __init__(self, standardization_method):
+  def __init__(self,
+                standardization_method: str = "std",
+                train_tfrecord_fn: str = 'train_data.tfrecords',
+                test_tfrecord_fn: str = 'test_data.tfrecords'):
+
     self.standardization_method = standardization_method
+    self.train_tfrecord_fn = train_tfrecord_fn
+    self.test_tfrecord_fn = test_tfrecord_fn  
   
   @tf.function
   def train_step(self, inputs, labels):
@@ -79,6 +85,7 @@ class Training:
   def prepare_data_to_tf(
     self,
     outarray_flat_fn: str= 'features_data.h5',
+    normalization_factors_fn: str = 'mean_std.npz',
     flatten_data: bool = False):
 
     filename_flat = outarray_flat_fn
@@ -90,7 +97,7 @@ class Training:
 
     standardization_method="std"
     print(f'Normalizing feature data based on standardization method: {standardization_method}')
-    x, y = utils_data.normalize_feature_data(input, output, standardization_method)
+    x, y = utils_data.normalize_feature_data(input, output, standardization_method, normalization_factors_fn=normalization_factors_fn)
     x, y = utils_data.unison_shuffled_copies(x, y)
     print('Data shuffled \n')
     if flatten_data:
@@ -99,12 +106,12 @@ class Training:
 
     # Convert values to compatible tf Records - much faster
     split = 0.9
-    if not (os.path.isfile('train_data.tfrecords') and os.path.isfile('test_data.tfrecords')):
+    if not (os.path.isfile(self.train_tfrecord_fn) and os.path.isfile(self.test_tfrecord_fn)):
       print("TFRecords train and test data is not available... writing it\n")
-      count_train = utils_io.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data")
-      count_test = utils_io.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
+      count_train = utils_io.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename=self.train_tfrecord_fn)
+      count_test = utils_io.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename=self.test_tfrecord_fn)
     else:
-      print("TFRecords train and test data already available, using it... If you want to write new data, delete 'train_data.tfrecords' and 'test_data.tfrecords'!\n")
+      print(f"TFRecords train and test data already available, using it... If you want to write new data, delete '{self.train_tfrecord_fn}' and '{self.test_tfrecord_fn}'!\n")
     self.len_train = int(split*x.shape[0])
 
     return 0 
@@ -122,10 +129,12 @@ class Training:
       model_architecture: str,
       new_model: bool,
       ranks: int,
-      flatten_data: bool) -> None:
+      flatten_data: bool,
+      weights_fn: str,
+      model_h5_path: str='') -> None:
 
-    train_path = 'train_data.tfrecords'
-    test_path = 'test_data.tfrecords'
+    train_path = self.train_tfrecord_fn
+    test_path = self.test_tfrecord_fn
 
     self.train_dataset = utils_io.load_dataset_tf(filename = train_path, batch_size = batch_size, buffer_size=1024)
     self.test_dataset = utils_io.load_dataset_tf(filename = test_path, batch_size = batch_size, buffer_size=1024)
@@ -176,7 +185,7 @@ class Training:
         case _:
           raise ValueError('Invalid NN model type')
     else:
-      model_path = f"model_{model_name}.h5"
+      model_path = f"{model_h5_path}/model_{model_name}.h5"
       print(f"Loading model: {model_path}")
       self.model = tf.keras.models.load_model(model_path)
 
@@ -219,11 +228,11 @@ class Training:
         break
 
       if epoch > 5:
-        model_fn = 'model_' + model_name + '.h5'
+        model_fn = f'{model_h5_path}/model_{model_name}.h5'
         if losses_val_mean < min_yet:
           print(f'saving model: {model_fn}', flush=True)
           self.model.save(model_fn)
-          self.model.save_weights(f'weights.h5')
+          self.model.save_weights(weights_fn)
           min_yet = losses_val_mean
     
     print("Terminating training")
@@ -232,8 +241,8 @@ class Training:
     plt.plot(list(range(len(epochs_val_losses))), epochs_val_losses, label ='val')
     plt.yscale('log')
     plt.legend()
-    plt.savefig(f'loss_vs_epoch_beta{beta_1}lr{lr}reg{regularization}drop{dropout_rate}.png')
+    plt.savefig(f'{model_h5_path}/loss_vs_epoch_beta{beta_1}lr{lr}reg{regularization}drop{dropout_rate}.png')
 
     ## Save losses data
-    np.savetxt(f'train_loss_beta{beta_1}lr{lr}reg{regularization}drop{dropout_rate}.txt', epochs_train_losses, fmt='%d')
-    np.savetxt(f'test_loss_beta{beta_1}lr{lr}reg{regularization}drop{dropout_rate}.txt', epochs_val_losses, fmt='%d')
+    np.savetxt(f'{model_h5_path}/train_loss_beta{beta_1}lr{lr}reg{regularization}drop{dropout_rate}.txt', epochs_train_losses, fmt='%d')
+    np.savetxt(f'{model_h5_path}/test_loss_beta{beta_1}lr{lr}reg{regularization}drop{dropout_rate}.txt', epochs_val_losses, fmt='%d')

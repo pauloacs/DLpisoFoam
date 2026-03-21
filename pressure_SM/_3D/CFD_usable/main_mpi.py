@@ -13,9 +13,13 @@ import sys
 import numpy as np
 
 import mpi4py
-mpi4py.rc.initialize = True
+mpi4py.rc.initialize = False  # Don't call MPI_Init (OpenFOAM already did)
 mpi4py.rc.finalize = False
 from mpi4py import MPI
+
+# Manually attach to the already-initialized MPI environment
+if not MPI.Is_initialized():
+    MPI.Init()
 
 import pickle as pk
 import matplotlib.pyplot as plt
@@ -26,6 +30,7 @@ from pressure_SM._3D.CFD_usable.utils import memory
 from pressure_SM._3D.train_and_eval.utils.data_processing import interpolate_fill_njit, interp_weights, create_uniform_grid
 from pressure_SM._3D.train_and_eval.utils.domain_geometry import domain_dist
 from pressure_SM._3D.train_and_eval.utils.model_utils import define_model_arch
+from pressure_SM._3D.train_and_eval.utils import data_processing as utils_data
 
 from pressure_SM._3D.train_and_eval.assembly import assemble_prediction
 from pressure_SM._3D.train_and_eval.neural_networks import *
@@ -103,7 +108,11 @@ def load_tucker_and_NN(
 
 
 		## Loading values for blocks normalization
-		maxs = np.loadtxt(maxs_fn)
+		if maxs_fn.endswith('.npy'):	
+			maxs = np.load(maxs_fn)
+		else:
+			maxs = np.loadtxt(maxs_fn)
+
 		global max_abs_delta_Ux, max_abs_delta_Uy, max_abs_delta_Uz, max_abs_dist, max_abs_delta_p
 		(max_abs_delta_Ux,
 			max_abs_delta_Uy,
@@ -202,8 +211,8 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		global vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF
 		global grid_shape_z, grid_shape_y, grid_shape_x
 
-		decimal_places = int(-np.log10(grid_res)) - 1
-		#decimal_places = 3
+		#decimal_places = int(-np.log10(grid_res)) - 1
+		decimal_places = 3
 		#print(f"Rounding limits to {decimal_places} decimal places based on grid resolution {grid_res}")
 		
 		limits = {
@@ -250,10 +259,7 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		}
 
 		domain_bool, sdf = domain_dist(boundaries, xyz0, grid_res)
-
-		grid_shape_z = int(round((limits['z_max']-limits['z_min'])/grid_res))
-		grid_shape_y = int(round((limits['y_max']-limits['y_min'])/grid_res)) 
-		grid_shape_x = int(round((limits['x_max']-limits['x_min'])/grid_res))
+		grid_shape_x, grid_shape_y, grid_shape_z = utils_data.get_grid_shape(limits, grid_res)
 
 		x0 = np.min(X0)
 		y0 = np.min(Y0)

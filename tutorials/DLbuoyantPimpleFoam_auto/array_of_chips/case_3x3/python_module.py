@@ -10,9 +10,13 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import numpy as np
 
 import mpi4py
-mpi4py.rc.initialize = True
+mpi4py.rc.initialize = False  # Don't call MPI_Init (OpenFOAM already did)
 mpi4py.rc.finalize = False
 from mpi4py import MPI
+
+# Manually attach to the already-initialized MPI environment
+if not MPI.Is_initialized():
+    MPI.Init()
 
 #from pressure_SM._3D.CFD_usable.main import load_tucker_and_NN
 from pressure_SM._3D.CFD_usable.main_mpi import load_tucker_and_NN
@@ -20,7 +24,7 @@ from pressure_SM._3D.CFD_usable.main_mpi import load_tucker_and_NN
 ML_data_folder    = 'ML_data'
 
 tucker_factors_fn = f"{ML_data_folder}/tucker_factors.pkl"
-maxs_fn           = f"{ML_data_folder}/maxs"
+maxs_fn           = f"{ML_data_folder}/maxs_list.npy"
 std_vals_fn       = f"{ML_data_folder}/mean_std.npz"
 weights_fn        = f"{ML_data_folder}/weights.h5"
 model_arch        = "MLP_small"
