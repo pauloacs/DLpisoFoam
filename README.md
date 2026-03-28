@@ -1,4 +1,4 @@
-# DLpisoFoam & DLbuoyantPimpleFoam
+# DLpisoFoam, DLbuoyantPimpleFoam & DLbuoyantPimpleFoam_auto
 
 **Deep Learning-Enhanced CFD Solvers for Accelerated Fluid Flow Simulations**
 
@@ -28,6 +28,7 @@
 - [Available CFD Solvers](#-available-cfd-solvers)
   - [DLpisoFoam](#dlpisofoam)
   - [DLbuoyantPimpleFoam](#dlbuoyantpimplefoam)
+  - [DLbuoyantPimpleFoam_auto](#dlbuoyantpimplefoam_auto)
 - [Legacy Solvers](#-legacy-solvers)
 - [Citation](#-citation)
 - [Contact](#-contact)
@@ -37,7 +38,7 @@
 
 This repository contains **machine learning-enhanced OpenFOAM solvers** that accelerate computational fluid dynamics (CFD) simulations by replacing the computationally expensive pressure Poisson equation solver with a deep learning surrogate model.
 
-**DLpisoFoam** and **DLbuoyantPimpleFoam** are based on OpenFOAM v8 and implement the PISO/PIMPLE algorithms with integrated neural network surrogate models for improved pressure-velocity coupling.
+**DLpisoFoam**, **DLbuoyantPimpleFoam**, and **DLbuoyantPimpleFoam_auto** are based on OpenFOAM v8 and implement the PISO/PIMPLE algorithms with integrated neural network surrogate models for improved pressure-velocity coupling. `DLbuoyantPimpleFoam_auto` is self-contained — it trains its own surrogate model on-the-fly during the simulation, requiring no pre-trained model or offline dataset generation.
 
 This is an **all-in-one repository** containing both surrogate models and CFD solvers, building upon the work from [Solving-Poisson's-Equation-through-DL-for-CFD-applications](https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications).
 
@@ -69,6 +70,7 @@ This repository provides a complete workflow for accelerating CFD simulations wi
 - 🧠 **ML-powered**: Machine Learning surrogate models enhance pressure Poisson solver
 - 🌡️ **Multiple physics**: Supports isothermal and thermal flows
 - 🔧 **OpenFOAM compatible**: Drop-in replacement for `pisoFoam` and `buoyantPimpleFoam`
+- 🤖 **Self-training**: `DLbuoyantPimpleFoam_auto` trains its surrogate model automatically during the simulation — no pre-trained model needed
 - 🐳 **Docker ready**: Pre-built containers for easy deployment
 - 📊 **2D & 3D**: Surrogate models available for both 2D and 3D simulation cases
 
@@ -99,9 +101,10 @@ This repository provides a complete workflow for accelerating CFD simulations wi
 
 ```
 DLpisoFoam/
-├── source/                  # Solver source code
-│   ├── DLpisoFoam/           # Incompressible isothermal solver
-│   └── DLbuoyantPimpleFoam/  # Thermal flow solver
+├── source/                        # Solver source code
+│   ├── DLpisoFoam/                 # Incompressible isothermal solver
+│   ├── DLbuoyantPimpleFoam/        # Thermal flow solver
+│   └── DLbuoyantPimpleFoam_auto/   # Self-training thermal flow solver
 ├── pressure_SM/             # Surrogate models
 │   ├── 2D/                   # 2D models
 │   │   ├── train_and_eval/    # Training & evaluation scripts
@@ -331,6 +334,19 @@ postProcess -func 'mag(U)'
 **Example applications:**
 - Electronics cooling
 - HVAC simulations
+
+---
+
+### DLbuoyantPimpleFoam_auto
+**For thermal flows with buoyancy — self-training**
+
+- Same physics as `DLbuoyantPimpleFoam`, but trains its own surrogate model during the simulation
+- No pre-trained model or offline dataset generation required
+- The model is continuously retrained as new samples are collected
+- Sampling and retraining frequency configurable via `system/MLSamplingDict`
+
+**Example applications:**
+- Electronics cooling in new geometries where no training data exists
 
 ---
 
