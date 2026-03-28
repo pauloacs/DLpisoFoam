@@ -41,18 +41,18 @@ j02	0.10;   // 0.0 * A + AmaHalf + a = 0.10
 j10	0.15;   // 1.0 * A = 0.15
 
 // horizontal grid dimensions
-na  3;   // cells across cylinder widthi
-nb  3;   // cells across cylinder length
+na  9;   // cells across obstacle widthi
+nb  9;   // cells across obstacle length
 
 // Calculated grid dimensions
-NA  3;   // cells in spacing regions: floor(AmaHalf * na / a) = floor(0.05 * 5 / 0.05) = 5
-NB  3;   // cells in spacing regions: floor(BmbHalf * nb / b) = floor(0.05 * 5 / 0.05) = 5
+NA  9;   // cells in spacing regions: floor(AmaHalf * na / a) = floor(0.05 * 5 / 0.05) = 5
+NB  9;   // cells in spacing regions: floor(BmbHalf * nb / b) = floor(0.05 * 5 / 0.05) = 5
 
 // z-coordinates
 Ztop    0.5;   // height of domain top: same as cube height
 
 // vertical grid dimensions
-nh  10;  // cells in vertical direction (increased resolution for small height)
+nh  37;  // cells in vertical direction (increased resolution for small height)
 NH  0;   // no upper region since cube fills entire height
 
 vertices

@@ -58,7 +58,7 @@ boundaryField
         value           uniform $turbulentKE;
     }
 
-    obstacle
+    cylinder
     {
         type            kqRWallFunction;
         value           uniform $turbulentKE;

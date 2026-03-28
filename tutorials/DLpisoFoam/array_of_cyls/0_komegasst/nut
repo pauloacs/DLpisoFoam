@@ -59,7 +59,7 @@ boundaryField
         value           uniform 0;
     }
 
-    obstacle
+    cylinder
     {
         type            nutkWallFunction;
         value           uniform 0;

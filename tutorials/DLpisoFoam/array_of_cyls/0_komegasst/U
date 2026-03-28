@@ -26,7 +26,7 @@ boundaryField
     inlet
     {
         type            fixedValue;
-        value           uniform (1 0 0);
+        value           uniform (2 0 0);
     }
 
     outlet
@@ -50,7 +50,7 @@ boundaryField
     {
         type            noSlip;
     }
-    obstacle
+    cylinder
     {
         type            noSlip;
     }

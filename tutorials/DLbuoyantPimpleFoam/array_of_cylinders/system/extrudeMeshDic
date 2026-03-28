@@ -1,0 +1,31 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      extrudeMeshDict;
+}
+
+constructFrom patch;
+sourceCase ".";
+sourcePatches (outlet);
+exposedPatchName outlet;
+direction (1 0 0);
+
+flipNormals false;
+
+extrudeModel linearDirection;
+
+expansionRatio 1.041;
+firstLayerThickness 0.005;
+nLayers 60;
+
+
+linearDirectionCoeffs
+{
+    direction (1 0 0);
+    thickness 1.5;
+}
+
+mergeFaces true;
+mergeTol 0;

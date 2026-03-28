@@ -56,7 +56,7 @@ boundaryField
         gradient        uniform 0;
         value           uniform 0;
     }
-    obstacle
+    cylinder
     {
         type            fixedFluxPressure;
         gradient        uniform 0;

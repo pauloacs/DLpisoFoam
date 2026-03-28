@@ -5,6 +5,7 @@ Block sampling strategies and error computation.
 import numpy as np
 import pickle as pk
 import tables
+import h5py
 from pyDOE import lhs
 from . import io_operations as utils_io
 
@@ -64,7 +65,8 @@ def define_sample_indexes(
     first_t: int,
     last_t: int,
     original_dataset_path: str,
-    output_pkl_path: str = None
+    output_pkl_path: str = None,
+    limits: dict = None
 ):
     """
     Define sampling indexes using Latin Hypercube Sampling.
@@ -79,6 +81,7 @@ def define_sample_indexes(
         last_t: Last time step
         dataset_path: Path to HDF5 dataset
         output_pkl_path: Optional path to save indices
+        limits: Optional dictionary of limits
         
     Returns:
         list: Indices per simulation per time
@@ -86,26 +89,14 @@ def define_sample_indexes(
 
     indices_per_sim_per_time = []
     for sim_i in range(first_sim, last_sim + 1):
-
-        _, limits = utils_io.read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t, grid_res)
+        
+        if limits is None:
+            _, limits = utils_io.read_cells_and_limits(original_dataset_path, sim_i, first_t, last_t, grid_res)
 
         indices_per_time = []
         for time_i in range(last_t - first_t):
-            lower_bound = np.array([
-                0 + block_size * grid_res / 2,
-                0 + block_size * grid_res / 2,
-                0 + block_size * grid_res / 2
-            ])
-
-            upper_bound = np.array([
-                (limits['z_max'] - limits['z_min']) - block_size * grid_res / 2,
-                (limits['y_max'] - limits['y_min']) - block_size * grid_res / 2,
-                (limits['x_max'] - limits['x_min']) - block_size * grid_res / 2
-            ])
-            ZYX = lower_bound + (upper_bound - lower_bound) * lhs(3, n_samples_per_frame)
-            ZYX_indices = (np.round(ZYX / grid_res)).astype(int)
-            ZYX_indices = np.unique([tuple(row) for row in ZYX_indices], axis=0)
-            indices_per_time.append(ZYX_indices)
+            sampling_indices = get_sampling_indices(block_size, grid_res, limits, n_samples_per_frame)
+            indices_per_time.append(sampling_indices)
 
         indices_per_sim_per_time.append(indices_per_time)
 
@@ -116,6 +107,25 @@ def define_sample_indexes(
 
     return indices_per_sim_per_time
 
+def get_sampling_indices(block_size, grid_res, limits, n_samples_per_frame):
+    """Get sampling indices for a single time step based on LHS."""
+
+    lower_bound = np.array([
+        0 + block_size * grid_res / 2,
+        0 + block_size * grid_res / 2,
+        0 + block_size * grid_res / 2
+    ])
+
+    upper_bound = np.array([
+        (limits['z_max'] - limits['z_min']) - block_size * grid_res / 2,
+        (limits['y_max'] - limits['y_min']) - block_size * grid_res / 2,
+        (limits['x_max'] - limits['x_min']) - block_size * grid_res / 2
+    ])
+    ZYX = lower_bound + (upper_bound - lower_bound) * lhs(3, n_samples_per_frame)
+    ZYX_indices = (np.round(ZYX / grid_res)).astype(int)
+    ZYX_indices = np.unique([tuple(row) for row in ZYX_indices], axis=0)
+
+    return ZYX_indices
 
 def sample_blocks(
     block_size: int,
@@ -125,6 +135,7 @@ def sample_blocks(
     calculate_maxs: bool = False,
     sample_indices = None,
     gridded_h5_fn: str = None,
+    for_auto_CFD: bool = False
 ):
     """
     Sample N blocks from each time step based on LHS.
@@ -149,8 +160,13 @@ def sample_blocks(
 
     for time in range(t_start, t_end):
 
-        with tables.open_file(gridded_h5_fn, mode='r') as f:
-            grid = f.root.data[time, :, :, :, :]
+        if for_auto_CFD:
+            with h5py.File(gridded_h5_fn, mode='r') as f:
+                grid = f['data'][time, :, :, :, :]
+        else:
+            with tables.open_file(gridded_h5_fn, mode='r') as f:
+                grid = f.root.data[time, :, :, :, :]
+                
 
         ZYX_indices = sample_indices[sim_i][time]
 
@@ -214,9 +230,11 @@ def calculate_and_save_block_abs_max(
     first_t: int,
     last_t: int,
     sample_indices_fn: str,
-    gridded_h5_fn: str,
-    block_size: int
-):
+    base_gridded_h5_fn: str,
+    block_size: int,
+    gridded_h5_filenames: list = None,
+    for_auto_CFD: bool = False
+) -> list:
     """
     Calculate and save absolute maximum values for normalization.
     
@@ -226,7 +244,7 @@ def calculate_and_save_block_abs_max(
         first_t: First time step
         last_t: Last time step
         sample_indices_fn: Path to sample indices pickle file
-        gridded_h5_fn: Path to gridded HDF5 file
+        base_gridded_h5_fn: Path to base gridded HDF5 file
         block_size: Size of blocks
     """
     max_abs_delta_Ux = 0
@@ -240,11 +258,12 @@ def calculate_and_save_block_abs_max(
 
     print('Calculating absolute maxs to normalize data...')
 
-    gridded_h5_filenames = utils_io.get_gridded_h5_filenames(
-      gridded_h5_fn,
-      first_sim,
-      last_sim
-      )
+    if gridded_h5_filenames is None:
+        gridded_h5_filenames = utils_io.get_gridded_h5_filenames(
+        gridded_h5_fn,
+        first_sim,
+        last_sim
+        )
     
     for sim_i in range(first_sim, last_sim + 1):
         for time in range(last_t - first_t):
@@ -256,6 +275,7 @@ def calculate_and_save_block_abs_max(
                 calculate_maxs=True,
                 sample_indices=sample_indices_per_sim_per_time,
                 gridded_h5_fn=gridded_h5_filenames[sim_i - first_sim],
+                for_auto_CFD=for_auto_CFD
             )
             max_abs_delta_Ux = max(max_abs_delta_Ux, maxs_dict['max_abs_delta_Ux'])
             max_abs_delta_Uy = max(max_abs_delta_Uy, maxs_dict['max_abs_delta_Uy'])
@@ -263,10 +283,12 @@ def calculate_and_save_block_abs_max(
             max_abs_dist     = max(max_abs_dist, maxs_dict['max_abs_dist'])    
             max_abs_delta_p  = max(max_abs_delta_p, maxs_dict['max_abs_delta_p'])
 
-    np.savetxt('maxs', [
+    maxs_list =  [
         max_abs_delta_Ux,
         max_abs_delta_Uy,
         max_abs_delta_Uz,
         max_abs_dist,
         max_abs_delta_p
-    ])
+    ]
+
+    return maxs_list

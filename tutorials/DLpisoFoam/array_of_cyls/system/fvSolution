@@ -20,7 +20,7 @@ solvers
     {
         solver           GAMG;
         tolerance        1e-7;
-        relTol           0.01;
+        relTol           0;
         smoother         GaussSeidel;
     }
     pFinal
@@ -36,7 +36,7 @@ solvers
         solver           smoothSolver;
         smoother         GaussSeidel;
         tolerance        1e-8;
-        relTol           0.1;
+        relTol           0;
         nSweeps          1;
     }
     UFinal
