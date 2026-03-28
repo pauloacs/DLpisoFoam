@@ -21,16 +21,22 @@ def add_new_features_and_train():
     args = parser.parse_args()
     data_dir = args.data_dir
 
-    grid_res = 0.001 # This one is highly dependent on the simulation length scales (aim for at least 50 grid points across the domain in each direction)
-    block_size = 16
-    n_samples_per_frame = 1000
-    standardization_method = 'minmax'
+    # Import shared config from python_module in the case directory (CWD)
+    # ALL THE IMPORTANT CONFIGURATION VARIABLES ARE DEFINED IN python_module.py
+    # THIS python_module.py SHOULD BE IN YOUR CASE DIRECTORY
+    import sys
+    os.environ['TRAIN_SCRIPT_MODE'] = '1'
+    sys.path.insert(0, os.getcwd())
+    from python_module import (
+        grid_res, block_size, ranks, dropout_rate, regularization,
+        model_architecture, standardization_method, n_samples_per_frame,
+        lr, batch_size, beta, num_epochs
+    )
+
     gridded_h5_fn = os.path.join(data_dir, 'gridded_data.h5')
     sample_idx_fn = os.path.join(data_dir, 'sample_idx_per_time.npy')
     maxs_list_fn = os.path.join(data_dir, 'maxs_list.npy')
     tucker_factors_fn = os.path.join(data_dir, 'tucker_factors.pkl')
-    ranks = 3
-    chunk_size = 500
     core_data_fn = os.path.join(data_dir, 'core_data.h5')
 
     # --- Load old features from previous training ---
@@ -210,12 +216,6 @@ def add_new_features_and_train():
     print("Old and new features combined and saved to core_data.h5.")
 
     # --- Retrain model with combined data ---
-    dropout_rate = 0.1
-    lr = 1e-3
-    batch_size = 1024
-    beta = 0.5
-    regularization = 1e-4
-    model_architecture = 'MLP_small'
     n_layers, width = utils_model.define_model_arch(model_architecture)
     model_name = f'{model_architecture}-{standardization_method}-drop{dropout_rate}-lr{lr}-reg{regularization}-batch{batch_size}'
     train_tfrecord_fn = os.path.join(data_dir, 'train_data.tfrecords')
@@ -229,7 +229,7 @@ def add_new_features_and_train():
         batch_size=batch_size,
         model_name=model_name,
         beta_1=beta,
-        num_epoch=100,
+        num_epoch=num_epochs,
         n_layers=n_layers,
         width=width,
         dropout_rate=dropout_rate,

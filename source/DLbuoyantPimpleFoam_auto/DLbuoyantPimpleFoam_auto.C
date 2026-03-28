@@ -105,11 +105,28 @@ int main(int argc, char *argv[])
     std::string sourceScriptDir(SOLVER_SOURCE_DIR);
     
     Info<< "Source script directory: " << sourceScriptDir << nl << endl;
-    
+        
+    // Read ML sampling parameters from system/MLSamplingDict
+    IOdictionary mlDict
+    (
+        IOobject
+        (
+            "MLSamplingDict",
+            runTime.system(),
+            mesh,
+            IOobject::MUST_READ,
+            IOobject::NO_WRITE
+        )
+    );
+    int warmUpSteps     = mlDict.lookupOrDefault<int>("warmUpSteps",     20);
+    int burstSteps      = mlDict.lookupOrDefault<int>("burstSteps",       10);
+    int regularInterval = mlDict.lookupOrDefault<int>("regularInterval",  5);
+    int retrainInterval = mlDict.lookupOrDefault<int>("retrainInterval",  10);
+
     DataSampler dataSampler(
         mesh, delta_U, delta_p_rgh_CFD, "ML_data",
         sourceScriptDir,
-        5, 5, 2, 5  // TESTING: warmUp=5, burst=5, regularInterval=2, retrainInterval=5
+        warmUpSteps, burstSteps, regularInterval, retrainInterval
     );
 
     while (pimple.run(runTime))
