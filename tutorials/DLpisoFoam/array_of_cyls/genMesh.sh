@@ -8,9 +8,9 @@ rm -rf constant/polyMesh
 blockMesh -dict "system/blockMeshDict" -region "."
 #refineMesh -overwrite
 
-topoSet -dict "system/topoSetDict" -region "."
+#topoSet -dict "system/topoSetDict" -region "."
 #refineHexMesh -overwrite -region "." -minSet highRes1
-refineHexMesh -overwrite -region "." -minSet highRes2
+#refineHexMesh -overwrite -region "." -minSet highRes2
 
 #refineMesh -overwrite -dict "system/refineMeshDict"
 
@@ -18,7 +18,7 @@ refineHexMesh -overwrite -region "." -minSet highRes2
 
 renumberMesh -overwrite -region "."
 
-./repeatMesh.sh -no-blockMesh -x 4 -y 3
+./repeatMesh.sh -no-blockMesh -x 4 -y 2
 
 
 ################################
@@ -42,17 +42,17 @@ extrudeMesh -region "${rg}" # > extrudeMesh_inlet.log 2>&1
 cp system/extrudeMeshDict_outlet system/extrudeMeshDict
 extrudeMesh -region "${rg}" #> extrudeMesh_outlet.log 2>&1
 
-# refineWallLayer -overwrite "(top)" .5
-# refineWallLayer -overwrite "(bot)" .5
-# refineWallLayer -overwrite "(back)" .5
-# refineWallLayer -overwrite "(front)" .5
+#refineWallLayer -overwrite "(top)" .5
+#refineWallLayer -overwrite "(bot)" .5
+#refineWallLayer -overwrite "(back)" .5
+#refineWallLayer -overwrite "(front)" .5
 
-# refineWallLayer -overwrite "(top)" .5
-# refineWallLayer -overwrite "(bot)" .5
-# refineWallLayer -overwrite "(back)" .5
-# refineWallLayer -overwrite "(front)" .5
+#refineWallLayer -overwrite "(top)" .5
+#refineWallLayer -overwrite "(bot)" .5
+#refineWallLayer -overwrite "(back)" .5
+#refineWallLayer -overwrite "(front)" .5
 
-# refineWallLayer -overwrite "(obstacle)" .5
+#refineWallLayer -overwrite "(cylinder)" .5
 
 rm constant/polyMesh/refinementHistory
 

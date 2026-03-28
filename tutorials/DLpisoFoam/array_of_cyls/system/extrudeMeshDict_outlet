@@ -18,8 +18,8 @@ flipNormals false;
 extrudeModel linearDirection;
 
 expansionRatio 1.035;
-firstLayerThickness 0.005;
-nLayers 70;
+firstLayerThickness 0.003;
+nLayers 110;
 
 
 linearDirectionCoeffs

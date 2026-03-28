@@ -48,7 +48,7 @@ boundaryField
         value           uniform $turbulentOmega;
     }
 
-    obstacle
+    cylinder
     {
         type            omegaWallFunction;
         value           uniform $turbulentOmega;

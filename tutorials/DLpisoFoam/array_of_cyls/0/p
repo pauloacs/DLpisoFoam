@@ -1,24 +1,23 @@
 /*--------------------------------*- C++ -*----------------------------------*\
-| =========                 |                                                 |
-| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
-|  \\    /   O peration     | Version:  4.x                                   |
-|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
-|    \\/     M anipulation  |                                                 |
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  8
+     \\/     M anipulation  |
 \*---------------------------------------------------------------------------*/
 FoamFile
 {
     version     2.0;
-    format      ascii;
+    format      binary;
     class       volScalarField;
+    location    "0/.";
     object      p;
 }
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
-#include        "include/initialConditions"
-
 dimensions      [0 2 -2 0 0 0 0];
 
-internalField   uniform $pressure;
+internalField   uniform 0;
 
 boundaryField
 {
@@ -26,11 +25,10 @@ boundaryField
     {
         type            zeroGradient;
     }
-
     outlet
     {
         type            fixedValue;
-        value           uniform $pressure;
+        value           uniform 0;
     }
     front
     {
@@ -63,5 +61,6 @@ boundaryField
         value           uniform 0;
     }
 }
+
 
 // ************************************************************************* //

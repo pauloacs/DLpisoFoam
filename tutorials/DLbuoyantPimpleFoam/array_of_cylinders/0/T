@@ -1,0 +1,62 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  4.x                                   |
+|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    object      T;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+dimensions      [0 0 0 1 0 0 0];
+
+internalField   uniform 293.15;  // Initial temperature in Kelvin
+
+boundaryField
+{
+    inlet
+    {
+        type            fixedValue;
+        value           uniform 293.15;  // Inlet temperature
+    }
+    
+    outlet
+    {
+        type            zeroGradient;
+    }
+
+    bot
+    {
+        type            zeroGradient;
+    }
+
+    top
+    {
+        type            zeroGradient;
+    }
+
+    front
+    {
+        type            zeroGradient;
+    }
+
+    back
+    {
+        type            zeroGradient;
+    }
+
+    obstacle
+    {
+        type            externalWallHeatFluxTemperature;
+        mode            power;
+        Q               5;               // 5 W total heat per chip
+        kappaMethod     fluidThermo;     // Use air thermal conductivity from thermophysicalProperties
+        value           uniform 293.15;
+    }
+}

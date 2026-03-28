@@ -1,3 +1,4 @@
+
 FoamFile
 {
     version     2.0;
@@ -18,8 +19,8 @@ flipNormals false;
 extrudeModel linearDirection;
 
 expansionRatio 1.05;
-firstLayerThickness 0.005;
-nLayers 35;
+firstLayerThickness 0.003;
+nLayers 60;
 
 linearDirectionCoeffs
 {
