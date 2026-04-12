@@ -1,6 +1,8 @@
 FoamFile { version 2.0; format ascii; class dictionary; object MLSamplingDict; }
 
-warmUpSteps     10;
+warmUpSteps     20;
 burstSteps      10;
+burstInterval   2;
 regularInterval 5;
-retrainInterval 10;
+retrainInterval 20;
+windowFrames    30;

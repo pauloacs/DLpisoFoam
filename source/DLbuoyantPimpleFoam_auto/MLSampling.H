@@ -9,9 +9,11 @@ class DataSampler
 {
     // --- Configuration ---
     int warmUpSteps_;        // Steps before any sampling begins
-    int burstSteps_;         // Number of consecutive steps to sample after warm-up
+    int burstSteps_;         // Number of samples to collect during burst phase
+    int burstInterval_;      // Steps between samples during burst phase
     int regularInterval_;    // After burst, sample every N steps
     int retrainInterval_;    // Call Python retrain every N samples collected
+    int windowFrames_;       // Sliding training window size (number of time frames)
 
     // --- State ---
     int timeStep_;
@@ -54,16 +56,19 @@ public:
         const std::string& dataDir = "ML_data",
         const std::string& sourceDir = ".",  // Add source directory parameter
         int warmUpSteps = 10,
-        int burstSteps = 20,
+        int burstSteps = 10,
+        int burstInterval = 1,
         int regularInterval = 5,
-        int retrainInterval = 10
+        int retrainInterval = 20,
+        int windowFrames = 30
     );
 
     ~DataSampler();
 
     // Call once per time step after the PIMPLE loop.
-    // Returns true if surrogate model should be activated.
-    bool update();
+    // Returns: 0 = nothing, 1 = first training done (activate surrogate),
+    //          2 = retrain done (reload weights into active surrogate).
+    int update();
 
     // Accessors
     int timeStep() const { return timeStep_; }

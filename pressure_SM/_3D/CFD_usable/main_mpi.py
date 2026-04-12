@@ -144,6 +144,21 @@ def load_tucker_and_NN(
 			print(f"overlap_ratio: {overlap_ratio}")
 
 
+def reload_weights(weights_fn):
+	"""Reload NN weights from disk after incremental retraining.
+
+	This is called by the solver after each retrain cycle so that the
+	in-memory model is always up to date without restarting the simulation.
+	Only the model weights are refreshed; Tucker factors and interpolation
+	data remain unchanged.
+	"""
+	global model
+	if rank == 0:
+		print(f"[reload_weights] Reloading model weights from {weights_fn}")
+		model.load_weights(weights_fn)
+		print("[reload_weights] Model weights reloaded successfully.")
+
+
 def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_boundary, obst_boundary):
 	"""
 	Initialization function for the simulation.

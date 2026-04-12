@@ -89,6 +89,46 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
     return coordinates, boundary_coords, boundary_patches, patch_names, delta_U, delta_p, timestamps
 
 
+def load_hdf5_field_data(data_file='ML_data/data.h5'):
+    """
+    Load only field samples (delta_U, delta_p, timestamps) from master HDF5 file.
+    Cell centers and boundary coordinates are NOT loaded — they were already
+    saved to disk during train_init.py and do not need to be re-read on updates.
+
+    Returns:
+        delta_U: (n_samples, n_cells, 3) array of velocity increments
+        delta_p: (n_samples, n_cells) array of pressure increments
+        timestamps: (n_samples,) array of timesteps
+    """
+    if not os.path.exists(data_file):
+        raise FileNotFoundError(f"HDF5 data file not found: {data_file}")
+
+    delta_U_list = []
+    delta_p_list = []
+    timestamps = []
+
+    with h5py.File(data_file, 'r') as f:
+        sample_keys = sorted([key for key in f.keys() if key.startswith('sample_')])
+
+        if len(sample_keys) == 0:
+            raise ValueError("No sample groups (sample_*) found in HDF5 file")
+
+        for sample_key in sample_keys:
+            group = f[sample_key]
+            if 'velocity_increment' not in group or 'pressure_increment' not in group:
+                print(f"Warning: {sample_key} missing velocity_increment or pressure_increment dataset, skipping")
+                continue
+            delta_U_list.append(group['velocity_increment'][:])
+            delta_p_list.append(group['pressure_increment'][:])
+            timestamps.append(group.attrs.get('timestep', -1))
+
+    delta_U = np.array(delta_U_list)
+    delta_p = np.array(delta_p_list)
+    timestamps = np.array(timestamps)
+
+    return delta_U, delta_p, timestamps
+
+
 def load_boundaries_dict(data_dir='ML_data'):
     """
     Load boundaries as a dictionary from NPZ file.

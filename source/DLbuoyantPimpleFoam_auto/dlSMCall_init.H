@@ -27,6 +27,9 @@ Info<< ">>> Reading py_func <<<" << endl;
 py_func = PyObject_GetAttrString(pModule, "py_func");
 py_args = PyTuple_New(2);
 
+Info<< ">>> Reading reload_func <<<" << endl;
+reload_func = PyObject_GetAttrString(pModule, "reload_weights");
+
 Info<< ">>> Python functions defined <<<" << endl;
 
 Py_DECREF(pModule);

@@ -48,6 +48,7 @@ SurrogateModel::SurrogateModel
     py_args_(nullptr),
     init_func_(nullptr),
     init_args_(nullptr),
+    reload_func_(nullptr),
     array_3d_(nullptr),
     array_3d_z_top_(nullptr),
     array_3d_z_bot_(nullptr),
@@ -67,6 +68,7 @@ SurrogateModel::~SurrogateModel()
     Py_XDECREF(py_args_);
     Py_XDECREF(init_func_);
     Py_XDECREF(init_args_);
+    Py_XDECREF(reload_func_);
     // Note: arrays handed to PyTuple_SetItem have ownership stolen,
     // only DECREF array_3d_ which is re-created each predict() call
     Py_XDECREF(array_3d_);
@@ -103,6 +105,7 @@ void SurrogateModel::init()
     PyObject*& py_args                    = py_args_;
     PyObject*& init_func                  = init_func_;
     PyObject*& init_args                  = init_args_;
+    PyObject*& reload_func                = reload_func_;
     PyObject*& array_3d                   = array_3d_;
     PyObject*& array_3d_z_top             = array_3d_z_top_;
     PyObject*& array_3d_z_bot             = array_3d_z_bot_;
@@ -120,6 +123,29 @@ void SurrogateModel::init()
 
     initialized_ = true;
 }
+
+void SurrogateModel::reload()
+{
+    if (!initialized_ || !reload_func_)
+    {
+        Foam::Info<< ">>> reload() called before init() — skipping <<<" << Foam::endl;
+        return;
+    }
+
+    Foam::Info<< ">>> Reloading surrogate model weights from disk <<<" << Foam::endl;
+    PyObject* result = PyObject_CallObject(reload_func_, nullptr);
+    if (!result)
+    {
+        PyErr_Print();
+        Foam::Info<< ">>> WARNING: reload_weights() Python call failed <<<" << Foam::endl;
+    }
+    else
+    {
+        Py_DECREF(result);
+        Foam::Info<< ">>> Surrogate model weights reloaded successfully <<<" << Foam::endl;
+    }
+}
+
 
 void SurrogateModel::predict()
 {

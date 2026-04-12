@@ -1,6 +1,8 @@
 import numpy as np
 import os
 import glob
+import shutil
+import time
 import pandas as pd
 from pressure_SM._3D.train_and_eval.data_processor import CFDDataProcessor
 from pressure_SM._3D.train_and_eval.utils import data_processing as utils_data
@@ -63,7 +65,7 @@ if __name__ == "__main__":
     from python_module import (
         grid_res, block_size, ranks, dropout_rate, regularization,
         model_architecture, standardization_method, n_samples_per_frame,
-        lr, batch_size, beta, num_epochs
+        lr, batch_size, beta, num_epochs, feature_extraction_chunk_size
     )
 
     gridded_h5_fn = os.path.join(data_dir, 'gridded_data.h5')
@@ -74,15 +76,36 @@ if __name__ == "__main__":
 
     # --- Load data from HDF5 ---
     hdf5_file = os.path.join(data_dir, 'data.h5')
-    print(f"Loading data from {hdf5_file}...")
-    
+    hdf5_file_copy = os.path.join(data_dir, 'data_init_copy.h5')
+    print(f"Copying {hdf5_file} to {hdf5_file_copy} for safe reading...")
+
+    # Wait until the file exists and is non-empty
+    max_wait = 30
+    waited = 0
+    while not os.path.exists(hdf5_file) or os.path.getsize(hdf5_file) == 0:
+        if waited >= max_wait:
+            print(f"Timeout waiting for {hdf5_file} to be available.")
+            exit(1)
+        time.sleep(1)
+        waited += 1
+
+    shutil.copy2(hdf5_file, hdf5_file_copy)
+    print(f"Copied to {hdf5_file_copy}.")
+
     try:
         cell_centers, boundary_coords, boundary_patches, patch_names, delta_U, delta_p, timestamps = \
-            load_hdf5_samples(hdf5_file)
+            load_hdf5_samples(hdf5_file_copy)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error loading HDF5 data: {e}")
         exit(1)
-    
+    finally:
+        if os.path.exists(hdf5_file_copy):
+            os.remove(hdf5_file_copy)
+        # Delete original so C++ creates a fresh file for the next batch
+        if os.path.exists(hdf5_file):
+            os.remove(hdf5_file)
+            print(f"Deleted {hdf5_file} — C++ will create a fresh file for the next batch.")
+
     n_sample_frames = len(timestamps)
     print(f"Loaded {n_sample_frames} samples from HDF5 file")
     print(f"Cell centers shape: {cell_centers.shape}")
@@ -261,6 +284,7 @@ if __name__ == "__main__":
         first_t=0,
         last_t=n_sample_frames,
         standardization_method=standardization_method,
+        chunk_size=feature_extraction_chunk_size,
         gridded_h5_fn=None,
         ranks=ranks,
         sample_indices_fn=sample_idx_fn,

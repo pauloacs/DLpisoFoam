@@ -10,7 +10,7 @@ from pressure_SM._3D.train_and_eval.utils import io_operations as utils_io
 from pressure_SM._3D.train_and_eval.utils import sampling as utils_sampling
 from pressure_SM._3D.train_and_eval.utils import model_utils as utils_model
 from pressure_SM._3D.train_and_eval.train import Training
-from pressure_SM._3D.auto_CFD.hdf5_data_loader import load_hdf5_samples, save_cell_centers_and_boundaries, load_boundaries_dict
+from pressure_SM._3D.auto_CFD.hdf5_data_loader import load_hdf5_field_data, load_boundaries_dict
 
 # --- Feature Extraction and Training ---
 def add_new_features_and_train():
@@ -18,8 +18,10 @@ def add_new_features_and_train():
     import argparse
     parser = argparse.ArgumentParser(description='Update ML model with new CFD samples.')
     parser.add_argument('--data_dir', type=str, default='ML_data', help='Directory where the ML data is stored (default: ML_data)')
+    parser.add_argument('--window_frames', type=int, default=20, help='Sliding training window size in time frames (set via system/MLSamplingDict windowFrames)')
     args = parser.parse_args()
     data_dir = args.data_dir
+    window_frames = args.window_frames
 
     # Import shared config from python_module in the case directory (CWD)
     # ALL THE IMPORTANT CONFIGURATION VARIABLES ARE DEFINED IN python_module.py
@@ -30,7 +32,7 @@ def add_new_features_and_train():
     from python_module import (
         grid_res, block_size, ranks, dropout_rate, regularization,
         model_architecture, standardization_method, n_samples_per_frame,
-        lr, batch_size, beta, num_epochs
+        lr, batch_size, beta, num_epochs, feature_extraction_chunk_size
     )
 
     gridded_h5_fn = os.path.join(data_dir, 'gridded_data.h5')
@@ -64,8 +66,7 @@ def add_new_features_and_train():
     print(f"Copied to {hdf5_file_copy}.")
 
     try:
-        cell_centers, boundary_coords, boundary_patches, patch_names, delta_U, delta_p, timestamps = \
-            load_hdf5_samples(hdf5_file_copy)
+        delta_U, delta_p, timestamps = load_hdf5_field_data(hdf5_file_copy)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error loading HDF5 data: {e}")
         exit(1)
@@ -81,15 +82,20 @@ def add_new_features_and_train():
     print(f"Loaded {n_sample_frames} new samples from HDF5 file")
     print(f"delta_U shape: {delta_U.shape}, delta_p shape: {delta_p.shape}")
 
-    # Save coordinates for compatibility
-    save_cell_centers_and_boundaries(cell_centers, boundary_coords, boundary_patches, 
-                                     patch_names, data_dir)
-
-    # --- Remove old features corresponding to the new samples ---
-    # (Assuming we want to re-extract features for the newly collected samples)
-    print(f"Removing {n_sample_frames} sample frames from the previous dataset.")
-    old_input_cores_to_keep = old_input_cores[:-n_sample_frames * n_samples_per_frame]
-    old_output_cores_to_keep = old_output_cores[:-n_sample_frames * n_samples_per_frame]
+    # --- Sliding window: keep (window_frames - n_sample_frames) oldest frames of features ---
+    frames_to_keep = max(0, window_frames - n_sample_frames)
+    rows_to_keep = frames_to_keep * n_samples_per_frame
+    print(f"Sliding window: {window_frames} frames total, keeping {frames_to_keep} old + {n_sample_frames} new.")
+    if rows_to_keep > 0 and old_input_cores.shape[0] >= rows_to_keep:
+        old_input_cores_to_keep = old_input_cores[-rows_to_keep:]
+        old_output_cores_to_keep = old_output_cores[-rows_to_keep:]
+    elif rows_to_keep > 0:
+        # Not enough history yet — keep whatever we have
+        old_input_cores_to_keep = old_input_cores
+        old_output_cores_to_keep = old_output_cores
+    else:
+        old_input_cores_to_keep = old_input_cores[0:0]
+        old_output_cores_to_keep = old_output_cores[0:0]
 
     # --- Load interpolation weights, vertices, and grid info ---
     weights = np.load(os.path.join(data_dir, 'interp_weights.npy'))
@@ -188,6 +194,7 @@ def add_new_features_and_train():
         first_t=0,
         last_t=n_sample_frames,
         standardization_method=standardization_method,
+        chunk_size=feature_extraction_chunk_size,
         gridded_h5_fn=None,
         ranks=ranks,
         sample_indices_fn=sample_idx_fn,
@@ -223,6 +230,13 @@ def add_new_features_and_train():
     normalization_factors_fn = os.path.join(data_dir, 'mean_std.npz')
 
     Train = Training(standardization_method, train_tfrecord_fn, test_tfrecord_fn)
+
+    # For the AUTO CFD solver:
+    # Always regenerate TFRecords so they match the current sliding-window data.
+    for fn in (train_tfrecord_fn, test_tfrecord_fn):
+        if os.path.exists(fn):
+            os.remove(fn)
+
     Train.prepare_data_to_tf(core_data_fn, normalization_factors_fn, flatten_data=True)
     Train.load_data_and_train(
         lr=lr,

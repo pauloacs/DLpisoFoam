@@ -42,6 +42,7 @@ class SurrogateModel
     PyObject* py_args_;
     PyObject* init_func_;
     PyObject* init_args_;
+    PyObject* reload_func_;   // Python reload_weights() function
     PyObject* array_3d_;
     PyObject* array_3d_z_top_;
     PyObject* array_3d_z_bot_;
@@ -74,6 +75,7 @@ public:
 
     void init();
     void predict();
+    void reload();   // Reload NN weights from disk after each retrain
 
     bool initialized() const { return initialized_; }
 };

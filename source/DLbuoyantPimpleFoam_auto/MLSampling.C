@@ -15,14 +15,18 @@ DataSampler::DataSampler
     const std::string& sourceDir,
     int warmUpSteps,
     int burstSteps,
+    int burstInterval,
     int regularInterval,
-    int retrainInterval
+    int retrainInterval,
+    int windowFrames
 )
 :
     warmUpSteps_(warmUpSteps),
     burstSteps_(burstSteps),
+    burstInterval_(burstInterval),
     regularInterval_(regularInterval),
     retrainInterval_(retrainInterval),
+    windowFrames_(windowFrames),
     timeStep_(0),
     sampleCount_(0),
     samplesSinceRetrain_(0),
@@ -53,15 +57,16 @@ bool DataSampler::shouldSample() const
         return false;
     }
 
-    // Phase 2: burst sampling — every step for burstSteps_ steps
+    // Phase 2: burst sampling — every burstInterval_ steps for burstSteps_ samples
     int stepsSinceWarmUp = timeStep_ - warmUpSteps_;
-    if (stepsSinceWarmUp <= burstSteps_)
+    int burstDuration = burstSteps_ * burstInterval_;
+    if (stepsSinceWarmUp <= burstDuration)
     {
-        return true;
+        return (stepsSinceWarmUp % burstInterval_ == 0);
     }
 
     // Phase 3: regular interval sampling
-    int stepsSinceBurst = timeStep_ - (warmUpSteps_ + burstSteps_);
+    int stepsSinceBurst = timeStep_ - (warmUpSteps_ + burstDuration);
     return (stepsSinceBurst % regularInterval_ == 0);
 }
 
@@ -303,33 +308,25 @@ void DataSampler::writeFieldData
 
     if (masterFile_ < 0)
     {
+        // Python always deletes data.h5 after each training run, so a file found
+        // here is stale (e.g. leftover from a crashed previous run).  Always
+        // start a fresh file to avoid "name already exists" collisions.
         if (Foam::isFile(masterPath))
         {
-            Foam::Info<< "  [DataSampler] Reopening existing HDF5 file: " << masterPath << Foam::nl;
-            masterFile_ = H5Fopen(masterPath.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
-            if (masterFile_ < 0)
-            {
-                FatalErrorInFunction
-                    << "Failed to reopen HDF5 file: " << masterPath
-                    << exit(FatalError);
-            }
-            Foam::Info<< "  [DataSampler] HDF5 file reopened successfully" << Foam::nl;
-            // coordinatesWritten_ stays true — coordinates already in this file
+            Foam::Info<< "  [DataSampler] Stale HDF5 file found — truncating: " << masterPath << Foam::nl;
         }
         else
         {
             Foam::Info<< "  [DataSampler] Creating new HDF5 file: " << masterPath << Foam::nl;
-            masterFile_ = H5Fcreate(masterPath.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
-            if (masterFile_ < 0)
-            {
-                FatalErrorInFunction
-                    << "Failed to create HDF5 file: " << masterPath
-                    << exit(FatalError);
-            }
-            // File is new — coordinates must be written again
-            coordinatesWritten_ = false;
-            Foam::Info<< "  [DataSampler] New HDF5 file created, coordinates will be re-written" << Foam::nl;
         }
+        masterFile_ = H5Fcreate(masterPath.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+        if (masterFile_ < 0)
+        {
+            FatalErrorInFunction
+                << "Failed to create HDF5 file: " << masterPath
+                << exit(FatalError);
+        }
+        Foam::Info<< "  [DataSampler] HDF5 file ready, coordinates will be written" << Foam::nl;
     }
 
     // Write coordinates and boundaries only once
@@ -471,10 +468,12 @@ void DataSampler::writeSample()
     Foam::Info<< "  [DataSampler] Samples since retrain: " << samplesSinceRetrain_ << Foam::nl;
 }
 
-bool DataSampler::update()
+int DataSampler::update()
 {
     timeStep_++;
-    bool activateSurrogate = false;
+    // 0 = nothing, 1 = first training done (activate surrogate),
+    // 2 = incremental retrain done (reload weights into active surrogate)
+    int retrainStatus = 0;
 
     if (shouldSample())
     {
@@ -520,7 +519,7 @@ bool DataSampler::update()
             reopenHDF5File();
 
             initialTrainingDone_ = true;
-            activateSurrogate = true;
+            retrainStatus = 1;  // Signal: activate surrogate (init loads weights)
         }
         else
         {
@@ -533,7 +532,9 @@ bool DataSampler::update()
                 << samplesSinceRetrain_ << " new samples)." << Foam::nl;
 
             std::string scriptPath = sourceDir_ + "/train_update.py";
-            std::string cmd = "python3 " + scriptPath + " --data_dir " + dataDir_;
+            std::string cmd = "python3 " + scriptPath
+                + " --data_dir " + dataDir_
+                + " --window_frames " + std::to_string(windowFrames_);
             
             Foam::Info<< "  [DataSampler] Script path: " << scriptPath << Foam::nl;
             Foam::Info<< "  [DataSampler] Data dir: " << dataDir_ << Foam::nl;
@@ -553,10 +554,12 @@ bool DataSampler::update()
 
             // Reopen HDF5 file for continued sampling
             reopenHDF5File();
+
+            retrainStatus = 2;  // Signal: reload weights into active surrogate
         }
 
         samplesSinceRetrain_ = 0;
     }
 
-    return activateSurrogate;
+    return retrainStatus;
 }

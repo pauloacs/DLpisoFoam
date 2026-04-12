@@ -118,15 +118,17 @@ int main(int argc, char *argv[])
             IOobject::NO_WRITE
         )
     );
-    int warmUpSteps     = mlDict.lookupOrDefault<int>("warmUpSteps",     20);
+    int warmUpSteps     = mlDict.lookupOrDefault<int>("warmUpSteps",     10);
     int burstSteps      = mlDict.lookupOrDefault<int>("burstSteps",       10);
-    int regularInterval = mlDict.lookupOrDefault<int>("regularInterval",  5);
-    int retrainInterval = mlDict.lookupOrDefault<int>("retrainInterval",  10);
+    int burstInterval   = mlDict.lookupOrDefault<int>("burstInterval",     1);
+    int regularInterval = mlDict.lookupOrDefault<int>("regularInterval",   5);
+    int retrainInterval = mlDict.lookupOrDefault<int>("retrainInterval",  20);
+    int windowFrames    = mlDict.lookupOrDefault<int>("windowFrames",     30);
 
     DataSampler dataSampler(
         mesh, delta_U, delta_p_rgh_CFD, "ML_data",
         sourceScriptDir,
-        warmUpSteps, burstSteps, regularInterval, retrainInterval
+        warmUpSteps, burstSteps, burstInterval, regularInterval, retrainInterval, windowFrames
     );
 
     while (pimple.run(runTime))
@@ -244,12 +246,18 @@ int main(int argc, char *argv[])
         rho = thermo.rho();
 
         // --- Sampling, writing, and ML training ---
-        bool shouldActivate = dataSampler.update();
-        if (shouldActivate && !surrogateActive)
+        int retrainStatus = dataSampler.update();
+        if (retrainStatus == 1 && !surrogateActive)
         {
+            // First training completed: initialise surrogate (loads weights too)
             Info<< "Initializing DL Surrogate Model." << nl;
             surrogate.init();
             surrogateActive = true;
+        }
+        else if (retrainStatus == 2 && surrogateActive)
+        {
+            // Incremental retrain completed: reload updated weights into memory
+            surrogate.reload();
         }
 
         runTime.write();
