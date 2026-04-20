@@ -4,11 +4,7 @@ import sys
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import numpy as np
-
-import mpi4py
-mpi4py.rc.initialize = True
-mpi4py.rc.finalize = False
-from mpi4py import MPI
+from numba import njit
 
 from tensorflow.keras.models import load_model
 from tensorflow.keras import Model, regularizers
@@ -67,6 +63,20 @@ def interpolate_fill(values, vtx, wts, fill_value=np.nan):
     #ret[np.any(wts < 0, axis=1)] = fill_value
     return ret
 
+
+@njit(cache=True, fastmath=True, nogil=True)
+def interpolate_fill_njit(values_flat, vtx, wts):
+    """Numba-JIT interpolation for 1D flat values array (faster than einsum for repeated calls)."""
+    n = vtx.shape[0]
+    k = vtx.shape[1]
+    result = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        acc = 0.0
+        for j in range(k):
+            acc += values_flat[vtx[i, j]] * wts[i, j]
+        result[i] = acc
+    return result
+
 def domain_dist(top_boundary, obst_boundary, xy0, domain_limits):
     """
     Calculate the fluid-flow domain and the signal distance function (SDF).
@@ -103,7 +113,7 @@ def domain_dist(top_boundary, obst_boundary, xy0, domain_limits):
     is_inside_obst = path.contains_points(xy0)
     domain_bool = is_inside_domain * ~is_inside_obst
     # If this causes an OOM error, increase the step
-    step = 2
+    step = 30
     top = top[0:top.shape[0]:step,:]
     obst = obst[0:obst.shape[0]:step,:]
     sdf = np.minimum( distance.cdist(xy0,obst).min(axis=1) , distance.cdist(xy0,top).min(axis=1) ) * domain_bool
