@@ -36,6 +36,10 @@ from pressure_SM._3D.train_and_eval.assembly import assemble_prediction
 from pressure_SM._3D.train_and_eval.neural_networks import *
 
 
+# Call counter for inspect_results mode
+_inspect_call_count = 0
+
+
 def load_tucker_and_NN(
 	tucker_fn,
 	maxs_fn,
@@ -50,7 +54,9 @@ def load_tucker_and_NN(
 	dropout_rate,
 	regularization,
 	ranks,
-	verbose=True
+	verbose=True,
+	inspect_results=False,
+	inspect_output_dir='SM_inspect',
 ):
 	"""
 	Load tucker factors and initialize the trained neural network model.
@@ -76,6 +82,10 @@ def load_tucker_and_NN(
 	block_size_g = block_size
 	grid_res_g = grid_res
 
+	global inspect_results_g, inspect_output_dir_g
+	inspect_results_g = inspect_results
+	inspect_output_dir_g = inspect_output_dir
+
 	global comm, rank, nprocs
 	print('Initializing MPI communication in Python')
 	comm = MPI.COMM_WORLD
@@ -83,6 +93,9 @@ def load_tucker_and_NN(
 	nprocs = comm.Get_size()
 
 	if rank == 0:
+		if inspect_results:
+			os.makedirs(inspect_output_dir, exist_ok=True)
+			print(f'[inspect_results] Output directory: {os.path.abspath(inspect_output_dir)}')
 		global in_factors, out_factors
 		print('Loading the Tucker factors')
 		with open(tucker_fn, 'rb') as f:
@@ -144,6 +157,34 @@ def load_tucker_and_NN(
 			print(f"overlap_ratio: {overlap_ratio}")
 
 
+def _plot_sm_result(deltap_res, call_count, output_dir):
+	"""Save three orthogonal mid-slice views of the assembled pressure field."""
+	nz, ny, nx = deltap_res.shape
+	iz, iy, ix = nz // 2, ny // 2, nx // 2
+
+	fig, axes = plt.subplots(1, 3, figsize=(16, 4))
+	slices = [
+		(deltap_res[iz, :, :], f'Z mid-slice  (iz={iz})',   'x index', 'y index'),
+		(deltap_res[:, iy, :], f'Y mid-slice  (iy={iy})',   'x index', 'z index'),
+		(deltap_res[:, :, ix], f'X mid-slice  (ix={ix})',   'y index', 'z index'),
+	]
+	vmax = np.nanmax(np.abs(deltap_res))
+	for ax, (data, title, xlabel, ylabel) in zip(axes, slices):
+		im = ax.imshow(data, origin='lower', aspect='auto', cmap='RdBu_r',
+		               vmin=-vmax, vmax=vmax)
+		plt.colorbar(im, ax=ax, label='Δp (Pa)')
+		ax.set_title(title, fontsize=11)
+		ax.set_xlabel(xlabel)
+		ax.set_ylabel(ylabel)
+
+	fig.suptitle(f'SM assembled result — call #{call_count}  |  grid {nz}×{ny}×{nx}', fontsize=12)
+	plt.tight_layout()
+	fname = os.path.join(output_dir, f'SM_result_{call_count:05d}.png')
+	plt.savefig(fname, dpi=100, bbox_inches='tight')
+	plt.close(fig)
+	print(f'[inspect_results] Saved: {fname}')
+
+
 def reload_weights(weights_fn):
 	"""Reload NN weights from disk after incremental retraining.
 
@@ -152,11 +193,35 @@ def reload_weights(weights_fn):
 	Only the model weights are refreshed; Tucker factors and interpolation
 	data remain unchanged.
 	"""
-	global model
+	import os, time
+	global model, mean_in, std_in, mean_out, std_out
 	if rank == 0:
-		print(f"[reload_weights] Reloading model weights from {weights_fn}")
+		if os.path.exists(weights_fn):
+			fsize = os.path.getsize(weights_fn)
+			mtime = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(weights_fn)))
+			print(f"[reload_weights] Loading: {weights_fn}  |  size={fsize} bytes  |  modified={mtime}")
+		else:
+			print(f"[reload_weights] ERROR: weights file not found: {weights_fn}")
+			return
+		# Checksum of first layer weights before reload
+		import numpy as np
+		weights_before = model.get_weights()
+		chk_before = sum(float(np.sum(w)) for w in weights_before)
 		model.load_weights(weights_fn)
+		weights_after = model.get_weights()
+		chk_after = sum(float(np.sum(w)) for w in weights_after)
+		print(f"[reload_weights] Weight checksum before={chk_before:.6f}  after={chk_after:.6f}  changed={not np.isclose(chk_before, chk_after)}")
 		print("[reload_weights] Model weights reloaded successfully.")
+		# Reload normalization stats so inference always uses the same stats
+		# as those used when the model was trained.
+		std_vals_fn = os.path.join(os.path.dirname(weights_fn), 'mean_std.npz')
+		if os.path.exists(std_vals_fn):
+			norm_data = np.load(std_vals_fn)
+			mean_in  = norm_data['mean_in'];  std_in  = norm_data['std_in']
+			mean_out = norm_data['mean_out']; std_out = norm_data['std_out']
+			print(f"[reload_weights] Normalization stats reloaded from {std_vals_fn}")
+		else:
+			print(f"[reload_weights] WARNING: normalization file not found: {std_vals_fn}")
 
 
 def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_boundary, obst_boundary):
@@ -503,10 +568,16 @@ def py_func(array_in, U_max_norm):
 			deltaU_change_grid,
 			deltaP_prev_grid,
 			True,
+			filter_tuple_g,
 		)
 
 		if verbose_g:
 			print(f"Assembly algorithm took: {time.time()-t0} s")
+
+		if inspect_results_g:
+			global _inspect_call_count
+			_inspect_call_count += 1
+			_plot_sm_result(deltap_res, _inspect_call_count, inspect_output_dir_g)
 
 		t0 = time.time()
 

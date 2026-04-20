@@ -30,8 +30,10 @@ std_vals_fn       = f"{ML_data_folder}/mean_std.npz"
 weights_fn        = f"{ML_data_folder}/weights.h5"
 apply_filter      = True
 overlap_ratio     = 0.1
-filter_tuple      = (20, 20)
+filter_tuple      = (20, 20, 20)
 verbose           = False
+feature_extraction_chunk_size = 5000 # chunk_size for FeatureExtractAndWrite during training
+retrain_from_scratch          = False # If True, each retrain starts from a fresh model; if False, continues from current weights
 
 # Only run OpenFOAM/MPI initialization when loaded by the solver, not by training scripts
 if not os.environ.get('TRAIN_SCRIPT_MODE'):
@@ -67,6 +69,10 @@ if not os.environ.get('TRAIN_SCRIPT_MODE'):
 
     #from pressure_SM._3D.CFD_usable.main import init_func, py_func
     from pressure_SM._3D.CFD_usable.main_mpi import init_func, py_func
+    from pressure_SM._3D.CFD_usable.main_mpi import reload_weights as _reload_weights_impl
+
+    def reload_weights():
+        _reload_weights_impl(weights_fn)
 
 if __name__ == '__main__':
     print('This is the Python module for DLPoissonFoam')

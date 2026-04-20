@@ -132,17 +132,17 @@ void SurrogateModel::reload()
         return;
     }
 
-    Foam::Info<< ">>> Reloading surrogate model weights from disk <<<" << Foam::endl;
+    Foam::Info<< ">>> [SurrogateModel] reload() triggered — calling Python reload_weights() <<<" << Foam::endl;
     PyObject* result = PyObject_CallObject(reload_func_, nullptr);
     if (!result)
     {
         PyErr_Print();
-        Foam::Info<< ">>> WARNING: reload_weights() Python call failed <<<" << Foam::endl;
+        Foam::Info<< ">>> [SurrogateModel] WARNING: reload_weights() Python call FAILED — surrogate still using old weights <<<" << Foam::endl;
     }
     else
     {
         Py_DECREF(result);
-        Foam::Info<< ">>> Surrogate model weights reloaded successfully <<<" << Foam::endl;
+        Foam::Info<< ">>> [SurrogateModel] reload_weights() returned OK — surrogate is now using updated weights <<<" << Foam::endl;
     }
 }
 

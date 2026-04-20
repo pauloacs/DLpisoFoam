@@ -32,7 +32,8 @@ def add_new_features_and_train():
     from python_module import (
         grid_res, block_size, ranks, dropout_rate, regularization,
         model_architecture, standardization_method, n_samples_per_frame,
-        lr, batch_size, beta, num_epochs, feature_extraction_chunk_size
+        lr, batch_size, beta, num_epochs, feature_extraction_chunk_size,
+        retrain_from_scratch
     )
 
     gridded_h5_fn = os.path.join(data_dir, 'gridded_data.h5')
@@ -167,21 +168,9 @@ def add_new_features_and_train():
         grid_limits
     )
 
-    # --- Calculate block maximums ---
-    current_maxs_list = np.load(maxs_list_fn, allow_pickle=True)
-
-    maxs_list = utils_sampling.calculate_and_save_block_abs_max(
-        0, 0, 0,
-        n_sample_frames,
-        sample_idx_fn,
-        None,
-        block_size,
-        [gridded_h5_fn],
-        for_auto_CFD=True
-    )
-
-    maxs_list = np.maximum(maxs_list, current_maxs_list)
-    np.save(maxs_list_fn, maxs_list)
+    # --- Use the fixed block maximums from initial training ---
+    maxs_list = np.load(maxs_list_fn, allow_pickle=True)
+    print(f"[train_update] Using fixed maxs_list from initial training: {maxs_list_fn}")
 
     # --- Extract features from new data ---
     feature_writer = FeatureExtractAndWrite(
@@ -237,7 +226,7 @@ def add_new_features_and_train():
         if os.path.exists(fn):
             os.remove(fn)
 
-    Train.prepare_data_to_tf(core_data_fn, normalization_factors_fn, flatten_data=True)
+    Train.prepare_data_to_tf(core_data_fn, normalization_factors_fn, flatten_data=True, load_existing_normalization=True)
     Train.load_data_and_train(
         lr=lr,
         batch_size=batch_size,
@@ -249,7 +238,7 @@ def add_new_features_and_train():
         dropout_rate=dropout_rate,
         regularization=regularization,
         model_architecture=model_architecture,
-        new_model=False,
+        new_model=retrain_from_scratch,
         ranks=ranks,
         flatten_data=True,
         weights_fn=os.path.join(data_dir, 'weights.h5'),

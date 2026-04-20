@@ -122,13 +122,15 @@ int main(int argc, char *argv[])
     int burstSteps      = mlDict.lookupOrDefault<int>("burstSteps",       10);
     int burstInterval   = mlDict.lookupOrDefault<int>("burstInterval",     1);
     int regularInterval = mlDict.lookupOrDefault<int>("regularInterval",   5);
-    int retrainInterval = mlDict.lookupOrDefault<int>("retrainInterval",  20);
-    int windowFrames    = mlDict.lookupOrDefault<int>("windowFrames",     30);
+    int retrainInterval       = mlDict.lookupOrDefault<int>("retrainInterval",       20);
+    int windowFrames          = mlDict.lookupOrDefault<int>("windowFrames",           30);
+    int waitBeforeResampling  = mlDict.lookupOrDefault<int>("waitBeforeResampling",    0);
 
     DataSampler dataSampler(
         mesh, delta_U, delta_p_rgh_CFD, "ML_data",
         sourceScriptDir,
-        warmUpSteps, burstSteps, burstInterval, regularInterval, retrainInterval, windowFrames
+        warmUpSteps, burstSteps, burstInterval, regularInterval, retrainInterval, windowFrames,
+        waitBeforeResampling
     );
 
     while (pimple.run(runTime))

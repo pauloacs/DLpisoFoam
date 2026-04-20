@@ -224,7 +224,7 @@ class FeatureExtractAndWrite:
         last_sim: int = 0,
         first_t: int = 0,
         last_t: int = 0,
-        standardization_method: str = 'minmax',
+        standardization_method: str = 'std',
         chunk_size: int = 500,
         ranks: int = 4,
         gridded_h5_fn: str = 'gridded_data.h5',

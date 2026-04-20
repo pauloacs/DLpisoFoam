@@ -18,7 +18,8 @@ DataSampler::DataSampler
     int burstInterval,
     int regularInterval,
     int retrainInterval,
-    int windowFrames
+    int windowFrames,
+    int waitBeforeResampling
 )
 :
     warmUpSteps_(warmUpSteps),
@@ -27,9 +28,11 @@ DataSampler::DataSampler
     regularInterval_(regularInterval),
     retrainInterval_(retrainInterval),
     windowFrames_(windowFrames),
+    waitBeforeResampling_(waitBeforeResampling),
     timeStep_(0),
     sampleCount_(0),
     samplesSinceRetrain_(0),
+    stepsSinceLastTrain_(waitBeforeResampling),  // allow sampling before first training
     initialTrainingDone_(false),
     coordinatesWritten_(false),
     masterFile_(-1),
@@ -57,6 +60,12 @@ bool DataSampler::shouldSample() const
         return false;
     }
 
+    // Wait period after a training completes before resuming sampling
+    if (initialTrainingDone_ && stepsSinceLastTrain_ < waitBeforeResampling_)
+    {
+        return false;
+    }
+
     // Phase 2: burst sampling — every burstInterval_ steps for burstSteps_ samples
     int stepsSinceWarmUp = timeStep_ - warmUpSteps_;
     int burstDuration = burstSteps_ * burstInterval_;
@@ -73,7 +82,11 @@ bool DataSampler::shouldSample() const
 
 bool DataSampler::shouldRetrain() const
 {
-    return (samplesSinceRetrain_ >= retrainInterval_);
+    if (!initialTrainingDone_)
+    {
+        return (sampleCount_ >= burstSteps_);  // fire after burst is complete
+    }
+    return (samplesSinceRetrain_ >= retrainInterval_);  // subsequent retrains
 }
 
 
@@ -471,6 +484,7 @@ void DataSampler::writeSample()
 int DataSampler::update()
 {
     timeStep_++;
+    stepsSinceLastTrain_++;
     // 0 = nothing, 1 = first training done (activate surrogate),
     // 2 = incremental retrain done (reload weights into active surrogate)
     int retrainStatus = 0;
@@ -519,6 +533,7 @@ int DataSampler::update()
             reopenHDF5File();
 
             initialTrainingDone_ = true;
+            stepsSinceLastTrain_ = 0;
             retrainStatus = 1;  // Signal: activate surrogate (init loads weights)
         }
         else
@@ -559,6 +574,7 @@ int DataSampler::update()
         }
 
         samplesSinceRetrain_ = 0;
+        stepsSinceLastTrain_ = 0;
     }
 
     return retrainStatus;

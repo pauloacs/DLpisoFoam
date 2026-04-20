@@ -86,7 +86,8 @@ class Training:
     self,
     outarray_flat_fn: str= 'features_data.h5',
     normalization_factors_fn: str = 'mean_std.npz',
-    flatten_data: bool = False):
+    flatten_data: bool = False,
+    load_existing_normalization: bool = False):
 
     filename_flat = outarray_flat_fn
      
@@ -97,7 +98,7 @@ class Training:
 
     standardization_method="std"
     print(f'Normalizing feature data based on standardization method: {standardization_method}')
-    x, y = utils_data.normalize_feature_data(input, output, standardization_method, normalization_factors_fn=normalization_factors_fn)
+    x, y = utils_data.normalize_feature_data(input, output, standardization_method, normalization_factors_fn=normalization_factors_fn, load_existing=load_existing_normalization)
     x, y = utils_data.unison_shuffled_copies(x, y)
     print('Data shuffled \n')
     if flatten_data:

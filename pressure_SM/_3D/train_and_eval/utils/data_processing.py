@@ -2,6 +2,7 @@
 Data interpolation, normalization, and grid operations.
 """
 
+import os
 import numpy as np
 from scipy.spatial import qhull
 from scipy.spatial import cKDTree
@@ -214,7 +215,7 @@ def unison_shuffled_copies(a, b):
     return a[p], b[p]
     
 
-def normalize_feature_data(input, output, standardization_method: str = "std", normalization_factors_fn: str = "mean_std.npz"):
+def normalize_feature_data(input, output, standardization_method: str = "std", normalization_factors_fn: str = "mean_std.npz", load_existing: bool = False):
     """
     Normalize input and output data using different standardization methods.
     
@@ -222,10 +223,32 @@ def normalize_feature_data(input, output, standardization_method: str = "std", n
         input (ndarray): Input features
         output (ndarray): Output targets
         standardization_method (str): Method to use ('std', 'min_max', or 'max_abs')
+        load_existing (bool): If True and the normalization file exists, load and reuse
+                              the saved statistics instead of recomputing them.
         
     Returns:
         tuple: Normalized (x, y) arrays
     """
+    if load_existing and os.path.exists(normalization_factors_fn):
+        print(f'[normalize_feature_data] Loading existing normalization stats from {normalization_factors_fn}')
+        data = np.load(normalization_factors_fn)
+        if standardization_method == 'std':
+            mean_in  = data['mean_in'];  std_in  = data['std_in']
+            mean_out = data['mean_out']; std_out = data['std_out']
+            x = (input  - mean_in)  / std_in
+            y = (output - mean_out) / std_out
+        elif standardization_method == 'min_max':
+            min_in = data['min_in']; max_in = data['max_in']
+            min_out = data['min_out']; max_out = data['max_out']
+            x = (input  - min_in)  / (max_in  - min_in)
+            y = (output - min_out) / (max_out - min_out)
+        elif standardization_method == 'max_abs':
+            max_abs_input_PCA = data['max_abs_input_PCA']
+            max_abs_p_PCA     = data['max_abs_p_PCA']
+            x = input  / max_abs_input_PCA
+            y = output / max_abs_p_PCA
+        return x, y
+
     if standardization_method == 'min_max':
         ## Option 2: Min-max scaling
         min_in = np.min(input, axis=0)

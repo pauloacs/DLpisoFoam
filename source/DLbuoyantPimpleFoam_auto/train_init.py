@@ -293,7 +293,7 @@ if __name__ == "__main__":
         flatten_data=True,
         maxs_list=maxs_list
     )
-    feature_writer(core_data_fn, n_representative_blocks=200, compute_tucker_factors=True)
+    feature_writer(core_data_fn, n_representative_blocks=1000, compute_tucker_factors=True)
     print("Feature extraction and writing complete.")
     print(f"Tucker decomposition complete and factors saved to {tucker_factors_fn}.")
     print(f"Core data with features saved to {core_data_fn}.")

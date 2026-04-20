@@ -5,4 +5,5 @@ burstSteps      10;
 burstInterval   2;
 regularInterval 5;
 retrainInterval 20;
-windowFrames    30;
+windowFrames         30;
+waitBeforeResampling 0;

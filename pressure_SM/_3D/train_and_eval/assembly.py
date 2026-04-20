@@ -151,6 +151,7 @@ def assemble_prediction(
     deltaU_change_grid,
     deltaP_prev_grid,
     apply_deltaU_change_wgt,
+    filter_tuple=(10, 10, 10),
 ):
     """
     Reconstructs the flow domain based on squared blocks.
@@ -234,22 +235,22 @@ def assemble_prediction(
     sub_scalar_inplace(result, correction)
 
     if apply_filter:
-        ndimage.gaussian_filter1d(result, sigma=10, axis=0, order=0, mode="constant", truncate=3.0, output=tmp0)
-        ndimage.gaussian_filter1d(tmp0, sigma=10, axis=1, order=0, mode="constant", truncate=3.0, output=tmp1)
-        ndimage.gaussian_filter1d(tmp1, sigma=10, axis=2, order=0, mode="constant", truncate=3.0, output=result)
+        ndimage.gaussian_filter1d(result, sigma=filter_tuple[0], axis=0, order=0, mode="constant", truncate=3.0, output=tmp0)
+        ndimage.gaussian_filter1d(tmp0,   sigma=filter_tuple[1], axis=1, order=0, mode="constant", truncate=3.0, output=tmp1)
+        ndimage.gaussian_filter1d(tmp1,   sigma=filter_tuple[2], axis=2, order=0, mode="constant", truncate=3.0, output=result)
 
     change_in_deltap = None
     if apply_deltaU_change_wgt:
-        ndimage.gaussian_filter1d(deltaU_change_grid, sigma=5, axis=0, order=0, mode="constant", truncate=3.0, output=tmp0)
-        ndimage.gaussian_filter1d(tmp0, sigma=5, axis=1, order=0, mode="constant", truncate=3.0, output=tmp1)
-        ndimage.gaussian_filter1d(tmp1, sigma=5, axis=2, order=0, mode="constant", truncate=3.0, output=deltaU_change_grid)
+        ndimage.gaussian_filter1d(deltaU_change_grid, sigma=filter_tuple[0], axis=0, order=0, mode="constant", truncate=3.0, output=tmp0)
+        ndimage.gaussian_filter1d(tmp0,               sigma=filter_tuple[1], axis=1, order=0, mode="constant", truncate=3.0, output=tmp1)
+        ndimage.gaussian_filter1d(tmp1,               sigma=filter_tuple[2], axis=2, order=0, mode="constant", truncate=3.0, output=deltaU_change_grid)
 
         np.subtract(result, deltaP_prev_grid, out=tmp0)
         np.multiply(tmp0, deltaU_change_grid, out=tmp0)
 
-        ndimage.gaussian_filter1d(tmp0, sigma=10, axis=0, order=0, mode="constant", truncate=3.0, output=tmp1)
-        ndimage.gaussian_filter1d(tmp1, sigma=10, axis=1, order=0, mode="constant", truncate=3.0, output=tmp0)
-        ndimage.gaussian_filter1d(tmp0, sigma=10, axis=2, order=0, mode="constant", truncate=3.0, output=tmp1)
+        ndimage.gaussian_filter1d(tmp0, sigma=filter_tuple[0], axis=0, order=0, mode="constant", truncate=3.0, output=tmp1)
+        ndimage.gaussian_filter1d(tmp1, sigma=filter_tuple[1], axis=1, order=0, mode="constant", truncate=3.0, output=tmp0)
+        ndimage.gaussian_filter1d(tmp0, sigma=filter_tuple[2], axis=2, order=0, mode="constant", truncate=3.0, output=tmp1)
         change_in_deltap = tmp1
 
     return result, change_in_deltap

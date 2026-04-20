@@ -29,6 +29,7 @@ py_args = PyTuple_New(2);
 
 Info<< ">>> Reading reload_func <<<" << endl;
 reload_func = PyObject_GetAttrString(pModule, "reload_weights");
+if (!reload_func) { PyErr_Clear(); }
 
 Info<< ">>> Python functions defined <<<" << endl;
 
