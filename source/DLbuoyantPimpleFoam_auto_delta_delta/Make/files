@@ -1,0 +1,4 @@
+DLbuoyantPimpleFoam_auto_delta_delta.C
+MLSampling.C
+SurrogateModel.C
+EXE = $(FOAM_APPBIN)/DLbuoyantPimpleFoam_auto_delta_delta

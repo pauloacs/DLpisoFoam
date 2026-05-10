@@ -1,0 +1,1617 @@
+import tensorflow as tf
+from tensorflow.keras import Input, Model, regularizers
+from tensorflow.keras import layers
+from tensorflow.keras.layers import Layer
+from spektral.layers import GCNConv
+
+################################################################################
+## Custom Layers
+################################################################################
+
+
+################################################################################
+## Custom Layers
+################################################################################
+
+class SymmetricPadding3D(Layer):
+    """Custom layer for mirror-like padding in 3D.
+
+    Supports:
+      - mode='SYMMETRIC': repeats the boundary value
+      - mode='REFLECT': reflects without repeating the boundary value
+
+    For your boundary artifact test, try mode='REFLECT' next.
+    """
+
+    def __init__(self, padding, mode="SYMMETRIC", **kwargs):
+        super().__init__(**kwargs)
+
+        if isinstance(padding, int):
+            self.padding = (padding, padding, padding)
+        else:
+            self.padding = tuple(padding)
+
+        self.mode = mode.upper()
+
+        if self.mode not in ["SYMMETRIC", "REFLECT"]:
+            raise ValueError(
+                "Padding mode must be either 'SYMMETRIC' or 'REFLECT'. "
+                f"Received: {mode}"
+            )
+
+    def call(self, x):
+        pz, py, px = self.padding
+
+        return tf.pad(
+            x,
+            paddings=[
+                [0, 0],      # batch
+                [pz, pz],    # z
+                [py, py],    # y
+                [px, px],    # x
+                [0, 0],      # channels
+            ],
+            mode=self.mode,
+        )
+
+    def get_config(self):
+        config = super().get_config()
+        config.update(
+            {
+                "padding": self.padding,
+                "mode": self.mode,
+            }
+        )
+        return config
+
+
+def padded_conv3d(
+    x,
+    filters,
+    kernel_size=3,
+    dilation_rate=(1, 1, 1),
+    regularization=1e-5,
+    use_bias=True,
+    pad_mode="REFLECT",
+):
+    """Helper: Conv3D with explicit mirror padding instead of zero padding.
+
+    For kernel_size=3, the required padding equals the dilation_rate.
+
+    Recommended first tests:
+      pad_mode='REFLECT'    -> usually less boundary repetition
+      pad_mode='SYMMETRIC'  -> repeats boundary value
+    """
+
+    if kernel_size != 3:
+        raise NotImplementedError("This helper assumes kernel_size=3.")
+
+    # For kernel_size=3, required padding equals dilation_rate
+    padding = dilation_rate
+
+    x = SymmetricPadding3D(
+        padding=padding,
+        mode=pad_mode,
+    )(x)
+
+    x = layers.Conv3D(
+        filters=filters,
+        kernel_size=kernel_size,
+        padding="valid",
+        dilation_rate=dilation_rate,
+        use_bias=use_bias,
+        kernel_regularizer=regularizers.l2(regularization),
+    )(x)
+
+    return x
+
+
+################################################################################
+## Neural Networks architectures
+################################################################################
+
+def GNN(
+    rank,
+    n_gnn_layers=3,
+    gnn_units=64,
+    dropout_rate=None,
+    regularization=None
+):
+    """
+    Creates a GNN for features prediction.
+    Inputs:
+        - Input shape: (4, 4, 4, 4)  (grid: 4x4x4, 4 features per node)
+        - Output shape: (4, 4, 4)    (grid: 4x4x4, 1 output per node)
+    """
+
+    n_nodes = rank * rank * rank
+    node_features = 4
+    output_dim = 1
+
+    # Input: (rank,rank,rank,noide_features)
+    X_in = Input(shape=(rank, rank, rank, node_features), name='X_in')  # (4,4,4,4) input
+    # Reshape to (n_nodes, node_features)
+    x = layers.Reshape((n_nodes, node_features))(X_in)
+
+    # Adjacency matrix input (n_nodes, n_nodes)
+    A_in = Input(shape=(n_nodes, n_nodes), name='A_in')
+
+    reg = regularizers.l2(regularization) if regularization else None
+
+    for _ in range(n_gnn_layers):
+        x = GCNConv(gnn_units, activation='relu', kernel_regularizer=reg)([x, A_in])
+        if dropout_rate:
+            x = layers.Dropout(dropout_rate)(x)
+
+    x = layers.Dense(output_dim)(x)  # (n_nodes, 1)
+    # Reshape back to (rank,rank,rank)
+    outputs = layers.Reshape((rank, rank, rank))(x)
+
+    model = Model(inputs=[X_in, A_in], outputs=outputs, name="GNN")
+    print(model.summary())
+    return model
+
+class SpectralConv3D(tf.keras.layers.Layer):
+    def __init__(self, in_channels, out_channels, modes):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.modes = modes  # (mx, my, mz)
+        initializer = tf.keras.initializers.GlorotUniform()
+        self.weight_real = self.add_weight(
+            shape=(in_channels, out_channels, *self.modes),
+            initializer=initializer,
+            trainable=True,
+            name="w_real"
+        )
+        self.weight_imag = self.add_weight(
+            shape=(in_channels, out_channels, *self.modes),
+            initializer=initializer,
+            trainable=True,
+            name="w_imag"
+        )
+
+    def call(self, x):
+        # x: (B, X, Y, Z, C)
+        x_ft = tf.signal.fft3d(tf.cast(x, tf.complex64))  # (B, X, Y, Z, C)
+        x_ft = tf.transpose(x_ft, [0, 4, 1, 2, 3])  # (B, C, X, Y, Z)
+        mx, my, mz = self.modes
+        x_ft_crop = x_ft[:, :, :mx, :my, :mz]
+        w_complex = tf.complex(self.weight_real, self.weight_imag)
+        out_ft = tf.einsum("bixyz,ioxyz->boxyz", x_ft_crop, w_complex)
+        # Pad to original size
+        pad = [[0, 0], [0, 0], [0, x.shape[1] - mx], [0, x.shape[2] - my], [0, x.shape[3] - mz]]
+        out_ft = tf.pad(out_ft, pad)
+        out_ft = tf.transpose(out_ft, [0, 2, 3, 4, 1])  # (B, X, Y, Z, Cout)
+        x_out = tf.signal.ifft3d(out_ft)
+        x_out_real = tf.math.real(x_out)
+        return x_out_real
+
+def FNO3d_old(rank, out_channels=1, width=8, n_layers=3):
+    """
+    Simpler FNO 3D model.
+    """
+    input_shape = (rank, rank, rank, 4)
+    modes = (rank, rank, rank)
+    inputs = Input(shape=input_shape)
+    x = Conv3D(width, kernel_size=1)(inputs)
+    for _ in range(n_layers):
+        x1 = SpectralConv3D(width, width, modes)(x)
+        x2 = Conv3D(width, kernel_size=1)(x)
+        x = Add()([x1, x2])
+        x = Activation('gelu')(x)
+    x = Conv3D(out_channels, kernel_size=1)(x)
+    if out_channels == 1:
+        x = tf.squeeze(x, axis=-1)
+    model = Model(inputs, x, name="FNO3D")
+    model.summary()
+    return model
+
+
+
+# Fourier Neural Operator (FNO) for 3D flow data, inspired by Li et al. (2021)
+# Reference: https://arxiv.org/abs/2010.08895
+
+class FNOBlock3D(tf.keras.layers.Layer):
+    """
+    A single 3D FNO block: spectral convolution + pointwise convolution + skip connection.
+    """
+    def __init__(self, width, modes, activation='gelu'):
+        super().__init__()
+        self.width = width
+        self.modes = modes  # (mx, my, mz)
+        self.activation = tf.keras.layers.Activation(activation)
+        # Spectral weights (real and imag) for each input/output channel and mode
+        self.weight_real = self.add_weight(
+            shape=(width, width, *modes),
+            initializer='glorot_uniform',
+            trainable=True,
+            name="fno_weight_real"
+        )
+        self.weight_imag = self.add_weight(
+            shape=(width, width, *modes),
+            initializer='glorot_uniform',
+            trainable=True,
+            name="fno_weight_imag"
+        )
+        # Pointwise (1x1x1) convolution
+        self.w_conv = tf.keras.layers.Conv3D(width, kernel_size=1)
+
+    def call(self, x):
+        # x: (B, X, Y, Z, width)
+        x_ft = tf.signal.fft3d(tf.cast(x, tf.complex64))  # (B, X, Y, Z, width)
+        x_ft = tf.transpose(x_ft, [0, 4, 1, 2, 3])  # (B, width, X, Y, Z)
+        # Dynamically determine the number of modes to use based on input shape
+        X, Y, Z = x.shape[1], x.shape[2], x.shape[3]
+        mx = min(self.modes[0], X)
+        my = min(self.modes[1], Y)
+        mz = min(self.modes[2], Z)
+        # Truncate high-frequency modes
+        x_ft_crop = x_ft[:, :, :mx, :my, :mz]  # (B, width, mx, my, mz)
+        w_complex = tf.complex(
+            self.weight_real[:, :, :mx, :my, :mz],
+            self.weight_imag[:, :, :mx, :my, :mz]
+        )
+        out_ft = tf.einsum("bixyz,ioxyz->boxyz", x_ft_crop, w_complex)
+        # Pad back to original size
+        pad = [[0, 0], [0, 0], [0, X - mx], [0, Y - my], [0, Z - mz]]
+        out_ft = tf.pad(out_ft, pad)
+        out_ft = tf.transpose(out_ft, [0, 2, 3, 4, 1])  # (B, X, Y, Z, width)
+        x_ifft = tf.signal.ifft3d(out_ft)
+        x_ifft = tf.math.real(x_ifft)
+        # Pointwise conv and skip connection
+        x_pw = self.w_conv(x)
+        return self.activation(x_ifft + x_pw)
+
+def FNO3d(
+    rank,
+    in_channels=4,
+    out_channels=1,
+    width=32,
+    modes=(12, 12, 12),
+    n_layers=2,
+    activation='gelu'
+):
+    """
+    FNO-3D model for flow data, following Li et al. (2021).
+    Args:
+        rank: spatial size (e.g., 4 for 4x4x4)
+        in_channels: input features per voxel
+        out_channels: output features per voxel
+        width: number of channels in FNO layers
+        modes: number of Fourier modes to keep (mx, my, mz)
+        n_layers: number of FNO blocks
+    Returns:
+        Keras Model mapping (rank, rank, rank, in_channels) -> (rank, rank, rank) or (..., out_channels)
+    """
+    input_shape = (rank, rank, rank, in_channels)
+    inputs = tf.keras.Input(shape=input_shape)
+    # Initial projection to width channels
+    x = tf.keras.layers.Conv3D(width, kernel_size=1)(inputs)
+    # Stack FNO blocks
+    for _ in range(n_layers):
+        x = FNOBlock3D(width, modes, activation=activation)(x)
+    # Final projection to output channels
+    x = tf.keras.layers.Conv3D(out_channels, kernel_size=1)(x)
+    if out_channels == 1:
+        x = tf.squeeze(x, axis=-1)
+    model = tf.keras.Model(inputs, x, name="FNO3D")
+    model.summary()
+    return model
+
+
+from tensorflow.keras.layers import Dropout, LayerNormalization, Add, Reshape, Permute
+
+def MLP_Mixer_3D(n_layers, rank, in_channels=4, token_mlp_dim=128, channel_mlp_dim=128, 
+                 dropout_rate=None, regularization=None):
+    """
+    Creates a simple MLP-Mixer for 3D CFD blocks of shape (rank, rank, rank, in_channels).
+    Outputs shape: (rank, rank, rank)
+    """
+
+    n_tokens = rank ** 3
+    input_shape = (rank, rank, rank, in_channels)
+    inputs = Input(shape=input_shape)
+
+    # Flatten spatial dims but keep feature dim
+    x = Reshape((n_tokens, in_channels))(inputs)
+
+    if regularization is not None:
+        regularizer = regularizers.l2(regularization)
+        print(f'\nUsing L2 regularization. Value: {regularization}\n')
+    else:
+        regularizer = None
+
+    for _ in range(n_layers):
+        # Token mixing
+        y = LayerNormalization()(x)
+        y = Permute((2, 1))(y)  # (batch, channels, tokens)
+        y = Dense(token_mlp_dim, activation='gelu', kernel_regularizer=regularizer)(y)
+        y = Dense(n_tokens, kernel_regularizer=regularizer)(y)
+        y = Permute((2, 1))(y)
+        if dropout_rate:
+            y = Dropout(dropout_rate)(y)
+        x = Add()([x, y])
+
+        # Channel mixing
+        y = LayerNormalization()(x)
+        y = Dense(channel_mlp_dim, activation='gelu', kernel_regularizer=regularizer)(y)
+        y = Dense(in_channels, kernel_regularizer=regularizer)(y)
+        if dropout_rate:
+            y = Dropout(dropout_rate)(y)
+        x = Add()([x, y])
+
+    # Project to scalar output per token (voxel)
+    x = Dense(1)(x)  # (batch, n_tokens, 1)
+    x = Reshape((rank, rank, rank, 1))(x)  # Keep the last dimension for channel
+
+    # Optionally squeeze the last dimension if you want (batch, rank, rank, rank)
+    x = Lambda(lambda t: tf.squeeze(t, axis=-1))(x)
+
+    model = Model(inputs, x, name="MLP_Mixer_3D")
+    print(model.summary())
+    return model
+
+
+def Simple_multi_layer_3D(rank, in_channels=4, width=64, n_layers=2, dropout_rate=None, regularization=None):
+    """
+    Simple MLP for 3D CFD blocks.
+    Input: (rank, rank, rank, in_channels)
+    Output: (rank, rank, rank)
+    """
+    n_tokens = rank ** 3
+    input_shape = (rank, rank, rank, in_channels)
+    inputs = Input(shape=input_shape)
+    x = Reshape((n_tokens, in_channels))(inputs)
+
+    if regularization is not None:
+        regularizer = regularizers.l2(regularization)
+    else:
+        regularizer = None
+
+    for _ in range(n_layers):
+        x = Dense(width, activation='relu', kernel_regularizer=regularizer)(x)
+        if dropout_rate:
+            x = Dropout(dropout_rate)(x)
+
+    x = Dense(1, kernel_regularizer=regularizer)(x)
+    x = Lambda(lambda t: tf.squeeze(t, axis=-1))(x)  # (batch, n_tokens)
+    outputs = Reshape((rank, rank, rank))(x)
+
+    model = Model(inputs, outputs, name="SimpleMLP3D")
+    print(model.summary())
+    return model
+
+
+from tensorflow.keras.layers import Conv3D, BatchNormalization, Activation, Add
+from tensorflow.keras.layers import Input, Conv3D, BatchNormalization, Activation, Add, Dropout, LayerNormalization
+from tensorflow.keras.layers import Dense, Lambda
+
+
+def SimpleCNN3D_two_heads_improve(
+    rank,
+    in_channels=4,
+    base_filters=8,
+    dropout_rate=0.05,
+    regularization=1e-5,
+    smooth_base_filters=4,
+    return_heads=True,
+):
+    """
+    Two-head 3D CNN for delta_delta_p prediction.
+
+    Head 1: local head
+        - Same as the original/local CNN output.
+        - Good for near-obstacle peaks and sharp structures.
+
+    Head 2: smooth head
+        - Smooth-biased shallow UNet/coarse branch.
+        - Downsamples only in y/x, not z.
+        - Uses weak coarse skip connections.
+        - Predicts smooth pressure at coarse resolution, then upsamples.
+        - Avoids full-resolution convolutions after p_smooth output.
+
+    Outputs:
+        if return_heads=True:
+            {
+                "p_total":  [B, Z, Y, X],
+                "p_smooth": [B, Z, Y, X],
+                "p_local":  [B, Z, Y, X],
+            }
+        else:
+            p_total only.
+    """
+
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+
+    inputs = Input(shape=(sz, sy, sx, in_channels))
+
+    reg = regularizers.l2(regularization) if regularization else None
+
+    # ---------------------------------------------------------------------
+    # Shared trunk: your current good local/dilated CNN trunk
+    # ---------------------------------------------------------------------
+    x = padded_conv3d(
+        inputs,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+        regularization=regularization,
+        pad_mode="SYMMETRIC",
+    )
+    x = layers.LayerNormalization()(x)
+    x = layers.Activation("relu")(x)
+
+    dilations = [
+        (1, 1, 1),
+        (1, 1, 2),
+        (1, 2, 4),
+        (1, 2, 6),
+        (1, 2, 4),
+        (1, 1, 2),
+        (1, 1, 1),
+    ]
+
+    for dilation in dilations:
+        x_res = x
+
+        y = padded_conv3d(
+            x,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=dilation,
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        y = layers.LayerNormalization()(y)
+        y = layers.Activation("relu")(y)
+
+        if dropout_rate:
+            y = layers.Dropout(dropout_rate)(y)
+
+        y = padded_conv3d(
+            y,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        y = layers.LayerNormalization()(y)
+
+        x = layers.Add()([x_res, y])
+        x = layers.Activation("relu")(x)
+
+    # ---------------------------------------------------------------------
+    # Head 1: local / peak head
+    # ---------------------------------------------------------------------
+    # Keep this intentionally very close to your original final projection.
+    p_local = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=reg,
+        name="p_local",
+    )(x)
+
+    # ---------------------------------------------------------------------
+    # Head 2: smooth / far-field head
+    # ---------------------------------------------------------------------
+    # Important:
+    #   - no z-downsampling
+    #   - average pooling instead of max pooling
+    #   - weak/coarse skips only
+    #   - pressure predicted at coarse resolution, then upsampled
+    #   - no full-resolution conv after p_smooth is produced
+    # ---------------------------------------------------------------------
+
+    def smooth_conv_block(t, filters, name_prefix):
+        t = padded_conv3d(
+            t,
+            filters=filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        t = layers.LayerNormalization(name=f"{name_prefix}_ln1")(t)
+        t = layers.Activation("relu", name=f"{name_prefix}_relu1")(t)
+
+        if dropout_rate:
+            t = layers.Dropout(dropout_rate, name=f"{name_prefix}_drop")(t)
+
+        t = padded_conv3d(
+            t,
+            filters=filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        t = layers.LayerNormalization(name=f"{name_prefix}_ln2")(t)
+        t = layers.Activation("relu", name=f"{name_prefix}_relu2")(t)
+
+        return t
+
+    # Start smooth branch from shared trunk, but reduce capacity.
+    s0 = layers.Conv3D(
+        filters=smooth_base_filters,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=reg,
+        name="smooth_input_reduce",
+    )(x)
+    s0 = layers.LayerNormalization(name="smooth_input_ln")(s0)
+    s0 = layers.Activation("relu", name="smooth_input_relu")(s0)
+
+    # Encoder level 0
+    e0 = smooth_conv_block(
+        s0,
+        filters=smooth_base_filters,
+        name_prefix="smooth_enc0",
+    )
+
+    # Downsample only y/x.
+    # For (50,80,250): -> (50,40,50)
+    d1 = layers.AveragePooling3D(
+        pool_size=(1, 2, 5),
+        strides=(1, 2, 5),
+        padding="valid",
+        name="smooth_down1",
+    )(e0)
+
+    # Encoder level 1
+    e1 = smooth_conv_block(
+        d1,
+        filters=smooth_base_filters * 2,
+        name_prefix="smooth_enc1",
+    )
+
+    # Downsample only y/x again.
+    # For (50,40,50): -> (50,20,10)
+    d2 = layers.AveragePooling3D(
+        pool_size=(1, 2, 5),
+        strides=(1, 2, 5),
+        padding="valid",
+        name="smooth_down2",
+    )(e1)
+
+    # Bottleneck
+    b = smooth_conv_block(
+        d2,
+        filters=smooth_base_filters * 4,
+        name_prefix="smooth_bottleneck",
+    )
+
+    # Decoder level 1
+    u1 = layers.UpSampling3D(
+        size=(1, 2, 5),
+        name="smooth_up1",
+    )(b)
+
+    # Weak coarse skip from e1.
+    # Reduce skip channels so it cannot copy too much high-frequency detail.
+    skip1 = layers.Conv3D(
+        filters=smooth_base_filters,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=reg,
+        name="smooth_skip1_reduce",
+    )(e1)
+
+    u1 = layers.Concatenate(name="smooth_concat1")([u1, skip1])
+
+    u1 = smooth_conv_block(
+        u1,
+        filters=smooth_base_filters * 2,
+        name_prefix="smooth_dec1",
+    )
+
+    # Decoder level 0
+    u0 = layers.UpSampling3D(
+        size=(1, 2, 5),
+        name="smooth_up0",
+    )(u1)
+
+    # Very weak high-resolution skip.
+    # This is intentionally tiny to avoid copying local peaks.
+    skip0 = layers.Conv3D(
+        filters=max(1, smooth_base_filters // 2),
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=reg,
+        name="smooth_skip0_reduce",
+    )(e0)
+
+    u0 = layers.Concatenate(name="smooth_concat0")([u0, skip0])
+
+    u0 = smooth_conv_block(
+        u0,
+        filters=smooth_base_filters,
+        name_prefix="smooth_dec0",
+    )
+
+    # Smooth output
+    p_smooth = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=reg,
+        name="p_smooth_raw",
+    )(u0)
+
+    # Anti-ribbing / anti-blocking smoothing on smooth head only.
+    # This should suppress x-direction striping without destroying the local head.
+    p_smooth = layers.AveragePooling3D(
+        pool_size=(1, 3, 9),
+        strides=(1, 1, 1),
+        padding="same",
+        name="p_smooth_antiblock",
+    )(p_smooth)
+
+    # ---------------------------------------------------------------------
+    # Combine heads and enforce zero-mean gauge on total
+    # ---------------------------------------------------------------------
+    p_total_raw = layers.Add(name="p_total_raw")([p_smooth, p_local])
+
+    p_mean = layers.Lambda(
+        lambda t: tf.reduce_mean(
+            t,
+            axis=(1, 2, 3, 4),
+            keepdims=True,
+        ),
+        name="p_total_mean",
+    )(p_total_raw)
+
+    # Important:
+    # apply gauge correction to p_smooth, then return corrected p_smooth.
+    # This makes p_smooth consistent with the loss target.
+    p_smooth = layers.Subtract(name="p_smooth_gauge_corrected")(
+        [p_smooth, p_mean]
+    )
+
+    p_total = layers.Add(name="p_total")([p_smooth, p_local])
+
+    # Remove channel dimension safely
+    p_total = layers.Lambda(lambda t: tf.squeeze(t, axis=-1), name="p_total_squeeze")(p_total)
+    p_smooth = layers.Lambda(lambda t: tf.squeeze(t, axis=-1), name="p_smooth_squeeze")(p_smooth)
+    p_local = layers.Lambda(lambda t: tf.squeeze(t, axis=-1), name="p_local_squeeze")(p_local)
+
+    if return_heads:
+        outputs = {
+            "p_total": p_total,
+            "p_smooth": p_smooth,
+            "p_local": p_local,
+        }
+    else:
+        outputs = p_total
+
+    model = Model(
+        inputs=inputs,
+        outputs=outputs,
+        name="CNN3D_two_heads_UNET_smooth_biased",
+    )
+
+    model.summary()
+    return model
+
+
+
+def SimpleCNN3D_two_heads2(
+    rank,
+    in_channels=4,
+    base_filters=8,
+    dropout_rate=0.05,
+    regularization=1e-5,
+    smooth_base_filters=4,
+    smooth_levels=3,
+    return_heads=True,
+):
+    """
+    Two-head 3D CNN for delta_delta_p prediction.
+
+    Head 1 (local): same idea as current local head for near-obstacle peaks.
+    Head 2 (smooth): simple UNet-style branch (similar spirit to UNet3D_deep).
+    """
+
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+
+    inputs = Input(shape=(sz, sy, sx, in_channels))
+    reg = regularizers.l2(regularization) if regularization else None
+
+    # ---------------------------------------------------------------------
+    # Shared trunk (same as SimpleCNN3D_two_heads)
+    # ---------------------------------------------------------------------
+    x = padded_conv3d(
+        inputs,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+        regularization=regularization,
+        pad_mode="SYMMETRIC",
+    )
+    x = layers.LayerNormalization()(x)
+    x = layers.Activation("relu")(x)
+
+    dilations = [
+        (1, 1, 1),
+        (1, 1, 2),
+        (1, 2, 4),
+        (1, 2, 6),
+        (1, 2, 4),
+        (1, 1, 2),
+        (1, 1, 1),
+    ]
+
+    for dilation in dilations:
+        x_res = x
+
+        y = padded_conv3d(
+            x,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=dilation,
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        y = layers.LayerNormalization()(y)
+        y = layers.Activation("relu")(y)
+
+        if dropout_rate:
+            y = layers.Dropout(dropout_rate)(y)
+
+        y = padded_conv3d(
+            y,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        y = layers.LayerNormalization()(y)
+
+        x = layers.Add()([x_res, y])
+        x = layers.Activation("relu")(x)
+
+    # ---------------------------------------------------------------------
+    # Head 1: local / peak head
+    # ---------------------------------------------------------------------
+    p_local = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=reg,
+        name="p_local",
+    )(x)
+
+    # ---------------------------------------------------------------------
+    # Head 2: smooth / far-field head (UNet-like, simple)
+    # ---------------------------------------------------------------------
+    def smooth_conv_block(t, filters, name_prefix):
+        t = layers.Conv3D(filters, 3, padding="same", kernel_regularizer=reg, name=f"{name_prefix}_conv1")(t)
+        t = layers.BatchNormalization(name=f"{name_prefix}_bn1")(t)
+        t = layers.Activation("relu", name=f"{name_prefix}_relu1")(t)
+        if dropout_rate:
+            t = layers.Dropout(dropout_rate, name=f"{name_prefix}_drop")(t)
+        t = layers.Conv3D(filters, 3, padding="same", kernel_regularizer=reg, name=f"{name_prefix}_conv2")(t)
+        t = layers.BatchNormalization(name=f"{name_prefix}_bn2")(t)
+        t = layers.Activation("relu", name=f"{name_prefix}_relu2")(t)
+        return t
+
+    def crop_to_match(x_up, x_ref, name_prefix):
+        def _crop(inp):
+            x_u, x_r = inp
+            z_start = (tf.shape(x_u)[1] - tf.shape(x_r)[1]) // 2
+            y_start = (tf.shape(x_u)[2] - tf.shape(x_r)[2]) // 2
+            x_start = (tf.shape(x_u)[3] - tf.shape(x_r)[3]) // 2
+            z_end = z_start + tf.shape(x_r)[1]
+            y_end = y_start + tf.shape(x_r)[2]
+            x_end = x_start + tf.shape(x_r)[3]
+            return x_u[:, z_start:z_end, y_start:y_end, x_start:x_end, :]
+        return layers.Lambda(_crop, name=f"{name_prefix}_crop")([x_up, x_ref])
+
+    # Encoder
+    skips = []
+    s = x
+    filters = smooth_base_filters
+    for lvl in range(smooth_levels):
+        s = smooth_conv_block(s, filters, name_prefix=f"smooth_enc{lvl}")
+        skips.append(s)
+        s = layers.MaxPooling3D(pool_size=2, padding="same", name=f"smooth_pool{lvl}")(s)
+        filters = min(filters * 2, 128)
+
+    # Bottleneck
+    s = smooth_conv_block(s, filters, name_prefix="smooth_bottleneck")
+
+    # Decoder
+    for lvl in range(smooth_levels - 1, -1, -1):
+        filters = max(smooth_base_filters, filters // 2)
+        s = layers.UpSampling3D(size=2, name=f"smooth_up{lvl}")(s)
+        s = crop_to_match(s, skips[lvl], name_prefix=f"smooth_dec{lvl}")
+        s = layers.Concatenate(name=f"smooth_concat{lvl}")([s, skips[lvl]])
+        s = smooth_conv_block(s, filters, name_prefix=f"smooth_dec{lvl}_blk")
+
+    p_smooth = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=reg,
+        name="p_smooth",
+    )(s)
+
+    # ---------------------------------------------------------------------
+    # Combine heads and enforce zero-mean on total
+    # ---------------------------------------------------------------------
+    p_total_raw = layers.Add(name="p_total_raw")([p_smooth, p_local])
+
+    p_mean = tf.reduce_mean(
+        p_total_raw,
+        axis=(1, 2, 3, 4),
+        keepdims=True,
+    )
+    p_total = layers.Subtract(name="p_total_gauge_corrected")([p_total_raw, p_mean])
+
+    # Remove channel dimension
+    p_total = tf.squeeze(p_total, axis=-1)
+    p_smooth = tf.squeeze(p_smooth, axis=-1)
+    p_local = tf.squeeze(p_local, axis=-1)
+
+    if return_heads:
+        outputs = {
+            "p_total": p_total,
+            "p_smooth": p_smooth,
+            "p_local": p_local,
+        }
+    else:
+        outputs = p_total
+
+    model = Model(
+        inputs=inputs,
+        outputs=outputs,
+        name="CNN3D_two_heads_UNET",
+    )
+    model.summary()
+    return model
+
+
+
+def SimpleCNN3D_two_heads(
+    rank,
+    in_channels=4,
+    base_filters=8,
+    dropout_rate=0.05,
+    regularization=1e-5,
+    return_heads=True,
+):
+    """
+    Two-head 3D CNN for delta_delta_p prediction.
+
+    Head 1: local head
+        - Same idea as your original final output layer.
+        - Good for obstacle-local peaks and sharp structures.
+
+    Head 2: smooth head
+        - Coarse low-resolution branch.
+        - Designed to learn smooth far-field pressure mode.
+
+    If return_heads=True:
+        returns dict with p_total, p_smooth, p_local.
+
+    If return_heads=False:
+        returns only p_total, compatible with your old training loop.
+    """
+
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+
+    inputs = Input(shape=(sz, sy, sx, in_channels))
+
+    # -------------------------------------------------------------------------
+    # Shared trunk: same as your current model
+    # -------------------------------------------------------------------------
+    x = padded_conv3d(
+        inputs,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+        regularization=regularization,
+        pad_mode="SYMMETRIC",
+    )
+
+    x = layers.LayerNormalization()(x)
+    x = layers.Activation("relu")(x)
+
+    dilations = [
+        (1, 1, 1),
+        (1, 1, 2),
+        (1, 2, 4),
+        (1, 2, 6),
+        (1, 2, 4),
+        (1, 1, 2),
+        (1, 1, 1),
+    ]
+
+    for dilation in dilations:
+        x_res = x
+
+        y = padded_conv3d(
+            x,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=dilation,
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+
+        y = layers.LayerNormalization()(y)
+        y = layers.Activation("relu")(y)
+
+        if dropout_rate:
+            y = layers.Dropout(dropout_rate)(y)
+
+        y = padded_conv3d(
+            y,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+
+        y = layers.LayerNormalization()(y)
+
+        x = layers.Add()([x_res, y])
+        x = layers.Activation("relu")(x)
+
+    # -------------------------------------------------------------------------
+    # Head 1: local / peak head
+    # -------------------------------------------------------------------------
+    # This is intentionally very close to your original final output projection.
+    p_local = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="p_local",
+    )(x)
+
+    # -------------------------------------------------------------------------
+    # Head 2: smooth / far-field head
+    # -------------------------------------------------------------------------
+    smooth_pool = (1, 2, 5)
+
+    s = layers.AveragePooling3D(
+        pool_size=smooth_pool,
+        strides=smooth_pool,
+        padding="valid",
+        name="smooth_downsample",
+    )(x)
+
+    s = padded_conv3d(
+        s,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+        regularization=regularization,
+        pad_mode="SYMMETRIC",
+    )
+    s = layers.LayerNormalization()(s)
+    s = layers.Activation("relu")(s)
+
+    s = padded_conv3d(
+        s,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 2),
+        regularization=regularization,
+        pad_mode="SYMMETRIC",
+    )
+    s = layers.LayerNormalization()(s)
+    s = layers.Activation("relu")(s)
+
+    if dropout_rate:
+        s = layers.Dropout(dropout_rate)(s)
+
+    # Predict smooth pressure directly at coarse resolution
+    p_smooth = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="p_smooth_coarse",
+    )(s)
+
+    # Upsample smooth pressure itself, not features
+    p_smooth = layers.UpSampling3D(
+        size=smooth_pool,
+        name="p_smooth_upsample",
+    )(p_smooth)
+
+    # Anti-blocking smoothing after nearest-neighbour upsampling
+    p_smooth = layers.AveragePooling3D(
+        pool_size=(1, 3, 9),
+        strides=(1, 1, 1),
+        padding="same",
+        name="p_smooth_antiblock",
+    )(p_smooth)
+
+
+    # -------------------------------------------------------------------------
+    # Combine heads: both heads learn independently
+    # -------------------------------------------------------------------------
+    p_total_raw = layers.Add(name="p_total_raw")([p_smooth, p_local])
+
+    # Enforce zero-mean constraint directly on the total output
+    # (p_smooth and p_local learn freely; only the sum is constrained)
+    p_mean = tf.reduce_mean(
+        p_total_raw,
+        axis=(1, 2, 3, 4),
+        keepdims=True,
+    )
+    p_total = layers.Subtract(name="p_total_gauge_corrected")(
+        [p_total_raw, p_mean]
+    )
+
+    # Remove channel dimension
+    p_total = tf.squeeze(p_total, axis=-1)
+    p_smooth = tf.squeeze(p_smooth, axis=-1)
+    p_local = tf.squeeze(p_local, axis=-1)
+
+    if return_heads:
+        outputs = {
+            "p_total": p_total,
+            "p_smooth": p_smooth,
+            "p_local": p_local,
+        }
+    else:
+        outputs = p_total
+
+    model = Model(
+        inputs=inputs,
+        outputs=outputs,
+        name="CNN3D_two_heads",
+    )
+
+    model.summary()
+    return model
+
+
+def SimpleCNN3D(
+    rank,
+    in_channels=4,
+    base_filters=8,
+    dropout_rate=0.05,
+    regularization=1e-5,
+):
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+
+    inputs = Input(shape=(sz, sy, sx, in_channels))
+
+    # Initial projection: symmetric padding
+    x = padded_conv3d(
+        inputs,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+        regularization=regularization,
+        pad_mode="SYMMETRIC",
+    )
+
+    x = layers.LayerNormalization()(x)
+    x = layers.Activation("relu")(x)
+
+
+    dilations = [
+        (1, 1, 1),
+        (1, 1, 2),
+        (1, 2, 4),
+        (1, 2, 6),
+        (1, 2, 6),
+        (1, 2, 4),
+        (1, 1, 2),
+        (1, 1, 1),
+    ]
+
+
+    for dilation in dilations:
+        x_res = x
+
+        # First conv: dilated, symmetric padded
+        y = padded_conv3d(
+            x,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=dilation,
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+
+        y = layers.LayerNormalization()(y)
+        y = layers.Activation("relu")(y)
+
+        if dropout_rate:
+            y = layers.Dropout(dropout_rate)(y)
+
+        # Second conv: local, also symmetric padded
+        y = padded_conv3d(
+            y,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+
+        y = layers.LayerNormalization()(y)
+
+        x = layers.Add()([x_res, y])
+        x = layers.Activation("relu")(x)
+
+    # Final 1x1 projection does not need padding treatment
+    x = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+    )(x)
+
+    x = tf.squeeze(x, axis=-1)
+
+    # Zero-gauge pressure constraint
+    x = x - tf.reduce_mean(x, axis=(1, 2, 3), keepdims=True)
+
+    model = Model(inputs, x, name="SimpleDilatedCNN3D_SymmetricEverywhere")
+    model.summary()
+
+    return model
+
+
+
+def SimpleCNN3D1(rank, in_channels=4, base_filters=8, n_layers=3,
+                  use_residual=True, dropout_rate=0.1, regularization=1e-4):
+    """
+    Improved 3D CNN for compressed CFD blocks.
+    
+    Args:
+        rank: spatial size of the block — either a scalar (cubic) or a (sz, sy, sx) tuple
+        in_channels: number of input features per voxel
+        base_filters: number of filters in the first conv layer
+        n_layers: number of convolutional layers
+        use_residual: whether to use residual connections
+        dropout_rate: dropout rate for regularization
+        regularization: L2 regularization factor
+    Returns:
+        A model mapping (sz, sy, sx, in_channels) -> (sz, sy, sx)
+    """
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+
+    inputs = Input(shape=(sz, sy, sx, in_channels))
+    x = inputs
+
+    filters = base_filters
+    for i in range(n_layers):
+        x_res = x
+        x = Conv3D(filters=filters, kernel_size=3, padding='same',
+                   kernel_regularizer=regularizers.l2(regularization))(x)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        if dropout_rate:
+            x = Dropout(dropout_rate)(x)
+        if use_residual and i > 0 and x_res.shape[-1] == x.shape[-1]:
+            x = Add()([x, x_res])
+        x = LayerNormalization()(x)
+        filters = min(filters * 2, 256)  # Increase filters, cap at 256
+
+    # Final projection to 1 channel (e.g., pressure)
+    x = Conv3D(filters=1, kernel_size=1, kernel_regularizer=regularizers.l2(regularization))(x)
+    x = tf.squeeze(x, axis=-1)
+
+    model = Model(inputs, x, name="ImprovedCNN3D")
+    model.summary()
+    return model
+
+def ImprovedCNN3D_v2(rank, in_channels=4, base_filters=16, n_levels=4, 
+                     dropout_rate=0.2, regularization=1e-5):
+    """Enhanced CNN with SE blocks, dilations, and better residuals."""
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+    
+    inputs = Input(shape=(sz, sy, sx, in_channels))
+    reg = regularizers.l2(regularization) if regularization else None
+    
+    x = inputs
+    filters = base_filters
+    
+    for level in range(n_levels):
+        # Multi-kernel inception-style block
+        paths = [
+            Conv3D(filters//3, 1, padding='same', kernel_regularizer=reg)(x),
+            Conv3D(filters//3, 3, padding='same', kernel_regularizer=reg)(x),
+            Conv3D(filters//3, 3, dilation_rate=2, padding='same', kernel_regularizer=reg)(x),
+        ]
+        x = Concatenate()(paths)
+        x = BatchNormalization()(x)
+        x = Activation('gelu')(x)
+        x = Dropout(dropout_rate)(x) if dropout_rate else x
+        
+        # SE block (channel attention)
+        se = GlobalAveragePooling3D()(x)
+        se = Dense(max(1, filters // 16), activation='relu')(se)
+        se = Dense(filters, activation='sigmoid')(se)
+        se = Reshape((1, 1, 1, filters))(se)
+        x = Multiply()([x, se])
+        
+        filters = min(filters * 2, 256)
+    
+    x = Conv3D(1, 1, kernel_regularizer=reg)(x)
+    x = tf.squeeze(x, axis=-1)
+    
+    model = Model(inputs, x, name="ImprovedCNN3D_v2")
+    return model
+
+def UNet3D(rank, in_channels=4, base_filters=16, n_levels=2, 
+           dropout_rate=0.1, regularization=1e-4):
+    """
+    3D U-Net architecture for CFD blocks.
+    Encoder path downsamples (Conv3D + MaxPooling3D), decoder path upsamples with skip connections.
+    
+    Args:
+        rank: spatial size of the block — either a scalar (cubic) or a (sz, sy, sx) tuple
+        in_channels: number of input features per voxel (default: 4)
+        base_filters: number of filters in the first conv layer (default: 16)
+        n_levels: number of encoding/decoding levels (default: 2)
+        dropout_rate: dropout rate for regularization (default: 0.1)
+        regularization: L2 regularization factor (default: 1e-4)
+    
+    Returns:
+        A Keras model mapping (sz, sy, sx, in_channels) -> (sz, sy, sx)
+    """
+    from tensorflow.keras.layers import (
+        Conv3D, BatchNormalization, Activation, MaxPooling3D, 
+        UpSampling3D, Concatenate, Dropout, LayerNormalization
+    )
+    
+    # Handle rank as scalar or tuple
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+    
+    inputs = Input(shape=(sz, sy, sx, in_channels), name='input')
+    
+    # Regularizer
+    reg = regularizers.l2(regularization) if regularization else None
+    
+    # Encoder path (downsampling)
+    encoder_outputs = []
+    x = inputs
+    current_filters = base_filters
+    
+    for level in range(n_levels):
+        # Double convolution block
+        x = Conv3D(current_filters, kernel_size=3, padding='same',
+                   kernel_regularizer=reg)(x)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)  # Changed from 'gelu' to 'relu'
+        if dropout_rate:
+            x = Dropout(dropout_rate)(x)
+        
+        x = Conv3D(current_filters, kernel_size=3, padding='same',
+                   kernel_regularizer=reg)(x)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)  # Changed from 'gelu' to 'relu'
+        if dropout_rate:
+            x = Dropout(dropout_rate)(x)
+        
+        # Save for skip connection
+        encoder_outputs.append(x)
+        
+        # Downsample if not the last level
+        if level < n_levels - 1:
+            x = MaxPooling3D(pool_size=2, padding='same')(x)
+            current_filters = min(current_filters * 2, 256)
+
+    
+    # Decoder path (upsampling)
+    for level in range(n_levels - 1, 0, -1):
+        current_filters = current_filters // 2
+        
+        # Upsample
+        x = UpSampling3D(size=2)(x)
+        
+        # Crop upsampled features to match encoder output shape (handles non-divisible dims)
+        encoder_feat = encoder_outputs[level - 1]
+        # Use Lambda to crop x to match encoder spatial dimensions
+        def crop_to_shape(upsampled_and_target):
+            x_up, x_target = upsampled_and_target
+            # Dynamically crop to match target shape
+            z_start = (tf.shape(x_up)[1] - tf.shape(x_target)[1]) // 2
+            y_start = (tf.shape(x_up)[2] - tf.shape(x_target)[2]) // 2
+            x_start = (tf.shape(x_up)[3] - tf.shape(x_target)[3]) // 2
+            z_end = z_start + tf.shape(x_target)[1]
+            y_end = y_start + tf.shape(x_target)[2]
+            x_end = x_start + tf.shape(x_target)[3]
+            return x_up[:, z_start:z_end, y_start:y_end, x_start:x_end, :]
+        x = Lambda(crop_to_shape)([x, encoder_feat])
+        
+        # Skip connection: concatenate with corresponding encoder output
+        x = Concatenate()([x, encoder_feat])
+        
+        # Double convolution block
+        x = Conv3D(current_filters, kernel_size=3, padding='same',
+                   kernel_regularizer=reg)(x)
+        x = BatchNormalization()(x)
+        x = Activation('gelu')(x)
+        if dropout_rate:
+            x = Dropout(dropout_rate)(x)
+        
+        x = Conv3D(current_filters, kernel_size=3, padding='same',
+                   kernel_regularizer=reg)(x)
+        x = BatchNormalization()(x)
+        x = Activation('gelu')(x)
+        if dropout_rate:
+            x = Dropout(dropout_rate)(x)
+    
+    # Final output projection to 1 channel
+    x = Conv3D(filters=1, kernel_size=1, kernel_regularizer=reg)(x)
+    x = tf.squeeze(x, axis=-1)
+    
+    model = Model(inputs, x, name="UNet3D")
+    model.summary()
+    return model
+
+
+def UNet3D_deep(rank, in_channels=4, base_filters=4, n_levels=4, 
+                dropout_rate=0.1, regularization=1e-4):
+    """
+    Deeper 3D U-Net (4 levels) for CFD blocks.
+    See UNet3D for argument details.
+    """
+    return UNet3D(rank, in_channels=in_channels, base_filters=base_filters, n_levels=n_levels, 
+                  dropout_rate=dropout_rate, regularization=regularization)
+
+
+def UNet3D_attention(rank, in_channels=4, base_filters=8, n_levels=2,
+                     dropout_rate=0.1, regularization=1e-4):
+    """
+    3D U-Net with skip connections for multi-scale CFD fields.
+    Designed for fields with sharp patterns near obstacles and smooth far-field.
+
+    - Encoder & Decoder: ReLU (stable, smooth training)
+    - Skip connections: preserve encoder detail in decoder
+    - Simpler and more robust than attention-gating
+
+    Args:
+        rank: spatial size — scalar (cubic) or (sz, sy, sx) tuple
+        in_channels: input features per voxel (default: 4)
+        base_filters: filters in first conv layer (default: 8)
+        n_levels: encoder/decoder levels (default: 2; increase for larger domains)
+        dropout_rate: dropout rate (default: 0.1)
+        regularization: L2 factor (default: 1e-4)
+
+    Returns:
+        Keras model mapping (sz, sy, sx, in_channels) -> (sz, sy, sx)
+    """
+    from tensorflow.keras.layers import (
+        Conv3D, BatchNormalization, Activation, MaxPooling3D,
+        UpSampling3D, Concatenate, Dropout, Add, Cropping3D
+    )
+
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+
+    reg = regularizers.l2(regularization) if regularization else None
+
+    def conv_block(x, filters, activation='relu', use_dropout=True):
+        """Double conv block with batch norm."""
+        x = Conv3D(filters, kernel_size=3, padding='same', kernel_regularizer=reg)(x)
+        x = BatchNormalization()(x)
+        x = Activation(activation)(x)
+        if dropout_rate and use_dropout:
+            x = Dropout(dropout_rate)(x)
+        x = Conv3D(filters, kernel_size=3, padding='same', kernel_regularizer=reg)(x)
+        x = BatchNormalization()(x)
+        x = Activation(activation)(x)
+        return x
+
+    inputs = Input(shape=(sz, sy, sx, in_channels), name='input')
+
+    # --- Encoder ---
+    encoder_outputs = []
+    x = inputs
+    current_filters = base_filters
+
+    for level in range(n_levels):
+        # Double convolution
+        x = conv_block(x, current_filters, activation='relu')
+        encoder_outputs.append(x)
+        
+        # Downsample if not last level
+        if level < n_levels - 1:
+            x = MaxPooling3D(pool_size=2, padding='same')(x)
+            current_filters = min(current_filters * 2, 256)
+
+    # --- Decoder with skip connections ---
+    for level in range(n_levels - 1, 0, -1):
+        current_filters = current_filters // 2
+        
+        # Upsample
+        x = UpSampling3D(size=2)(x)
+        
+        # Get encoder skip connection
+        encoder_feat = encoder_outputs[level - 1]
+        
+        # Crop upsampled x to match encoder skip connection spatial dimensions
+        def crop_to_match(inp):
+            x_up, x_ref = inp
+            # Dynamically crop x_up to match x_ref spatial shape
+            z_start = (tf.shape(x_up)[1] - tf.shape(x_ref)[1]) // 2
+            y_start = (tf.shape(x_up)[2] - tf.shape(x_ref)[2]) // 2
+            x_start = (tf.shape(x_up)[3] - tf.shape(x_ref)[3]) // 2
+            z_end = z_start + tf.shape(x_ref)[1]
+            y_end = y_start + tf.shape(x_ref)[2]
+            x_end = x_start + tf.shape(x_ref)[3]
+            return x_up[:, z_start:z_end, y_start:y_end, x_start:x_end, :]
+        
+        x = Lambda(crop_to_match)([x, encoder_feat])
+        
+        # Concatenate
+        x = Concatenate()([x, encoder_feat])
+        
+        # Double convolution with ReLU for decoder
+        x = conv_block(x, current_filters, activation='relu')
+
+    # --- Output layer ---
+    x = Conv3D(filters=1, kernel_size=1, kernel_regularizer=reg)(x)
+    x = tf.squeeze(x, axis=-1)
+
+    model = Model(inputs, x, name="UNet3D_attention")
+    model.summary()
+    return model
+
+
+def MLP(n_layers, depth=512, PC_input=None, PC_p=None, dropout_rate=None, regularization=None):
+    """
+    Creates the MLP NN.
+    """
+    
+    inputs = Input(int(PC_input))
+    if len(depth) == 1:
+        depth = [depth]*n_layers
+    
+    # Regularization parameter
+    if regularization is not None:
+        regularizer = regularizers.l2(regularization)
+        print(f'\nUsing L2 regularization. Value: {regularization}\n')
+    else:
+        regularizer = None
+    
+    x = tf.keras.layers.Dense(depth[0], activation='relu', kernel_regularizer=regularizer)(inputs)
+    if dropout_rate is not None:
+        x = tf.keras.layers.Dropout(dropout_rate)(x)
+    
+    for i in range(n_layers - 1):
+        x = tf.keras.layers.Dense(depth[i+1], activation='relu', kernel_regularizer=regularizer)(x)
+        if dropout_rate is not None:
+            x = tf.keras.layers.Dropout(dropout_rate)(x)
+    
+    outputs = tf.keras.layers.Dense(PC_p)(x)
+
+    model = Model(inputs, outputs, name="MLP")
+    print(model.summary())
+
+    return model
+
+def dense_attention(n_layers=3, depth=[512], PC_input=None, PC_p=None, dropout_rate=None, regularization=None):
+    """
+    Creates the MLP with an attention mechanism.
+    """
+    inputs = Input((int(PC_input),))
+    if len(depth) == 1:
+        depth = [depth[0]] * n_layers
+
+    # Regularization parameter
+    regularizer = regularizers.l2(regularization) if regularization else None
+
+    x = tf.keras.layers.Dense(depth[0], activation='relu', kernel_regularizer=regularizer)(inputs)
+    if dropout_rate is not None:
+        x = tf.keras.layers.Dropout(dropout_rate)(x)
+
+    # Applying a multi-head attention layer
+    x = tf.expand_dims(x, 1)  # Add a new dimension for the sequence length
+    attn_output = tf.keras.layers.MultiHeadAttention(num_heads=8, key_dim=64)(x, x)
+    attn_output = tf.keras.layers.LayerNormalization()(attn_output)
+    attn_output = tf.squeeze(attn_output, 1)  # Remove the added dimension
+
+    # Adding additional dense layers
+    for i in range(1, n_layers):
+        x = tf.keras.layers.Dense(depth[i], activation='relu', kernel_regularizer=regularizer)(attn_output)
+        if dropout_rate is not None:
+            x = tf.keras.layers.Dropout(dropout_rate)(x)
+        attn_output = tf.keras.layers.LayerNormalization()(x + attn_output)  # Residual connection
+
+    outputs = tf.keras.layers.Dense(PC_p)(attn_output)
+
+    model = Model(inputs, outputs, name="MLP_with_Attention")
+    print(model.summary())
+
+    return model
+
+def conv1D(n_layers=3, depth=[512], PC_input=None, PC_p=None, dropout_rate=None, regularization=None, kernel_size=3):
+    """
+    Creates a 1D ConvNet with regularization and dropout, similar to an MLP.
+    """
+    
+    # Define input layer
+    inputs = Input(shape=(PC_input, 1))  # 1D Conv input shape requires an extra dimension
+    
+    if len(depth) == 1:
+        depth = [depth[0]] * n_layers
+    
+    # Regularization parameter
+    regularizer = regularizers.l2(regularization) if regularization else None
+    
+    # First convolutional layer
+    x = tf.keras.layers.Conv1D(
+        filters=depth[0], 
+        kernel_size=kernel_size, 
+        activation='relu',
+        padding='same',
+        kernel_regularizer=regularizer
+    )(inputs)
+
+    # Optional dropout
+    if dropout_rate:
+        x = tf.keras.layers.Dropout(dropout_rate)(x)
+    
+    # Additional convolutional layers
+    for i in range(1, n_layers):
+        x = tf.keras.layers.Conv1D(
+            filters=depth[i], 
+            kernel_size=kernel_size,
+            padding='same',
+            activation='relu', 
+            kernel_regularizer=regularizer
+        )(x)
+        
+        if dropout_rate:
+            x = tf.keras.layers.Dropout(dropout_rate)(x)
+    
+    # Flatten and final dense layer
+    x = tf.keras.layers.Flatten()(x)  # Convert 1D convolution output to a 1D vector
+    outputs = tf.keras.layers.Dense(PC_p)(x)
+
+    # Create and compile the model
+    model = Model(inputs, outputs, name="1D_ConvNet")
+
+    print(model.summary())
+
+    return model
