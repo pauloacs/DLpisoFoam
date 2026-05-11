@@ -23,6 +23,7 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
         delta_delta_U_diff: (n_samples, n_cells, 3) array of velocity time increments
         delta_delta_p: (n_samples, n_cells) array of pressure double-increments
         delta_p_prev: (n_samples, n_cells) array of previous pressure increments
+        delta_delta_p_prev: (n_samples, n_cells) array of previous pressure double-increments
         timestamps: (n_samples,) array of timesteps
         u_max_norm_arr: (n_samples,) array of velocity normalizations
     """
@@ -38,6 +39,7 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
     delta_delta_U_diff_list = []
     delta_delta_p_list = []
     delta_p_prev_list = []
+    delta_delta_p_prev_list = []
     U_list = []
     timestamps = []
     u_max_norm_list = []
@@ -84,19 +86,28 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
             group = f[sample_key]
 
             # Load delta-delta velocity and pressure increments
-            if 'delta_delta_U' not in group or 'pressure_increment' not in group:
-                print(f"Warning: {sample_key} missing delta_delta_U or pressure_increment dataset, skipping")
+            # Support both new key names ('ddp', 'dp_prev') and old ('pressure_increment', 'pressure_increment_prev')
+            ddp_key = 'ddp' if 'ddp' in group else 'pressure_increment'
+            if 'delta_delta_U' not in group or ddp_key not in group:
+                print(f"Warning: {sample_key} missing delta_delta_U or pressure dataset, skipping")
                 continue
 
             delta_delta_u = group['delta_delta_U'][:]     # (n_cells, 3)
             delta_delta_u_diff = group['delta_delta_U_diff'][:]  # (n_cells, 3)
-            delta_delta_pressure = group['pressure_increment'][:]     # (n_cells,)
+            delta_delta_pressure = group[ddp_key][:]     # (n_cells,)
             
-            # Load pressure_increment_prev if present
-            if 'pressure_increment_prev' in group:
-                delta_p_prev = group['pressure_increment_prev'][:]
+            # Load delta_p_prev if present (new key 'dp_prev' or old 'pressure_increment_prev')
+            dp_prev_key = 'dp_prev' if 'dp_prev' in group else 'pressure_increment_prev'
+            if dp_prev_key in group:
+                delta_p_prev = group[dp_prev_key][:]
             else:
                 delta_p_prev = np.zeros(n_cells)  # placeholder if not available
+
+            # Load delta_delta_p_prev if present (key 'ddp_prev')
+            if 'ddp_prev' in group:
+                delta_delta_p_prev = group['ddp_prev'][:]
+            else:
+                delta_delta_p_prev = np.zeros(n_cells)  # placeholder if not available
 
             # Load U (velocity) if present
             if 'U' in group:
@@ -120,6 +131,7 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
             delta_delta_U_diff_list.append(delta_delta_u_diff)
             delta_delta_p_list.append(delta_delta_pressure)
             delta_p_prev_list.append(delta_p_prev)
+            delta_delta_p_prev_list.append(delta_delta_p_prev)
             timestamps.append(timestep)
     
     # Stack into arrays
@@ -127,11 +139,12 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
     delta_delta_U_diff = np.array(delta_delta_U_diff_list)  # (n_samples, n_cells, 3)
     delta_delta_p = np.array(delta_delta_p_list)  # (n_samples, n_cells)
     delta_p_prev = np.array(delta_p_prev_list)  # (n_samples, n_cells)
+    delta_delta_p_prev = np.array(delta_delta_p_prev_list)  # (n_samples, n_cells)
     U = np.array(U_list)  # (n_samples, n_cells, 3)
     timestamps = np.array(timestamps)
     
     u_max_norm_arr = np.array(u_max_norm_list)
-    return coordinates, boundary_coords, boundary_patches, patch_names, U, delta_delta_U, delta_delta_U_diff, delta_p_prev, delta_delta_p, timestamps, u_max_norm_arr
+    return coordinates, boundary_coords, boundary_patches, patch_names, U, delta_delta_U, delta_delta_U_diff, delta_p_prev, delta_delta_p_prev, delta_delta_p, timestamps, u_max_norm_arr
 
 
 def load_hdf5_field_data(data_file='ML_data/data.h5'):
@@ -145,6 +158,7 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
         delta_delta_U_diff: (n_samples, n_cells, 3) array of velocity time increments
         delta_delta_p: (n_samples, n_cells) array of pressure double-increments
         delta_p_prev: (n_samples, n_cells) array of previous pressure increments
+        delta_delta_p_prev: (n_samples, n_cells) array of previous pressure double-increments
         U: (n_samples, n_cells, 3) array of velocities
         timestamps: (n_samples,) array of timesteps
         u_max_norm_arr: (n_samples,) array of velocity normalizations
@@ -156,6 +170,7 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     delta_delta_U_diff_list = []
     delta_delta_p_list = []
     delta_p_prev_list = []
+    delta_delta_p_prev_list = []
     U_list = []
     timestamps = []
     u_max_norm_list = []
@@ -168,21 +183,29 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
 
         for sample_key in sample_keys:
             group = f[sample_key]
-            if 'delta_delta_U' not in group or 'pressure_increment' not in group:
-                print(f"Warning: {sample_key} missing delta_delta_U or pressure_increment dataset, skipping")
+            ddp_key = 'ddp' if 'ddp' in group else 'pressure_increment'
+            if 'delta_delta_U' not in group or ddp_key not in group:
+                print(f"Warning: {sample_key} missing delta_delta_U or pressure dataset, skipping")
                 continue
             delta_delta_U_list.append(group['delta_delta_U'][:])
             if 'delta_delta_U_diff' in group:
                 delta_delta_U_diff_list.append(group['delta_delta_U_diff'][:])
             else:
                 delta_delta_U_diff_list.append(np.zeros_like(group['delta_delta_U'][:]))
-            delta_delta_p_list.append(group['pressure_increment'][:])
+            delta_delta_p_list.append(group[ddp_key][:])
             
-            # Load delta_p_prev if present
-            if 'pressure_increment_prev' in group:
-                delta_p_prev_list.append(group['pressure_increment_prev'][:])
+            # Load delta_p_prev (new key 'dp_prev' or old 'pressure_increment_prev')
+            dp_prev_key = 'dp_prev' if 'dp_prev' in group else 'pressure_increment_prev'
+            if dp_prev_key in group:
+                delta_p_prev_list.append(group[dp_prev_key][:])
             else:
-                delta_p_prev_list.append(np.zeros_like(group['pressure_increment'][:]))
+                delta_p_prev_list.append(np.zeros_like(group[ddp_key][:]))
+
+            # Load delta_delta_p_prev (key 'ddp_prev')
+            if 'ddp_prev' in group:
+                delta_delta_p_prev_list.append(group['ddp_prev'][:])
+            else:
+                delta_delta_p_prev_list.append(np.zeros_like(group[ddp_key][:]))
             
             if 'U' in group:
                 U_list.append(group['U'][:])
@@ -199,11 +222,12 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     delta_delta_U_diff = np.array(delta_delta_U_diff_list)
     delta_delta_p = np.array(delta_delta_p_list)
     delta_p_prev = np.array(delta_p_prev_list)
+    delta_delta_p_prev = np.array(delta_delta_p_prev_list)
     U = np.array(U_list)
     timestamps = np.array(timestamps)
     u_max_norm_arr = np.array(u_max_norm_list)
 
-    return delta_delta_U, delta_delta_U_diff, delta_delta_p, delta_p_prev, U, timestamps, u_max_norm_arr
+    return delta_delta_U, delta_delta_U_diff, delta_delta_p, delta_p_prev, delta_delta_p_prev, U, timestamps, u_max_norm_arr
 
 
 def load_boundaries_dict(data_dir='ML_data'):

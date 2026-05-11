@@ -532,21 +532,24 @@ class Training:
           row_labels = ['Ground Truth', 'Prediction', '|Error|']
 
           for b in range(y_true.shape[0]):
-              fig, axes = plt.subplots(3, n_z_slices, figsize=(4 * n_z_slices, 10))
+              fig, axes = plt.subplots(3, n_z_slices, figsize=(8 * n_z_slices, 10))
               fig.suptitle(f'Test sample {global_idx}', fontsize=14, fontweight='bold')
-              vmax = float(np.nanmax(np.abs(y_true[b]))) or 1.0
 
               for col, z_idx in enumerate(z_indices):
-                  slices = [
-                      y_true[b, z_idx],
-                      y_pred[b, z_idx],
-                      np.abs(y_true[b, z_idx] - y_pred[b, z_idx]),
-                  ]
-                  for row, sl in enumerate(slices):
+                  sl_true = y_true[b, z_idx]
+                  sl_pred = y_pred[b, z_idx]
+                  sl_err  = np.abs(sl_true - sl_pred)
+
+                  vmax_col = float(max(np.nanmax(np.abs(sl_true)), np.nanmax(np.abs(sl_pred)))) or 1.0
+                  vmax_err = float(np.nanmax(sl_err)) or 1.0
+
+                  slices   = [sl_true, sl_pred, sl_err]
+                  vmaxes   = [vmax_col, vmax_col, vmax_err]
+
+                  for row, (sl, vm) in enumerate(zip(slices, vmaxes)):
                       cmap = 'RdBu_r' if row < 2 else 'Reds'
-                      vmin = -vmax if row < 2 else 0.0
-                      vmax_r = vmax if row < 2 else float(np.nanmax(np.abs(slices[2]))) or 1.0
-                      im = axes[row, col].imshow(sl, cmap=cmap, vmin=vmin, vmax=vmax_r, aspect='auto')
+                      vmin = -vm if row < 2 else 0.0
+                      im = axes[row, col].imshow(sl, cmap=cmap, vmin=vmin, vmax=vm, aspect='auto')
                       title = f'{row_labels[row]}\nz={z_idx}' if col == 0 else f'z={z_idx}'
                       axes[row, col].set_title(title, fontsize=8)
                       axes[row, col].axis('off')
@@ -605,7 +608,7 @@ class Training:
       #    lambda_smoothness=0.002,
       #    pool_size=(1, 5, 15),
       #)
-      self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=2.0, alpha=0.25)
+      self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=3.0, alpha=0.75)
     else:
       self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=2.0, alpha=0.5)
 

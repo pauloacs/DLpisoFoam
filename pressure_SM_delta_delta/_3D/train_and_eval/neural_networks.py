@@ -1,3 +1,5 @@
+from email.mime import base
+
 import tensorflow as tf
 from tensorflow.keras import Input, Model, regularizers
 from tensorflow.keras import layers
@@ -887,11 +889,303 @@ def SimpleCNN3D_two_heads2(
     return model
 
 
+def SimpleCNN3D_two_heads_(
+    rank,
+    in_channels=12,
+    base_filters=16,
+    smooth_filters=32,
+    dropout_rate=0.05,
+    regularization=1e-5,
+    return_heads=False,
+):
+    """
+    Parallel two-branch 3D CNN for delta_delta_p prediction.
 
+    Branch 1: p_high
+        - Full-resolution dilated residual CNN.
+        - Similar to the previous successful model.
+        - Intended to capture local/high-frequency pressure structures.
+
+    Branch 2: p_smooth
+        - Independent smooth branch directly from the input.
+        - Uses average pooling, coarse convolutions, feature upsampling,
+          and full-resolution refinement.
+        - Intended to capture broad/low-frequency pressure structures.
+
+    Final:
+        p_total = gauge_correct(p_high + p_smooth)
+
+    Parameters
+    ----------
+    rank : tuple/list or int
+        If tuple/list: (sz, sy, sx).
+        If int: uses same size in all directions.
+
+    in_channels : int
+        Number of input channels.
+
+    base_filters : int
+        Number of filters in the high-frequency branch.
+
+    smooth_filters : int
+        Number of filters in the coarse smooth branch.
+
+    dropout_rate : float
+        Dropout rate. Use 0.0 to disable dropout.
+
+    regularization : float
+        L2 regularization coefficient.
+
+    return_heads : bool
+        If False:
+            returns only p_total.
+        If True:
+            returns dict with p_total, p_high, p_smooth.
+
+    Returns
+    -------
+    model : keras.Model
+    """
+
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:    
+        sz = sy = sx = int(rank)
+
+    inputs = Input(
+        shape=(sz, sy, sx, in_channels),
+        name="input",
+    )
+
+    # ------------------------------------------------------------------
+    # Helper functions
+    # ------------------------------------------------------------------
+    def conv_norm_relu(
+        x,
+        filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+    ):
+        x = padded_conv3d(
+            x,
+            filters=filters,
+            kernel_size=kernel_size,
+            dilation_rate=dilation_rate,
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        x = layers.LayerNormalization()(x)
+        x = layers.Activation("relu")(x)
+        return x
+
+    def residual_block(
+        x,
+        filters,
+        dilation_rate,
+        block_id,
+    ):
+        x_res = x
+
+        y = padded_conv3d(
+            x,
+            filters=filters,
+            kernel_size=3,
+            dilation_rate=dilation_rate,
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        y = layers.LayerNormalization()(y)
+        y = layers.Activation("relu")(y)
+
+        if dropout_rate is not None and dropout_rate > 0.0:
+            y = layers.Dropout(
+                dropout_rate,
+                name=f"high_dropout_{block_id}",
+            )(y)
+
+        y = padded_conv3d(
+            y,
+            filters=filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+        y = layers.LayerNormalization()(y)
+
+        x = layers.Add(name=f"high_res_add_{block_id}")([x_res, y])
+        x = layers.Activation(
+            "relu",
+            name=f"high_res_relu_{block_id}",
+        )(x)
+
+        return x
+
+    def gauge_correct(x):
+        mean = tf.reduce_mean(
+            x,
+            axis=(1, 2, 3, 4),
+            keepdims=True,
+        )
+        return x - mean
+
+    # ==================================================================
+    # Branch 1: high-frequency / local branch
+    # ==================================================================
+    h = conv_norm_relu(
+        inputs,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+    )
+
+    high_dilations = [
+        (1, 1, 1),
+        (1, 1, 2),
+        (1, 2, 4),
+        (1, 2, 6),
+        (1, 2, 4),
+        (1, 1, 2),
+        (1, 1, 1),
+    ]
+
+    for i, dilation in enumerate(high_dilations):
+        h = residual_block(
+            h,
+            filters=base_filters,
+            dilation_rate=dilation,
+            block_id=i,
+        )
+
+    p_high = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="p_high_raw",
+    )(h)
+
+    # ==================================================================
+    # Branch 2: smooth / low-frequency branch
+    # ==================================================================
+    smooth_pool = (1, 2, 5)
+
+    s = layers.AveragePooling3D(
+        pool_size=smooth_pool,
+        strides=smooth_pool,
+        padding="valid",
+        name="smooth_downsample",
+    )(inputs)
+
+    s = conv_norm_relu(
+        s,
+        filters=smooth_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+    )
+
+    s = conv_norm_relu(
+        s,
+        filters=smooth_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 2),
+    )
+
+    if dropout_rate is not None and dropout_rate > 0.0:
+        s = layers.Dropout(
+            dropout_rate,
+            name="smooth_dropout",
+        )(s)
+
+    s = conv_norm_relu(
+        s,
+        filters=smooth_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+    )
+
+    # Upsample smooth features, not scalar pressure
+    s = layers.UpSampling3D(
+        size=smooth_pool,
+        name="smooth_feature_upsample",
+    )(s)
+
+    # Full-resolution smooth refinement
+    s = conv_norm_relu(
+        s,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+    )
+
+    s = conv_norm_relu(
+        s,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+    )
+
+    p_smooth = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="p_smooth_raw",
+    )(s)
+
+    # ==================================================================
+    # Combine branches
+    # ==================================================================
+    p_total_raw = layers.Add(name="p_total_raw")(
+        [p_high, p_smooth]
+    )
+
+    p_total = layers.Lambda(
+        gauge_correct,
+        name="p_total_gauge_corrected",
+    )(p_total_raw)
+
+    p_total_out = layers.Lambda(
+        lambda x: tf.squeeze(x, axis=-1),
+        name="p_total",
+    )(p_total)
+
+    if return_heads:
+        p_high_out = layers.Lambda(
+            lambda x: tf.squeeze(x, axis=-1),
+            name="p_high",
+        )(p_high)
+
+        p_smooth_out = layers.Lambda(
+            lambda x: tf.squeeze(x, axis=-1),
+            name="p_smooth",
+        )(p_smooth)
+
+        outputs = {
+            "p_total": p_total_out,
+            "p_high": p_high_out,
+            "p_smooth": p_smooth_out,
+        }
+    else:
+        outputs = p_total_out
+
+    model = Model(
+        inputs=inputs,
+        outputs=outputs,
+        name="CNN3D_parallel_high_smooth",
+    )
+
+    model.summary()
+    return model
+
+
+# BEST SO FAR!!! (alpha 0.25)
 def SimpleCNN3D_two_heads(
     rank,
     in_channels=4,
-    base_filters=8,
+    base_filters=16,
     dropout_rate=0.05,
     regularization=1e-5,
     return_heads=True,

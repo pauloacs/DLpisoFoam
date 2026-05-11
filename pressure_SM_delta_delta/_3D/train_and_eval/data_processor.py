@@ -275,6 +275,7 @@ class FeatureExtractAndWrite:
         add_ddu_input: bool = True,
         add_U_input: bool = False,
         use_previous_dp_input: bool = False,
+        add_ddp_prev_input: bool = False,
     ):
 
     self.grid_res = grid_res
@@ -308,11 +309,12 @@ class FeatureExtractAndWrite:
     self.add_U_input = add_U_input
     self.add_ddu_input = add_ddu_input
     self.use_previous_dp_input = use_previous_dp_input
-    # maxs_list layout depends on flags: [U if add_U] [ddU if add_ddu] dddU sdf [delta_p_prev if use_prev_dp] delta_p 
+    self.add_ddp_prev_input = add_ddp_prev_input
+    # maxs_list layout depends on flags: [U if add_U] [ddU if add_ddu] dddU sdf [delta_p_prev if use_prev_dp] [ddp_prev if add_ddp_prev] delta_p
     # Examples:
-    #   add_U=T, add_ddu=T, use_prev_dp=T (12 values): [U_x, U_y, U_z, ddU_x, ddU_y, ddU_z, dddU_x, dddU_y, dddU_z, sdf, delta_p_prev, delta_p]
-    #   add_U=T, add_ddu=T, use_prev_dp=F (11 values): [U_x, U_y, U_z, ddU_x, ddU_y, ddU_z, dddU_x, dddU_y, dddU_z, sdf, delta_p]
-    #   add_U=F, add_ddu=F, use_prev_dp=F (5 values): [dddU_x, dddU_y, dddU_z, sdf, delta_p]
+    #   add_U=T, add_ddu=T, use_prev_dp=T, add_ddp_prev=T (13 values): [U_x, U_y, U_z, ddU_x, ddU_y, ddU_z, dddU_x, dddU_y, dddU_z, sdf, delta_p_prev, ddp_prev, delta_p]
+    #   add_U=T, add_ddu=T, use_prev_dp=T, add_ddp_prev=F (12 values): [U_x, U_y, U_z, ddU_x, ddU_y, ddU_z, dddU_x, dddU_y, dddU_z, sdf, delta_p_prev, delta_p]
+    #   add_U=F, add_ddu=F, use_prev_dp=F, add_ddp_prev=F (5 values): [dddU_x, dddU_y, dddU_z, sdf, delta_p]
     ch_idx = 0
     if add_U_input:
       self.max_abs_U_x, self.max_abs_U_y, self.max_abs_U_z = maxs_list[ch_idx:ch_idx+3]
@@ -335,6 +337,11 @@ class FeatureExtractAndWrite:
       ch_idx += 1
     else:
       self.max_abs_delta_p_prev = 1.0  # unused
+    if add_ddp_prev_input:
+      self.max_abs_ddp_prev = maxs_list[ch_idx]
+      ch_idx += 1
+    else:
+      self.max_abs_ddp_prev = 1.0  # unused
     self.max_abs_delta_delta_p = maxs_list[ch_idx]
 
     # Backward-compatible aliases
@@ -464,6 +471,7 @@ class FeatureExtractAndWrite:
           add_U_input=self.add_U_input,
           add_ddu_input=self.add_ddu_input,
           use_previous_dp_input=self.use_previous_dp_input,
+          add_ddp_prev_input=self.add_ddp_prev_input,
         )
         all_inputs_u.append(inputs_u)
         all_inputs_obst.append(inputs_obst)
@@ -516,6 +524,7 @@ class FeatureExtractAndWrite:
                   add_U_input=self.add_U_input,
                   add_ddu_input=self.add_ddu_input,
                   use_previous_dp_input=self.use_previous_dp_input,
+                  add_ddp_prev_input=self.add_ddp_prev_input,
                 )
 
                 print(f' -Transforming grid data to tensor cores for chunk {i_chunk + 1}/{n_chunks_per_sim} - subchunk {sub_chunk + 1}/{n_sub_chunks}', flush=True)
@@ -532,7 +541,7 @@ class FeatureExtractAndWrite:
     blk_z = self.block_size_z
     blk_y = self.block_size_y
     blk_x = self.block_size_x
-    n_in_ch = (3 if self.add_U_input else 0) + (3 if self.add_ddu_input else 0) + 3 + 1 + (1 if self.use_previous_dp_input else 0)  # U(if)+ddU(if)+dddU+sdf+p_prev(if)
+    n_in_ch = (3 if self.add_U_input else 0) + (3 if self.add_ddu_input else 0) + 3 + 1 + (1 if self.use_previous_dp_input else 0) + (1 if self.add_ddp_prev_input else 0)  # U(if)+ddU(if)+dddU+sdf+p_prev(if)+ddp_prev(if)
 
     with tables.open_file(core_data_fn, mode='w') as file:
       atom = tables.Float32Atom()
@@ -567,6 +576,7 @@ class FeatureExtractAndWrite:
             add_U_input=self.add_U_input,
             add_ddu_input=self.add_ddu_input,
             use_previous_dp_input=self.use_previous_dp_input,
+            add_ddp_prev_input=self.add_ddp_prev_input,
           )
           in_features, out_features = self.normalize_raw_blocks(blocks_data)
           if in_features.shape[0] == 0:
@@ -580,7 +590,7 @@ class FeatureExtractAndWrite:
   def normalize_raw_blocks(self, blocks_data):
     """Normalize sampled blocks by max values without Tucker decomposition."""
     inputs_u, inputs_obst, outputs = blocks_data
-    n_in_ch = (3 if self.add_U_input else 0) + (3 if self.add_ddu_input else 0) + 3 + 1 + (1 if self.use_previous_dp_input else 0)  # U(if)+ddU(if)+dddU+sdf+p_prev(if)
+    n_in_ch = (3 if self.add_U_input else 0) + (3 if self.add_ddu_input else 0) + 3 + 1 + (1 if self.use_previous_dp_input else 0) + (1 if self.add_ddp_prev_input else 0)  # U(if)+ddU(if)+dddU+sdf+p_prev(if)+ddp_prev(if)
     if inputs_u.ndim == 1 and inputs_u.size == 0:
       return (np.empty((0, self.block_size_z, self.block_size_y, self.block_size_x, n_in_ch), dtype=np.float32),
               np.empty((0, self.block_size_z, self.block_size_y, self.block_size_x), dtype=np.float32))
@@ -596,6 +606,8 @@ class FeatureExtractAndWrite:
     # shouldn't be inside the inputs_u, review it later...
     if self.use_previous_dp_input:
       norm_parts.append(self.max_abs_delta_p_prev) 
+    if self.add_ddp_prev_input:
+      norm_parts.append(self.max_abs_ddp_prev)
 
     velocity = inputs_u / np.array(norm_parts)
 
@@ -620,6 +632,7 @@ class FeatureExtractAndWrite:
     add_U_input: bool = False,
     add_ddu_input: bool = True,
     use_previous_dp_input: bool = False,
+    add_ddp_prev_input: bool = False,
   ):
     """
     Static method to sample blocks chunked from gridded HDF5 simulation data.
@@ -650,7 +663,10 @@ class FeatureExtractAndWrite:
     ch_idx += 1
     p_prev_start = ch_idx if use_previous_dp_input else None
     p_prev_end = (ch_idx + 1) if use_previous_dp_input else None
-    ch_idx += 1
+    ch_idx += 1 if use_previous_dp_input else 0
+    ddp_prev_start = ch_idx if add_ddp_prev_input else None
+    ddp_prev_end = (ch_idx + 1) if add_ddp_prev_input else None
+    ch_idx += 1 if add_ddp_prev_input else 0
     p_start = ch_idx
     p_end = ch_idx + 1
 
@@ -698,6 +714,9 @@ class FeatureExtractAndWrite:
         if use_previous_dp_input:
           delta_p_prev_sample = grid[i_idx_first:i_idx_last, j_idx_first:j_idx_last, k_idx_first:k_idx_last, p_prev_start:p_prev_end]  # delta_p_prev
           vel_parts.append(delta_p_prev_sample)
+        if add_ddp_prev_input:
+          ddp_prev_sample = grid[i_idx_first:i_idx_last, j_idx_first:j_idx_last, k_idx_first:k_idx_last, ddp_prev_start:ddp_prev_end]  # delta_delta_p_prev
+          vel_parts.append(ddp_prev_sample)
         
         inputs_u_sample = np.concatenate(vel_parts, axis=-1)
         
@@ -725,21 +744,28 @@ class FeatureExtractAndWrite:
     for step in range(outputs.shape[0]):
       outputs[step, ...][inputs_obst[step, ...] != 0] -= np.mean(outputs[step, ...][inputs_obst[step, ...] != 0])
 
-    # Remove per-block domain mean from delta_p_prev input (consistent with output mean removal)
+    # Remove per-block domain mean from pressure inputs (consistent with output mean removal)
+    _vel_ch_base = 3 * (1 + int(add_U_input) + int(add_ddu_input))
     if use_previous_dp_input:
-      delta_p_prev_ch = inputs_u.shape[-1] - 1  # delta_p_prev is always the last channel of inputs_u
+      dp_prev_ch = _vel_ch_base
       for step in range(inputs_u.shape[0]):
         mask = inputs_obst[step, ..., 0] != 0
         if mask.any():
-          inputs_u[step, ..., delta_p_prev_ch][mask] -= np.mean(inputs_u[step, ..., delta_p_prev_ch][mask])
+          inputs_u[step, ..., dp_prev_ch][mask] -= np.mean(inputs_u[step, ..., dp_prev_ch][mask])
+    if add_ddp_prev_input:
+      ddp_prev_ch = _vel_ch_base + int(use_previous_dp_input)
+      for step in range(inputs_u.shape[0]):
+        mask = inputs_obst[step, ..., 0] != 0
+        if mask.any():
+          inputs_u[step, ..., ddp_prev_ch][mask] -= np.mean(inputs_u[step, ..., ddp_prev_ch][mask])
 
     array = np.c_[inputs_u, inputs_obst, outputs]
     reshaped_array = array.reshape(array.shape[0], -1)
     unique_indices = np.unique(reshaped_array, axis=0, return_index=True)[1]
     unique_array = array[unique_indices]
     
-    # Extract based on total velocity channels: U(if)+ddU(if)+dddU = 3*(1+add_U_input+add_ddu_input) + delta_p_prev(if)
-    vel_end = 3 * (1 + int(add_U_input) + int(add_ddu_input)) + int(use_previous_dp_input)
+    # Extract based on total velocity channels: U(if)+ddU(if)+dddU = 3*(1+add_U_input+add_ddu_input) + delta_p_prev(if) + delta_delta_p_prev(if)
+    vel_end = 3 * (1 + int(add_U_input) + int(add_ddu_input)) + int(use_previous_dp_input) + int(add_ddp_prev_input)
     # inputs_obst now has sdf (1 channel) + delta_p_prev (1 channel if use_previous_dp_input)
     obst_end = vel_end + 1
     inputs_u = unique_array[..., 0:vel_end]
@@ -765,6 +791,8 @@ class FeatureExtractAndWrite:
 
     if self.use_previous_dp_input:
       norm_parts.append(self.max_abs_delta_p_prev)
+    if self.add_ddp_prev_input:
+      norm_parts.append(self.max_abs_ddp_prev)
 
     velocity = inputs_u / np.array(norm_parts)
     
@@ -805,6 +833,8 @@ class FeatureExtractAndWrite:
     norm_parts.extend([self.max_abs_dddU_x, self.max_abs_dddU_y, self.max_abs_dddU_z])
     if self.use_previous_dp_input:
       norm_parts.append(self.max_abs_delta_p_prev)
+    if self.add_ddp_prev_input:
+      norm_parts.append(self.max_abs_ddp_prev)
 
     velocity = inputs_u / np.array(norm_parts)
     
