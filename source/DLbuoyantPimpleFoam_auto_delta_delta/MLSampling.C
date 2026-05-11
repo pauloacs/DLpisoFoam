@@ -16,6 +16,7 @@ DataSampler::DataSampler
     Foam::volVectorField& delta_delta_U_prev,
     Foam::volScalarField& delta_delta_p_rgh_CFD,
     Foam::volScalarField& delta_p_rgh_prev,
+    Foam::volScalarField& delta_delta_p_rgh_prev,
     const std::string& dataDir,
     const std::string& sourceDir,
     int warmUpSteps,
@@ -48,6 +49,7 @@ DataSampler::DataSampler
     delta_delta_U_prev_(delta_delta_U_prev),
     delta_delta_p_rgh_CFD_(delta_delta_p_rgh_CFD),
     delta_p_rgh_prev_(delta_p_rgh_prev),
+    delta_delta_p_rgh_prev_(delta_delta_p_rgh_prev),
     dataDir_(dataDir),
     sourceDir_(sourceDir)
 {}
@@ -413,15 +415,17 @@ void DataSampler::writeFieldData
     // Get absolute velocity field
     const Foam::vectorField& U_vals = U_.internalField();
 
-    // Prepare buffers for U (absolute), delta_delta_U (raw), delta_delta_U_diff (difference), and pressure_increment
+    // Prepare buffers for U (absolute), delta_delta_U (raw), delta_delta_U_diff (difference), and ddp
     std::vector<double> U_buf(nCells * 3);
     std::vector<double> delta_delta_U_buf(nCells * 3);
     std::vector<double> delta_delta_U_diff_buf(nCells * 3);
-    std::vector<double> pressure_increment(nCells);
-    std::vector<double> pressure_increment_prev(nCells);
+    std::vector<double> ddp(nCells);
+    std::vector<double> dp_prev(nCells);
+    std::vector<double> ddp_prev(nCells);
     
-    // Get previous pressure field
+    // Get previous pressure fields
     const Foam::scalarField& pvals_prev = delta_p_rgh_prev_.internalField();
+    const Foam::scalarField& pvals_ddp_prev = delta_delta_p_rgh_prev_.internalField();
 
     forAll(Uvals, i)
     {
@@ -440,8 +444,12 @@ void DataSampler::writeFieldData
         delta_delta_U_diff_buf[3*i+1] = Uvals[i].y() - Uvals_prev[i].y();
         delta_delta_U_diff_buf[3*i+2] = Uvals[i].z() - Uvals_prev[i].z();
 
-        pressure_increment[i]     = pvals[i];
-        pressure_increment_prev[i] = pvals_prev[i];
+        // Extra pressure inputs
+        dp_prev[i]  = pvals_prev[i];
+        ddp_prev[i] = pvals_ddp_prev[i];
+
+        // ddp to predict
+        ddp[i]     = pvals[i];
     }
 
     Foam::Info<< "  [DataSampler] Buffers filled (delta_delta_U and delta_delta_U_diff)" << Foam::nl;
@@ -473,12 +481,17 @@ void DataSampler::writeFieldData
     );
     hid_t pres_dset = H5Dcreate
     (
-        group_id, "pressure_increment", H5T_IEEE_F64LE,
+        group_id, "ddp", H5T_IEEE_F64LE,
         pres_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
     );
     hid_t pres_prev_dset = H5Dcreate
     (
-        group_id, "pressure_increment_prev", H5T_IEEE_F64LE,
+        group_id, "dp_prev", H5T_IEEE_F64LE,
+        pres_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
+    );
+    hid_t ddp_prev_dset = H5Dcreate
+    (
+        group_id, "ddp_prev", H5T_IEEE_F64LE,
         pres_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
     );
 
@@ -494,11 +507,14 @@ void DataSampler::writeFieldData
     status = H5Dwrite(diff_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, delta_delta_U_diff_buf.data());
     if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing delta_delta_U_diff data" << Foam::nl;
 
-    status = H5Dwrite(pres_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, pressure_increment.data());
+    status = H5Dwrite(pres_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, ddp.data());
     if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing pressure data" << Foam::nl;
 
-    status = H5Dwrite(pres_prev_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, pressure_increment_prev.data());
-    if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing pressure_increment_prev data" << Foam::nl;
+    status = H5Dwrite(pres_prev_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, dp_prev.data());
+    if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing dp_prev data" << Foam::nl;
+
+    status = H5Dwrite(ddp_prev_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, ddp_prev.data());
+    if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing ddp_prev data" << Foam::nl;
 
     // Close new resources
     H5Dclose(U_dset);
@@ -506,6 +522,7 @@ void DataSampler::writeFieldData
     H5Dclose(diff_dset);
     H5Dclose(pres_dset);
     H5Dclose(pres_prev_dset);
+    H5Dclose(ddp_prev_dset);
     H5Sclose(U_space);
     H5Sclose(raw_space);
     H5Sclose(diff_space);

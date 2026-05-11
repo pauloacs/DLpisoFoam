@@ -90,6 +90,12 @@ if __name__ == "__main__":
     except ImportError:
         use_previous_dp_input = False  # default: don't include previous pressure
 
+    # add_ddp_prev_input: include delta_delta_p_prev (previous pressure double-increment) as extra input
+    try:
+        from python_module import add_ddp_prev_input
+    except ImportError:
+        add_ddp_prev_input = False  # default: don't include previous pressure double-increment
+
     # Allow block_size to be int or tuple, and always convert to tuple
     if isinstance(block_size, int):
         block_size_tuple = (block_size, block_size, block_size)
@@ -129,7 +135,7 @@ if __name__ == "__main__":
 
     # Load delta-delta fields (second differences) from HDF5
     try:
-        cell_centers, boundary_coords, boundary_patches, patch_names, U, delta_delta_U, delta_delta_U_diff, delta_p_prev, delta_delta_p, timestamps, U_MAX_NORM_arr = \
+        cell_centers, boundary_coords, boundary_patches, patch_names, U, delta_delta_U, delta_delta_U_diff, delta_p_prev, delta_delta_p_prev, delta_delta_p, timestamps, U_MAX_NORM_arr = \
             load_hdf5_samples(hdf5_file_copy)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error loading HDF5 data: {e}")
@@ -146,7 +152,7 @@ if __name__ == "__main__":
     print(f"Loaded {n_sample_frames} samples from HDF5 file")
     print(f"Cell centers shape: {cell_centers.shape}")
     print(f"Boundary coordinates shape: {boundary_coords.shape if boundary_coords is not None else 'None'}")
-    print(f"U shape: {U.shape}, delta_delta_U shape: {delta_delta_U.shape}, delta_delta_p shape: {delta_delta_p.shape}, delta_p_prev shape: {delta_p_prev.shape}")
+    print(f"U shape: {U.shape}, delta_delta_U shape: {delta_delta_U.shape}, delta_delta_p shape: {delta_delta_p.shape}, delta_p_prev shape: {delta_p_prev.shape}, delta_delta_p_prev shape: {delta_delta_p_prev.shape}")
     print(f"U_MAX_NORM array shape: {U_MAX_NORM_arr.shape}")
 
     # Save coordinates and boundaries for compatibility
@@ -230,12 +236,16 @@ if __name__ == "__main__":
     delta_delta_U_diff_grid_flat = np.full((n_samples, n_grid_points, 3), np.nan, dtype=np.float64)
     delta_delta_p_grid_flat = np.full((n_samples, n_grid_points), np.nan, dtype=np.float64)
     delta_p_prev_grid_flat = None
+    delta_ddp_prev_grid_flat = None
     
     if add_U_input:
         U_grid_flat = np.full((n_samples, n_grid_points, 3), np.nan, dtype=np.float64)
     
     if use_previous_dp_input:
         delta_p_prev_grid_flat = np.full((n_samples, n_grid_points), np.nan, dtype=np.float64)
+
+    if add_ddp_prev_input:
+        delta_ddp_prev_grid_flat = np.full((n_samples, n_grid_points), np.nan, dtype=np.float64)
 
     # Interpolate and normalize each sample
     for sample_idx in range(n_samples):
@@ -267,6 +277,12 @@ if __name__ == "__main__":
                 delta_p_prev[sample_idx, :] / (norm ** 2), vert, weights, fill_value=np.nan
             )
 
+        # Interpolate and normalize previous pressure double-increment (if enabled)
+        if add_ddp_prev_input:
+            delta_ddp_prev_grid_flat[sample_idx, :] = utils_data.interpolate_fill_njit(
+                delta_delta_p_prev[sample_idx, :] / (norm ** 2), vert, weights, fill_value=np.nan
+            )
+
         # Interpolate and normalize delta-delta pressure
         delta_delta_p_grid_flat[sample_idx, :] = utils_data.interpolate_fill_njit(
             delta_delta_p[sample_idx, :] / (norm ** 2), vert, weights, fill_value=np.nan
@@ -285,6 +301,8 @@ if __name__ == "__main__":
     dataset_parts.append(delta_delta_U_diff_grid_flat)
     if use_previous_dp_input:
         dataset_parts.append(delta_p_prev_grid_flat[..., np.newaxis])
+    if add_ddp_prev_input:
+        dataset_parts.append(delta_ddp_prev_grid_flat[..., np.newaxis])
     dataset_parts.append(delta_delta_p_grid_flat[..., np.newaxis])
     
     dataset = np.concatenate(dataset_parts, axis=-1)
@@ -329,9 +347,11 @@ if __name__ == "__main__":
 
     # Prepare gridded array for saving
     # Calculate total channels: 3 (sdf + delta_p + optional delta_p_prev) + 3 (dddU) + 3*add_ddu_input (ddU) + 3*add_U_input (U)
-    n_grid_channels = 2 + 3  # sdf, delta_p, dddU (+ optional delta_p_prev)
+    n_grid_channels = 2 + 3  # sdf, delta_p, dddU (+ optional delta_p_prev and/or ddp_prev)
     if use_previous_dp_input:
         n_grid_channels += 1  # delta_p_prev
+    if add_ddp_prev_input:
+        n_grid_channels += 1  # delta_delta_p_prev
     if add_ddu_input:
         n_grid_channels += 3  # ddU
     if add_U_input:
@@ -354,8 +374,16 @@ if __name__ == "__main__":
     ch_idx += 1
     dp_prev_idx = ch_idx if use_previous_dp_input else None
     ch_idx += 1 if use_previous_dp_input else 0
+    ddp_prev_idx = ch_idx if add_ddp_prev_input else None
+    ch_idx += 1 if add_ddp_prev_input else 0
     ddp_idx = ch_idx
     ch_idx += 1
+
+    # Compute explicit flat channel indices in 'dataset' (which has no sdf channel)
+    _ds_base = dddu_idx[1]  # start of pressure channels in dataset
+    dataset_dp_prev_ch = _ds_base  # dp_prev position in dataset
+    dataset_ddp_prev_ch = _ds_base + (1 if use_previous_dp_input else 0)  # ddp_prev position
+    dataset_ddp_ch = dataset_ddp_prev_ch + (1 if add_ddp_prev_input else 0)  # ddp position
 
     for step in range(n_samples):
         if add_U_input:
@@ -365,12 +393,13 @@ if __name__ == "__main__":
         dataset_gridded[step, indices_i, indices_j, indices_k, dddu_idx[0]:dddu_idx[1]] = dataset[step, :, dddu_idx[0]:dddu_idx[1]]
         dataset_gridded[step, indices_i, indices_j, indices_k, sdf_idx] = sdf
         if use_previous_dp_input:
-            dataset_gridded[step, indices_i, indices_j, indices_k, dp_prev_idx] = dataset[step, :, -2]  # second last channel is delta_p_prev
+            dataset_gridded[step, indices_i, indices_j, indices_k, dp_prev_idx] = dataset[step, :, dataset_dp_prev_ch]
+        if add_ddp_prev_input:
+            dataset_gridded[step, indices_i, indices_j, indices_k, ddp_prev_idx] = dataset[step, :, dataset_ddp_prev_ch]
         
         # delta_delta_p to PREDICT
-        dataset_gridded[step, indices_i, indices_j, indices_k, ddp_idx] = dataset[step, :, -1]
+        dataset_gridded[step, indices_i, indices_j, indices_k, ddp_idx] = dataset[step, :, dataset_ddp_ch]
     
-    import pdb; pdb.set_trace()  # Check the gridded dataset before any filtering or processing
     # Plot before filtering
     import matplotlib.pyplot as plt
     import os
@@ -385,6 +414,8 @@ if __name__ == "__main__":
     var_names.extend(['dddU_x', 'dddU_y', 'dddU_z', 'sdf'])
     if use_previous_dp_input:
         var_names.append('delta_p_prev')
+    if add_ddp_prev_input:
+        var_names.append('delta_delta_p_prev')
     var_names.append('delta_delta_p')
     
     n_plot_vars = n_grid_channels
@@ -507,6 +538,16 @@ if __name__ == "__main__":
             max_abs_delta_p_prev = float(np.nanmax(np.abs(dp_prev_data)))
             maxs_list.append(max_abs_delta_p_prev)
 
+        # Previous pressure double-increment (if enabled): same mean-removal treatment
+        if add_ddp_prev_input:
+            ddp_prev_data = dataset_gridded[..., ddp_prev_idx].copy()
+            for t in range(n_samples):
+                ddp_prev_in_domain = ddp_prev_data[t][obst_mask]
+                if not np.all(np.isnan(ddp_prev_in_domain)):
+                    ddp_prev_data[t][obst_mask] -= np.nanmean(ddp_prev_in_domain)
+            max_abs_ddp_prev = float(np.nanmax(np.abs(ddp_prev_data)))
+            maxs_list.append(max_abs_ddp_prev)
+
         max_abs_ddp = float(np.nanmax(np.abs(ddp_data)))
         maxs_list.append(max_abs_ddp)
 
@@ -562,11 +603,12 @@ if __name__ == "__main__":
         gridded_h5_filenames=[gridded_h5_fn],
         flatten_data=flatten_data,
         maxs_list=maxs_list,
-        last_tucker_rank=last_tucker_rank if use_feature_decomposition else (1 + 3 * (1 + int(add_U_input) + int(add_ddu_input)) + int(use_previous_dp_input)),
+        last_tucker_rank=last_tucker_rank if use_feature_decomposition else (1 + 3 * (1 + int(add_U_input) + int(add_ddu_input)) + int(use_previous_dp_input) + int(add_ddp_prev_input)),
         use_feature_decomposition=use_feature_decomposition,
         add_ddu_input=add_ddu_input,
         add_U_input=add_U_input,
         use_previous_dp_input=use_previous_dp_input,
+        add_ddp_prev_input=add_ddp_prev_input,
     )
     feature_writer(core_data_fn, compute_tucker_factors=True, n_representative_blocks=n_representative_blocks)
     print("Feature extraction and writing complete.")
@@ -609,7 +651,7 @@ if __name__ == "__main__":
         flatten_data=flatten_data,
         weights_fn=os.path.join(data_dir, 'weights.h5'),
         model_h5_path=data_dir,
-        last_tucker_rank=last_tucker_rank if use_feature_decomposition else (1 + 3 * (1 + int(add_U_input) + int(add_ddu_input)) + int(use_previous_dp_input)),
+        last_tucker_rank=last_tucker_rank if use_feature_decomposition else (1 + 3 * (1 + int(add_U_input) + int(add_ddu_input)) + int(use_previous_dp_input) + int(add_ddp_prev_input)),
         use_feature_decomposition=use_feature_decomposition,
         block_size=block_size_tuple,
     )

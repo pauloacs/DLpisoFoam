@@ -120,6 +120,7 @@ def load_tucker_and_NN(
 	add_ddu_input=True,
 	add_U_input=False,
 	use_previous_dp_input=False,
+	add_ddp_prev_input=False,
 ):
 	"""
 	Load tucker factors and initialize the trained neural network model.
@@ -204,11 +205,12 @@ def load_tucker_and_NN(
 		else:
 			maxs = np.loadtxt(maxs_fn)
 
-		global max_abs_U_x, max_abs_U_y, max_abs_U_z, max_abs_ddU_x, max_abs_ddU_y, max_abs_ddU_z, max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z, max_abs_dist, max_abs_delta_delta_p, max_abs_delta_p_prev
-		global add_U_input_g, add_ddu_input_g, use_previous_dp_input_g
+		global max_abs_U_x, max_abs_U_y, max_abs_U_z, max_abs_ddU_x, max_abs_ddU_y, max_abs_ddU_z, max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z, max_abs_dist, max_abs_delta_delta_p, max_abs_delta_p_prev, max_abs_ddp_prev
+		global add_U_input_g, add_ddu_input_g, use_previous_dp_input_g, add_ddp_prev_input_g
 		add_U_input_g = add_U_input
 		add_ddu_input_g = add_ddu_input
 		use_previous_dp_input_g = use_previous_dp_input
+		add_ddp_prev_input_g = add_ddp_prev_input
 		
 		# Parse maxs based on flags: U (if add_U_input) + ddU (if add_ddu_input) + dddU + dist + delta_p (+ delta_p_prev if use_previous_dp_input)
 		ch_idx = 0
@@ -233,6 +235,11 @@ def load_tucker_and_NN(
 			ch_idx += 1
 		else:
 			max_abs_delta_p_prev = 1.0  # unused
+		if add_ddp_prev_input:
+			max_abs_ddp_prev = maxs[ch_idx]
+			ch_idx += 1
+		else:
+			max_abs_ddp_prev = 1.0  # unused
 		max_abs_delta_delta_p = maxs[ch_idx]
 		
 		# Loading values for standardization
@@ -254,8 +261,10 @@ def load_tucker_and_NN(
 			last_tucker_rank += 3
 		if use_previous_dp_input:
 			last_tucker_rank += 1
+		if add_ddp_prev_input:
+			last_tucker_rank += 1
 		if verbose:
-			print(f'[load_tucker_and_NN] Auto-calculated last_tucker_rank: {last_tucker_rank} (base=4, +3 if add_U_input, +3 if add_ddu_input, +1 if use_previous_dp_input)')
+			print(f'[load_tucker_and_NN] Auto-calculated last_tucker_rank: {last_tucker_rank} (base=4, +3 if add_U_input, +3 if add_ddu_input, +1 if use_previous_dp_input, +1 if add_ddp_prev_input)')
 	
 		# Store Tucker rank info so init_func can build the MLP with correct sizes
 		global spatial_tucker_ranks_g, last_tucker_rank_g
@@ -265,8 +274,8 @@ def load_tucker_and_NN(
 		if verbose:
 			print(f'[load_tucker_and_NN] Configuration stored. Model will be created in init_func.')
 			print(f'[load_tucker_and_NN] overlap_ratio: {overlap_ratio}')
-			print(f'[load_tucker_and_NN] add_U_input: {add_U_input}, add_ddu_input: {add_ddu_input}, use_previous_dp_input: {use_previous_dp_input}, last_tucker_rank: {last_tucker_rank}')
-		print(f'[load_tucker_and_NN] add_U_input: {add_U_input}, add_ddu_input: {add_ddu_input}, use_previous_dp_input: {use_previous_dp_input}, last_tucker_rank: {last_tucker_rank}')
+			print(f'[load_tucker_and_NN] add_U_input: {add_U_input}, add_ddu_input: {add_ddu_input}, use_previous_dp_input: {use_previous_dp_input}, add_ddp_prev_input: {add_ddp_prev_input}, last_tucker_rank: {last_tucker_rank}')
+		print(f'[load_tucker_and_NN] add_U_input: {add_U_input}, add_ddu_input: {add_ddu_input}, use_previous_dp_input: {use_previous_dp_input}, add_ddp_prev_input: {add_ddp_prev_input}, last_tucker_rank: {last_tucker_rank}')
 
 
 def reload_weights(weights_fn):
@@ -573,10 +582,10 @@ def py_func(array_in, U_max_norm):
 		delta_delta_U_diff = delta_delta_U - delta_delta_U_prev
 		ch_idx += 3
 		
-		# Channel 9: delta_delta_p_prev — illustration/plots only, not fed to SM
+		# Channel 9: delta_delta_p_prev (SM input if add_ddp_prev_input, else not used)
 		delta_delta_p_prev = array[..., 9:10]
 
-		# Channel 10: delta_p_prev — actual SM input
+		# Channel 10: delta_p_prev — SM input (if use_previous_dp_input)
 		if use_previous_dp_input_g:
 			delta_p_prev = array[..., 10:11]
 			ch_idx += 1
@@ -603,6 +612,12 @@ def py_func(array_in, U_max_norm):
 		else:
 			delta_p_prev_adim = None
 
+		# Normalize delta_delta_p_prev (SM input) if add_ddp_prev_input is enabled
+		if add_ddp_prev_input_g:
+			delta_ddp_prev_adim = delta_delta_p_prev / (U_max_norm ** 2.0)
+		else:
+			delta_ddp_prev_adim = None
+
 		if verbose_g: 
 			print(f"Data pre-processing: {time.time()-t0} s")
 
@@ -624,12 +639,16 @@ def py_func(array_in, U_max_norm):
 		dddU_z_interp = interpolate_fill_njit(delta_delta_U_diff_adim[:, 2], vert_OFtoNP_array, weights_OFtoNP_array)
 		delta_U_changed_interp = interpolate_fill_njit(delta_U_changed, vert_OFtoNP_array, weights_OFtoNP_array)
 		
-		# Interpolate delta_p_prev (SM input) and delta_delta_p_prev (illustration)
+		# Interpolate delta_p_prev (SM input) and delta_delta_p_prev
 		if use_previous_dp_input_g:
 			delta_p_prev_interp = interpolate_fill_njit(delta_p_prev_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
 		else:
 			delta_p_prev_interp = None
 		delta_delta_p_prev_interp = interpolate_fill_njit(delta_delta_p_prev[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
+		if add_ddp_prev_input_g:
+			delta_ddp_prev_interp = interpolate_fill_njit(delta_ddp_prev_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
+		else:
+			delta_ddp_prev_interp = None
 
 		if verbose_g:
 			print(f"1st interpolation took: {time.time()-t0} s")
@@ -638,7 +657,7 @@ def py_func(array_in, U_max_norm):
 
 		# Grid channels depend on flags: [U if add_U_input] [ddU if add_ddu_input] dddU sdf [delta_p_prev if use_previous_dp_input]
 		# Count channels: 3*add_U_input + 3*add_ddu_input + 3*dddU + 1*sdf + 1*use_previous_dp_input
-		n_grid_ch = (3 if add_U_input_g else 0) + (3 if add_ddu_input_g else 0) + 3 + 1 + (1 if use_previous_dp_input_g else 0)
+		n_grid_ch = (3 if add_U_input_g else 0) + (3 if add_ddu_input_g else 0) + 3 + 1 + (1 if use_previous_dp_input_g else 0) + (1 if add_ddp_prev_input_g else 0)
 		grid = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x, n_grid_ch), dtype=np.float64)
 		delta_U_change_grid = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x), dtype=np.float64)
 
@@ -655,6 +674,9 @@ def py_func(array_in, U_max_norm):
 		ch_idx += 3
 		if use_previous_dp_input_g:
 			interp_parts.append(delta_p_prev_interp[:, np.newaxis])  # add delta_p_prev as new channel
+			ch_idx += 1
+		if add_ddp_prev_input_g:
+			interp_parts.append(delta_ddp_prev_interp[:, np.newaxis])  # add delta_delta_p_prev as new channel
 			ch_idx += 1
 		interp_stack = np.column_stack(interp_parts)
 		grid[indices_i, indices_j, indices_k, :ch_idx] = interp_stack
@@ -709,9 +731,12 @@ def py_func(array_in, U_max_norm):
 			norm_parts.extend([max_abs_U_x, max_abs_U_y, max_abs_U_z])
 		if add_ddu_input_g:
 			norm_parts.extend([max_abs_ddU_x, max_abs_ddU_y, max_abs_ddU_z])
-		norm_parts.extend([max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z, max_abs_dist])  # dddU + sdf
+		norm_parts.extend([max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z])  # dddU
 		if use_previous_dp_input_g:
-			norm_parts.extend([max_abs_delta_p_prev])  # delta_p_prev
+			norm_parts.append(max_abs_delta_p_prev)  # delta_p_prev
+		if add_ddp_prev_input_g:
+			norm_parts.append(max_abs_ddp_prev)  # delta_delta_p_prev
+		norm_parts.append(max_abs_dist)  # sdf (always last)
 		norm_factors = np.array(norm_parts, dtype=np.float64)
 		
 		if len(norm_factors) != n_grid_ch:

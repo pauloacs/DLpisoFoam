@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
 	int waitBeforeResampling  = mlDict.lookupOrDefault<int>("waitBeforeResampling",    0);
 
 	DataSampler dataSampler(
-		mesh, U, delta_U, delta_p_rgh_CFD, delta_delta_U, delta_delta_U_prev, delta_delta_p_rgh_CFD, delta_p_rgh_prev, "ML_data",
+		mesh, U, delta_U, delta_p_rgh_CFD, delta_delta_U, delta_delta_U_prev, delta_delta_p_rgh_CFD, delta_p_rgh_prev, delta_delta_p_rgh_prev, "ML_data",
 		sourceScriptDir,
 		warmUpSteps, burstSteps, burstInterval, regularInterval, retrainInterval, windowFrames,
 		waitBeforeResampling
