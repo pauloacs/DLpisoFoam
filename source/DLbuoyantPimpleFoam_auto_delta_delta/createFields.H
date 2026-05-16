@@ -294,6 +294,48 @@ volVectorField delta_U
     dimensionedVector("delta_U", dimensionSet(0,1,-1,0,0,0,0), vector::zero)
 );
 
+// Divergence fields for ML surrogate model
+volScalarField div_U
+(
+    IOobject
+    (
+        "div_U",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::NO_WRITE
+    ),
+    mesh,
+    dimensionedScalar("div_U", dimensionSet(0,0,-1,0,0,0,0), 0.0)
+);
+
+volScalarField div_dU
+(
+    IOobject
+    (
+        "div_dU",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::NO_WRITE
+    ),
+    mesh,
+    dimensionedScalar("div_dU", dimensionSet(0,0,-1,0,0,0,0), 0.0)
+);
+
+volScalarField div_delta_delta_U
+(
+    IOobject
+    (
+        "div_delta_delta_U",
+        runTime.timeName(),
+        mesh,
+        IOobject::NO_READ,
+        IOobject::NO_WRITE
+    ),
+    mesh,
+    dimensionedScalar("div_delta_delta_U", dimensionSet(0,0,-1,0,0,0,0), 0.0)
+);
 
 Info<< "Creating field kinetic energy K\n" << endl;
 volScalarField K("K", 0.5*magSqr(U));

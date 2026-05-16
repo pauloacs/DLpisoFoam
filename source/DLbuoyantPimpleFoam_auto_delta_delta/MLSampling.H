@@ -37,6 +37,10 @@ class DataSampler
     Foam::volScalarField& delta_delta_p_rgh_CFD_;
     Foam::volScalarField& delta_p_rgh_prev_;
     Foam::volScalarField& delta_delta_p_rgh_prev_;
+    Foam::volScalarField& p_rgh_prev_;
+    Foam::volScalarField& div_U_;
+    Foam::volScalarField& div_dU_;
+    Foam::volScalarField& div_delta_delta_U_;
 
     std::string dataDir_;
     std::string sourceDir_;
@@ -69,6 +73,10 @@ public:
         Foam::volScalarField& delta_delta_p_rgh_CFD,
         Foam::volScalarField& delta_p_rgh_prev,
         Foam::volScalarField& delta_delta_p_rgh_prev,
+        Foam::volScalarField& p_rgh_prev,
+        Foam::volScalarField& div_U,
+        Foam::volScalarField& div_dU,
+        Foam::volScalarField& div_delta_delta_U,
         const std::string& dataDir = "ML_data",
         const std::string& sourceDir = ".",
         int warmUpSteps = 10,

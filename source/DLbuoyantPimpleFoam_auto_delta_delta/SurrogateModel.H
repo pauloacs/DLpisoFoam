@@ -29,6 +29,7 @@ class SurrogateModel
     Foam::volScalarField& delta_p_rgh_;
     Foam::volScalarField& delta_p_rgh_CFD_;
     Foam::volScalarField& delta_p_rgh_prev_;
+    Foam::volScalarField& p_rgh_prev_;
     // New fields for delta_delta
     Foam::volVectorField& delta_delta_U_;
     Foam::volVectorField& delta_delta_U_prev_;
@@ -39,7 +40,7 @@ class SurrogateModel
     // --- Python / NumPy state ---
     double U_MAX_NORM_;
     double (*input_vals_init_)[11];
-    double (*input_vals_)[11];  // U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1)
+    double (*input_vals_)[15];  // U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1) + delta_U(3) + p_rgh_prev(1)
     double (*input_vals_z_top_)[3];
     double (*input_vals_z_bot_)[3];
     double (*input_vals_y_top_)[3];
@@ -76,6 +77,7 @@ public:
         Foam::volScalarField& delta_p_rgh,
         Foam::volScalarField& delta_p_rgh_CFD,
         Foam::volScalarField& delta_p_rgh_prev,
+        Foam::volScalarField& p_rgh_prev,
         Foam::volVectorField& delta_delta_U,
         Foam::volVectorField& delta_delta_U_prev,
         Foam::volScalarField& delta_delta_p_rgh,

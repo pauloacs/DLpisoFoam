@@ -17,6 +17,10 @@ DataSampler::DataSampler
     Foam::volScalarField& delta_delta_p_rgh_CFD,
     Foam::volScalarField& delta_p_rgh_prev,
     Foam::volScalarField& delta_delta_p_rgh_prev,
+    Foam::volScalarField& p_rgh_prev,
+    Foam::volScalarField& div_U,
+    Foam::volScalarField& div_dU,
+    Foam::volScalarField& div_delta_delta_U,
     const std::string& dataDir,
     const std::string& sourceDir,
     int warmUpSteps,
@@ -50,6 +54,10 @@ DataSampler::DataSampler
     delta_delta_p_rgh_CFD_(delta_delta_p_rgh_CFD),
     delta_p_rgh_prev_(delta_p_rgh_prev),
     delta_delta_p_rgh_prev_(delta_delta_p_rgh_prev),
+    p_rgh_prev_(p_rgh_prev),
+    div_U_(div_U),
+    div_dU_(div_dU),
+    div_delta_delta_U_(div_delta_delta_U),
     dataDir_(dataDir),
     sourceDir_(sourceDir)
 {}
@@ -419,13 +427,23 @@ void DataSampler::writeFieldData
     std::vector<double> U_buf(nCells * 3);
     std::vector<double> delta_delta_U_buf(nCells * 3);
     std::vector<double> delta_delta_U_diff_buf(nCells * 3);
+    std::vector<double> delta_U_buf(nCells * 3);
+    std::vector<double> div_U_buf(nCells);
+    std::vector<double> div_dU_buf(nCells);
+    std::vector<double> div_delta_delta_U_buf(nCells);
     std::vector<double> ddp(nCells);
     std::vector<double> dp_prev(nCells);
     std::vector<double> ddp_prev(nCells);
+    std::vector<double> p_rgh_prev_buf(nCells);
     
     // Get previous pressure fields
     const Foam::scalarField& pvals_prev = delta_p_rgh_prev_.internalField();
     const Foam::scalarField& pvals_ddp_prev = delta_delta_p_rgh_prev_.internalField();
+    const Foam::scalarField& p_prev_vals = p_rgh_prev_.internalField();
+    const Foam::vectorField& dU_vals = delta_U_.internalField();
+    const Foam::scalarField& div_U_vals = div_U_.internalField();
+    const Foam::scalarField& div_dU_vals = div_dU_.internalField();
+    const Foam::scalarField& div_ddu_vals = div_delta_delta_U_.internalField();
 
     forAll(Uvals, i)
     {
@@ -444,9 +462,20 @@ void DataSampler::writeFieldData
         delta_delta_U_diff_buf[3*i+1] = Uvals[i].y() - Uvals_prev[i].y();
         delta_delta_U_diff_buf[3*i+2] = Uvals[i].z() - Uvals_prev[i].z();
 
+        // Save delta_U (first velocity increment)
+        delta_U_buf[3*i]   = dU_vals[i].x();
+        delta_U_buf[3*i+1] = dU_vals[i].y();
+        delta_U_buf[3*i+2] = dU_vals[i].z();
+
+        // Save divergence fields
+        div_U_buf[i] = div_U_vals[i];
+        div_dU_buf[i] = div_dU_vals[i];
+        div_delta_delta_U_buf[i] = div_ddu_vals[i];
+
         // Extra pressure inputs
-        dp_prev[i]  = pvals_prev[i];
-        ddp_prev[i] = pvals_ddp_prev[i];
+        dp_prev[i]      = pvals_prev[i];
+        ddp_prev[i]     = pvals_ddp_prev[i];
+        p_rgh_prev_buf[i] = p_prev_vals[i];
 
         // ddp to predict
         ddp[i]     = pvals[i];
@@ -458,6 +487,7 @@ void DataSampler::writeFieldData
     hsize_t vel_dims[2]   = {(hsize_t)nCells, 3};
     hsize_t pres_dims[1]  = {(hsize_t)nCells};
 
+    hid_t dU_space    = H5Screate_simple(2, vel_dims, nullptr);
     hid_t U_space     = H5Screate_simple(2, vel_dims, nullptr);
     hid_t raw_space   = H5Screate_simple(2, vel_dims, nullptr);
     hid_t diff_space  = H5Screate_simple(2, vel_dims, nullptr);
@@ -494,8 +524,33 @@ void DataSampler::writeFieldData
         group_id, "ddp_prev", H5T_IEEE_F64LE,
         pres_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
     );
+    hid_t dU_dset = H5Dcreate
+    (
+        group_id, "dU", H5T_IEEE_F64LE,
+        dU_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
+    );
+    hid_t p_prev_dset = H5Dcreate
+    (
+        group_id, "p_prev", H5T_IEEE_F64LE,
+        pres_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
+    );
+    hid_t div_ddu_dset = H5Dcreate
+    (
+        group_id, "div_delta_delta_U", H5T_IEEE_F64LE,
+        pres_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
+    );
+    hid_t div_u_dset = H5Dcreate
+    (
+        group_id, "div_U", H5T_IEEE_F64LE,
+        pres_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
+    );
+    hid_t div_du_dset = H5Dcreate
+    (
+        group_id, "div_dU", H5T_IEEE_F64LE,
+        pres_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT
+    );
 
-    Foam::Info<< "  [DataSampler] Writing U, delta_delta_U, delta_delta_U_diff, and pressure datasets" << Foam::nl;
+    Foam::Info<< "  [DataSampler] Writing U, delta_delta_U, delta_delta_U_diff, dU, p_prev, div_delta_delta_U, div_U, div_dU, and pressure datasets" << Foam::nl;
 
     // Write data
     herr_t status = H5Dwrite(U_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, U_buf.data());
@@ -516,6 +571,21 @@ void DataSampler::writeFieldData
     status = H5Dwrite(ddp_prev_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, ddp_prev.data());
     if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing ddp_prev data" << Foam::nl;
 
+    status = H5Dwrite(dU_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, delta_U_buf.data());
+    if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing dU data" << Foam::nl;
+
+    status = H5Dwrite(p_prev_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, p_rgh_prev_buf.data());
+    if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing p_prev data" << Foam::nl;
+
+    status = H5Dwrite(div_ddu_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, div_delta_delta_U_buf.data());
+    if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing div_delta_delta_U data" << Foam::nl;
+
+    status = H5Dwrite(div_u_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, div_U_buf.data());
+    if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing div_U data" << Foam::nl;
+
+    status = H5Dwrite(div_du_dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, div_dU_buf.data());
+    if (status < 0) Foam::Info<< "  [DataSampler] ERROR writing div_dU data" << Foam::nl;
+
     // Close new resources
     H5Dclose(U_dset);
     H5Dclose(raw_dset);
@@ -523,9 +593,16 @@ void DataSampler::writeFieldData
     H5Dclose(pres_dset);
     H5Dclose(pres_prev_dset);
     H5Dclose(ddp_prev_dset);
+    H5Dclose(dU_dset);
+    H5Dclose(p_prev_dset);
+    H5Dclose(div_ddu_dset);
+    H5Dclose(div_u_dset);
+    H5Dclose(div_du_dset);
     H5Sclose(U_space);
     H5Sclose(raw_space);
     H5Sclose(diff_space);
+    H5Sclose(dU_space);
+    H5Sclose(pres_space);
 
     // Write metadata
     hid_t attr_space = H5Screate(H5S_SCALAR);

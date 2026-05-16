@@ -1181,6 +1181,354 @@ def SimpleCNN3D_two_heads_(
     return model
 
 
+
+def SimpleCNN3D_two_heads_(
+    rank,
+    in_channels=4,
+    base_filters=16,
+    dropout_rate=0.05,
+    regularization=1e-5,
+    return_heads=True,
+    smooth_pool=2,          # downsample factor for smooth head (2 is a good start)
+    smooth_filters=None,    # if None -> base_filters
+    use_gating=True,       # optional gated mixing of local/smooth
+    pad_mode="SYMMETRIC",   # forwarded to padded_conv3d
+):
+    """
+    Two-head 3D CNN for delta_delta_p prediction.
+
+    Head 1: p_local
+      - Full-resolution, sharp details.
+
+    Head 2: p_smooth
+      - Band-limited low-frequency branch (pool->conv->upsample).
+
+    Combination:
+      p_total_raw = p_local + p_smooth   (or gated if use_gating=True)
+      p_total = p_total_raw - mean(p_total_raw)  (gauge correction)
+
+    Returns:
+      if return_heads=True: dict with p_total, p_local, p_smooth (all squeezed to [B, Z, Y, X])
+      else: p_total only (squeezed)
+    """
+
+    # ----------------------------
+    # Parse spatial dims
+    # ----------------------------
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+
+    if smooth_filters is None:
+        smooth_filters = base_filters
+
+    inputs = Input(shape=(sz, sy, sx, in_channels), name="inputs")
+
+    # -------------------------------------------------------------------------
+    # Shared trunk (your existing structure)
+    # -------------------------------------------------------------------------
+    x = padded_conv3d(
+        inputs,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+        regularization=regularization,
+        pad_mode=pad_mode,
+    )
+    x = layers.LayerNormalization(name="ln_in")(x)
+    x = layers.Activation("relu", name="relu_in")(x)
+
+    # Residual blocks (no dilation)
+    for i in range(7):
+        x_res = x
+
+        y = padded_conv3d(
+            x,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode=pad_mode,
+        )
+        y = layers.LayerNormalization(name=f"ln_{i}_a")(y)
+        y = layers.Activation("relu", name=f"relu_{i}_a")(y)
+
+        if dropout_rate and dropout_rate > 0:
+            y = layers.Dropout(dropout_rate, name=f"drop_{i}")(y)
+
+        y = padded_conv3d(
+            y,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode=pad_mode,
+        )
+        y = layers.LayerNormalization(name=f"ln_{i}_b")(y)
+
+        x = layers.Add(name=f"add_{i}")([x_res, y])
+        x = layers.Activation("relu", name=f"relu_{i}_out")(x)
+
+    # -------------------------------------------------------------------------
+    # Head 1: LOCAL (full-resolution)
+    # -------------------------------------------------------------------------
+    p_local = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="p_local",
+    )(x)
+
+    # -------------------------------------------------------------------------
+    # Head 2: SMOOTH (band-limited by pooling)
+    # -------------------------------------------------------------------------
+    s = x
+    if smooth_pool and smooth_pool > 1:
+        s = layers.AveragePooling3D(pool_size=smooth_pool, padding="same", name="smooth_pool")(s)
+
+    s = layers.Conv3D(
+        smooth_filters, 3, padding="same", use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="smooth_conv1",
+    )(s)
+    s = layers.LayerNormalization(name="smooth_ln1")(s)
+    s = layers.Activation("relu", name="smooth_relu1")(s)
+
+    s = layers.Conv3D(
+        smooth_filters, 3, padding="same", use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="smooth_conv2",
+    )(s)
+    s = layers.LayerNormalization(name="smooth_ln2")(s)
+    s = layers.Activation("relu", name="smooth_relu2")(s)
+
+    p_smooth = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="p_smooth",
+    )(s)
+
+    # Upsample back to full resolution
+    if smooth_pool and smooth_pool > 1:
+        p_smooth = layers.UpSampling3D(size=smooth_pool, name="smooth_upsample")(p_smooth)
+
+        # --- Static cropping to exactly (sz, sy, sx) to avoid Keras Lambda TypeSpec issues ---
+        def ceil_div(a, b):
+            return (a + b - 1) // b
+
+        up_z = ceil_div(sz, smooth_pool) * smooth_pool
+        up_y = ceil_div(sy, smooth_pool) * smooth_pool
+        up_x = ceil_div(sx, smooth_pool) * smooth_pool
+
+        cz = max(up_z - sz, 0)
+        cy = max(up_y - sy, 0)
+        cx = max(up_x - sx, 0)
+
+        crop_z = (cz // 2, cz - cz // 2)
+        crop_y = (cy // 2, cy - cy // 2)
+        crop_x = (cx // 2, cx - cx // 2)
+
+        if (cz or cy or cx):
+            p_smooth = layers.Cropping3D(
+                cropping=(crop_z, crop_y, crop_x),
+                name="smooth_crop_to_input",
+            )(p_smooth)
+
+    # -------------------------------------------------------------------------
+    # Combine heads (sum or gated)
+    # -------------------------------------------------------------------------
+    if use_gating:
+        # alpha in [0,1], per-voxel
+        alpha = layers.Conv3D(
+            1, 1, padding="same", activation="sigmoid",
+            name="alpha_gate",
+        )(x)
+
+        one_minus_alpha = layers.Lambda(lambda a: 1.0 - a, name="one_minus_alpha")(alpha)
+
+        p_total_raw = layers.Add(name="p_total_raw")([
+            layers.Multiply(name="local_weighted")([alpha, p_local]),
+            layers.Multiply(name="smooth_weighted")([one_minus_alpha, p_smooth]),
+        ])
+    else:
+        p_total_raw = layers.Add(name="p_total_raw")([p_local, p_smooth])
+
+    # -------------------------------------------------------------------------
+    # Gauge correction on the SUM (important!)
+    # -------------------------------------------------------------------------
+    p_mean = layers.Lambda(
+        lambda t: tf.reduce_mean(t, axis=(1, 2, 3, 4), keepdims=True),
+        name="p_total_mean",
+    )(p_total_raw)
+
+    p_total = layers.Subtract(name="p_total_gauge_corrected")([p_total_raw, p_mean])
+
+    # -------------------------------------------------------------------------
+    # Remove channel dimension: [B,Z,Y,X,1] -> [B,Z,Y,X]
+    # (Use Lambda to keep Keras graph happy)
+    # -------------------------------------------------------------------------
+    squeeze = lambda t: tf.squeeze(t, axis=-1)
+
+    p_total_s  = layers.Lambda(squeeze, name="p_total")(p_total)
+    p_local_s  = layers.Lambda(squeeze, name="p_local_squeezed")(p_local)
+    p_smooth_s = layers.Lambda(squeeze, name="p_smooth_squeezed")(p_smooth)
+
+    if return_heads:
+        outputs = {"p_total": p_total_s, "p_local": p_local_s, "p_smooth": p_smooth_s}
+    else:
+        outputs = p_total_s
+
+    model = Model(inputs=inputs, outputs=outputs, name="CNN3D_two_heads")
+    model.summary()
+    return model
+
+
+
+## test no smooth
+def SimpleCNN3D_two_heads_(
+    rank,
+    in_channels=4,
+    base_filters=16,
+    dropout_rate=0.05,
+    regularization=1e-5,
+    return_heads=True,
+):
+    """
+    Two-head 3D CNN for delta_delta_p prediction.
+
+    Head 1: local head
+        - Same idea as your original final output layer.
+        - Good for obstacle-local peaks and sharp structures.
+
+    Head 2: smooth head
+        - Coarse low-resolution branch.
+        - Designed to learn smooth far-field pressure mode.
+
+    If return_heads=True:
+        returns dict with p_total, p_smooth, p_local.
+
+    If return_heads=False:
+        returns only p_total, compatible with your old training loop.
+    """
+
+    if isinstance(rank, (tuple, list)):
+        sz, sy, sx = rank
+    else:
+        sz = sy = sx = int(rank)
+
+    inputs = Input(shape=(sz, sy, sx, in_channels))
+
+    # -------------------------------------------------------------------------
+    # Shared trunk: same as your current model
+    # -------------------------------------------------------------------------
+    x = padded_conv3d(
+        inputs,
+        filters=base_filters,
+        kernel_size=3,
+        dilation_rate=(1, 1, 1),
+        regularization=regularization,
+        pad_mode="SYMMETRIC",
+    )
+
+    x = layers.LayerNormalization()(x)
+    x = layers.Activation("relu")(x)
+
+    dilations = [
+        (1, 1, 1),
+        (1, 1, 1),
+        (1, 1, 1),
+        (1, 1, 1),
+        (1, 1, 1),
+        (1, 1, 1),
+        (1, 1, 1),
+    ]
+
+    for dilation in dilations:
+        x_res = x
+
+        y = padded_conv3d(
+            x,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=dilation,
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+
+        y = layers.LayerNormalization()(y)
+        y = layers.Activation("relu")(y)
+
+        if dropout_rate:
+            y = layers.Dropout(dropout_rate)(y)
+
+        y = padded_conv3d(
+            y,
+            filters=base_filters,
+            kernel_size=3,
+            dilation_rate=(1, 1, 1),
+            regularization=regularization,
+            pad_mode="SYMMETRIC",
+        )
+
+        y = layers.LayerNormalization()(y)
+
+        x = layers.Add()([x_res, y])
+        x = layers.Activation("relu")(x)
+
+    p_local = layers.Conv3D(
+        filters=1,
+        kernel_size=1,
+        padding="same",
+        use_bias=False,
+        kernel_regularizer=regularizers.l2(regularization),
+        name="p_local",
+    )(x)
+
+    # Enforce zero-mean constraint directly on the total output
+    # (p_smooth and p_local learn freely; only the sum is constrained)
+    p_mean = tf.reduce_mean(
+        p_local,
+        axis=(1, 2, 3, 4),
+        keepdims=True,
+    )
+    p_total = layers.Subtract(name="p_total_gauge_corrected")(
+        [p_local, p_mean]
+    )
+
+    # Remove channel dimension
+    p_total = tf.squeeze(p_total, axis=-1)
+    #p_smooth = tf.squeeze(p_smooth, axis=-1)
+    p_local = tf.squeeze(p_local, axis=-1)
+
+    if return_heads:
+        outputs = {
+            "p_total": p_total,
+            "p_local": p_local,
+        }
+    else:
+        outputs = p_total
+
+    model = Model(
+        inputs=inputs,
+        outputs=outputs,
+        name="CNN3D_two_heads",
+    )
+
+    model.summary()
+    return model
+
+
+
+
+
+
+
 # BEST SO FAR!!! (alpha 0.25)
 def SimpleCNN3D_two_heads(
     rank,
@@ -1285,6 +1633,39 @@ def SimpleCNN3D_two_heads(
         name="p_local",
     )(x)
 
+    # Head 1: option 2
+
+    #p_local = padded_conv3d(
+    #    x,
+    #    filters=base_filters,
+    #    kernel_size=3,
+    #    dilation_rate=(1, 1, 1),
+    #    regularization=regularization,
+    #    pad_mode="SYMMETRIC",
+    #)
+    #p_local = layers.LayerNormalization()(p_local)
+    #p_local = layers.Activation("relu")(p_local)
+
+    #p_local = padded_conv3d(
+    #    p_local,
+    #    filters=base_filters,
+    #    kernel_size=3,
+    #    dilation_rate=(1, 1, 1),
+    #    regularization=regularization,
+    #    pad_mode="SYMMETRIC",
+    #)
+    #p_local = layers.LayerNormalization()(p_local)
+    #p_local = layers.Activation("relu")(p_local)
+
+    #p_local = layers.Conv3D(
+    #    filters=1,
+    #    kernel_size=1,
+    #    padding="same",
+    #    use_bias=False,
+    #    kernel_regularizer=regularizers.l2(regularization),
+    #    name="p_local",
+    #)(p_local)
+
     # -------------------------------------------------------------------------
     # Head 2: smooth / far-field head
     # -------------------------------------------------------------------------
@@ -1332,13 +1713,40 @@ def SimpleCNN3D_two_heads(
         name="p_smooth_coarse",
     )(s)
 
-    # Upsample smooth pressure itself, not features
+
+    # Upsample smooth pressure back to full resolution using Upsampling3D
+    # Calculate upsampling factors
+    up_z = (sz + sz // 2 - 1) // (sz // 2)  # Ceiling division
+    up_y = (sy + sy // 2 - 1) // (sy // 2)
+    up_x = (sx + sx // 5 - 1) // (sx // 5)
+    
     p_smooth = layers.UpSampling3D(
-        size=smooth_pool,
+        size=(up_z, up_y, up_x),
         name="p_smooth_upsample",
     )(p_smooth)
 
-    # Anti-blocking smoothing after nearest-neighbour upsampling
+    # Crop p_smooth to match p_local shape (handles size mismatches)
+    def crop_to_match_shape(inputs):
+        p_sm, p_loc = inputs
+        target_shape = tf.shape(p_loc)
+        current_shape = tf.shape(p_sm)
+        z_start = (current_shape[1] - target_shape[1]) // 2
+        y_start = (current_shape[2] - target_shape[2]) // 2
+        x_start = (current_shape[3] - target_shape[3]) // 2
+        return p_sm[
+            :,
+            z_start:z_start + target_shape[1],
+            y_start:y_start + target_shape[2],
+            x_start:x_start + target_shape[3],
+            :
+        ]
+    
+    p_smooth = layers.Lambda(
+        crop_to_match_shape,
+        name="p_smooth_crop_to_match",
+    )([p_smooth, p_local])
+
+    # Anti-blocking smoothing after upsampling
     p_smooth = layers.AveragePooling3D(
         pool_size=(1, 3, 9),
         strides=(1, 1, 1),

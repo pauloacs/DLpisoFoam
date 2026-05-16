@@ -1,6 +1,6 @@
 
 // Use delta_delta fields for ML surrogate model
-// Layout: U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1)
+// Layout: U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1) + delta_U(3) + p_rgh_prev(1)
 U_MAX_NORM = 0.0;
 forAll(delta_delta_p_rgh.internalField(), id)
 {
@@ -24,6 +24,14 @@ forAll(delta_delta_p_rgh.internalField(), id)
 
     // delta_p_rgh_prev (channel 10)
     input_vals[id][10] = delta_p_rgh_prev[id];
+
+    // delta_U (channels 11-13) — first velocity increment
+    input_vals[id][11] = delta_U[id].x();
+    input_vals[id][12] = delta_U[id].y();
+    input_vals[id][13] = delta_U[id].z();
+
+    // p_rgh_prev (channel 14) — absolute previous pressure
+    input_vals[id][14] = p_rgh_prev[id];
 
     // Calculate the maximum norm of U for the current time step
     // To enable non-dimensionalization of the velocity field

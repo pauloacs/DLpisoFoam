@@ -177,19 +177,26 @@ class Training:
 
   def my_two_head_loss(
       self,
-      beta=0.25,
-      cap=2.0,
+      beta=1.0,
+      cap=3.0,
       alpha=0.25,
-      lambda_smooth=0.5,
-      lambda_local=0.1,
-      lambda_smoothness=0.03,
-      pool_size=(3, 7, 15),
+      lambda_smooth=0.1,
+      lambda_local=0.0,
+      lambda_smoothness=0.0,
+      pool_size=(1, 3, 9),
   ):
       def loss_f(y_true, y_pred):
 
           p_total = y_pred["p_total"]
           p_smooth = y_pred["p_smooth"]
           p_local = y_pred["p_local"]
+
+          # Make target gauge-consistent with p_total
+          y_true = y_true - tf.reduce_mean(
+              y_true,
+              axis=(1, 2, 3),
+              keepdims=True,
+          )
 
           # Main mixed loss on final prediction
           error2 = tf.square(y_true - p_total)
@@ -209,7 +216,7 @@ class Training:
 
           main_loss = (1.0 - alpha) * mse + alpha * weighted_mse
 
-          # Smooth/local decomposition of target
+          # Low-pass target for smooth head
           y_smooth = self.lowpass_3d(y_true, pool_size=pool_size)
 
           y_smooth = y_smooth - tf.reduce_mean(
@@ -224,28 +231,41 @@ class Training:
               keepdims=True,
           )
 
-          y_local = y_true - y_smooth
-
-          smooth_loss = tf.reduce_mean(tf.square(y_smooth - p_smooth_centered))
-          local_loss = tf.reduce_mean(tf.square(y_local - p_local))
-
-          smooth_reg = self.smoothness_loss_3d(
-              p_smooth_centered,
-              wz=0.25,
-              wy=1.0,
-              wx=1.0,
+          smooth_loss = tf.reduce_mean(
+              tf.square(y_smooth - p_smooth_centered)
           )
 
-          total_loss = (
-              main_loss
-              + lambda_smooth * smooth_loss
-              + lambda_local * local_loss
-              + lambda_smoothness * smooth_reg
-          )
+          total_loss = main_loss + lambda_smooth * smooth_loss
+
+          if lambda_local > 0.0:
+              y_local = y_true - y_smooth
+
+              p_local_centered = p_local - tf.reduce_mean(
+                  p_local,
+                  axis=(1, 2, 3),
+                  keepdims=True,
+              )
+
+              local_loss = tf.reduce_mean(
+                  tf.square(y_local - p_local_centered)
+              )
+
+              total_loss += lambda_local * local_loss
+
+          if lambda_smoothness > 0.0:
+              smooth_reg = self.smoothness_loss_3d(
+                  p_smooth_centered,
+                  wz=0.25,
+                  wy=1.0,
+                  wx=1.0,
+              )
+
+              total_loss += lambda_smoothness * smooth_reg
 
           return 100.0 * total_loss
 
       return loss_f
+
 
 
 
@@ -600,15 +620,15 @@ class Training:
 
     if model_architecture == 'cnn_two_heads':
       #self.loss_object = self.my_two_head_loss(
-      #    beta=0.25,
-      #    cap=2.0,
-      #    alpha=0, # 0.25
-      #    lambda_smooth=0.8,
-      #    lambda_local=0.08,
-      #    lambda_smoothness=0.002,
-      #    pool_size=(1, 5, 15),
+      #    beta=1.0,
+      #    cap=3.0,
+      #    alpha=0.25, # 0.25
+      #    lambda_smooth=0.1,
+      #    lambda_local=0.0,
+      #    lambda_smoothness=0.0,
+      #    pool_size=(1, 3, 9),
       #)
-      self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=3.0, alpha=0.75)
+      self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=2.0, alpha=0.25)
     else:
       self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=2.0, alpha=0.5)
 

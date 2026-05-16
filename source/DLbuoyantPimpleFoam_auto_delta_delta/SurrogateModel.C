@@ -27,6 +27,7 @@ SurrogateModel::SurrogateModel
     Foam::volScalarField& delta_p_rgh,
     Foam::volScalarField& delta_p_rgh_CFD,
     Foam::volScalarField& delta_p_rgh_prev,
+    Foam::volScalarField& p_rgh_prev,
     Foam::volVectorField& delta_delta_U,
     Foam::volVectorField& delta_delta_U_prev,
     Foam::volScalarField& delta_delta_p_rgh,
@@ -43,6 +44,7 @@ SurrogateModel::SurrogateModel
   delta_p_rgh_(delta_p_rgh),
   delta_p_rgh_CFD_(delta_p_rgh_CFD),
   delta_p_rgh_prev_(delta_p_rgh_prev),
+  p_rgh_prev_(p_rgh_prev),
   delta_delta_U_(delta_delta_U),
   delta_delta_U_prev_(delta_delta_U_prev),
   delta_delta_p_rgh_(delta_delta_p_rgh),
@@ -104,6 +106,8 @@ void SurrogateModel::init()
     Foam::volScalarField& delta_delta_p_rgh     = delta_delta_p_rgh_;
     Foam::volScalarField& delta_delta_p_rgh_CFD = delta_delta_p_rgh_CFD_;
     Foam::volScalarField& delta_p_rgh_prev      = delta_p_rgh_prev_;
+    Foam::volVectorField& delta_U               = delta_U_;
+    Foam::volScalarField& p_rgh_prev            = p_rgh_prev_;
     const Foam::volVectorField& C         = mesh.C();
 
     double& U_MAX_NORM                    = U_MAX_NORM_;
@@ -170,6 +174,8 @@ void SurrogateModel::predict()
     Foam::volScalarField& delta_delta_p_rgh_prev = delta_delta_p_rgh_prev_;
     Foam::volScalarField& delta_delta_p_rgh_CFD = delta_delta_p_rgh_CFD_;
     Foam::volScalarField& delta_p_rgh_prev      = delta_p_rgh_prev_;
+    Foam::volVectorField& delta_U               = delta_U_;
+    Foam::volScalarField& p_rgh_prev            = p_rgh_prev_;
 
     double& U_MAX_NORM                    = U_MAX_NORM_;
     auto& input_vals                      = input_vals_;

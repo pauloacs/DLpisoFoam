@@ -21,9 +21,12 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
         U: (n_samples, n_cells, 3) array of velocities
         delta_delta_U: (n_samples, n_cells, 3) array of velocity double-increments
         delta_delta_U_diff: (n_samples, n_cells, 3) array of velocity time increments
-        delta_delta_p: (n_samples, n_cells) array of pressure double-increments
         delta_p_prev: (n_samples, n_cells) array of previous pressure increments
         delta_delta_p_prev: (n_samples, n_cells) array of previous pressure double-increments
+        div_delta_delta_U: (n_samples, n_cells) array of divergence of velocity double-increments
+        delta_U: (n_samples, n_cells, 3) array of first velocity increments
+        p_prev: (n_samples, n_cells) array of absolute previous pressure
+        delta_delta_p: (n_samples, n_cells) array of pressure double-increments
         timestamps: (n_samples,) array of timesteps
         u_max_norm_arr: (n_samples,) array of velocity normalizations
     """
@@ -40,7 +43,12 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
     delta_delta_p_list = []
     delta_p_prev_list = []
     delta_delta_p_prev_list = []
+    delta_U_list = []
+    p_prev_list = []
     U_list = []
+    div_delta_delta_U_list = []
+    div_U_list = []
+    div_dU_list = []
     timestamps = []
     u_max_norm_list = []
     
@@ -109,11 +117,41 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
             else:
                 delta_delta_p_prev = np.zeros(n_cells)  # placeholder if not available
 
+            # Load div_delta_delta_U if present (divergence of velocity double-increment)
+            if 'div_delta_delta_U' in group:
+                div_delta_delta_u = group['div_delta_delta_U'][:]  # (n_cells,)
+            else:
+                div_delta_delta_u = np.zeros(n_cells)  # placeholder if not available
+
+            # Load div_U if present (divergence of velocity)
+            if 'div_U' in group:
+                div_u = group['div_U'][:]  # (n_cells,)
+            else:
+                div_u = np.zeros(n_cells)  # placeholder if not available
+
+            # Load div_dU if present (divergence of velocity increment)
+            if 'div_dU' in group:
+                div_du = group['div_dU'][:]  # (n_cells,)
+            else:
+                div_du = np.zeros(n_cells)  # placeholder if not available
+
             # Load U (velocity) if present
             if 'U' in group:
                 U_list.append(group['U'][:])
             else:
                 U_list.append(np.zeros((n_cells, 3)))  # placeholder if not available
+
+            # Load delta_U (first velocity increment) if present
+            if 'dU' in group:
+                delta_U_list.append(group['dU'][:])
+            else:
+                delta_U_list.append(np.zeros((n_cells, 3)))  # placeholder if not available
+
+            # Load p_prev (absolute previous pressure) if present
+            if 'p_prev' in group:
+                p_prev_list.append(group['p_prev'][:])
+            else:
+                p_prev_list.append(np.zeros(n_cells))  # placeholder if not available
 
             # Load timestep metadata
             timestep = group.attrs.get('timestep', -1)
@@ -132,6 +170,9 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
             delta_delta_p_list.append(delta_delta_pressure)
             delta_p_prev_list.append(delta_p_prev)
             delta_delta_p_prev_list.append(delta_delta_p_prev)
+            div_delta_delta_U_list.append(div_delta_delta_u)
+            div_U_list.append(div_u)
+            div_dU_list.append(div_du)
             timestamps.append(timestep)
     
     # Stack into arrays
@@ -140,11 +181,16 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
     delta_delta_p = np.array(delta_delta_p_list)  # (n_samples, n_cells)
     delta_p_prev = np.array(delta_p_prev_list)  # (n_samples, n_cells)
     delta_delta_p_prev = np.array(delta_delta_p_prev_list)  # (n_samples, n_cells)
+    div_delta_delta_U = np.array(div_delta_delta_U_list)  # (n_samples, n_cells)
+    div_U = np.array(div_U_list)  # (n_samples, n_cells)
+    div_dU = np.array(div_dU_list)  # (n_samples, n_cells)
+    delta_U = np.array(delta_U_list)  # (n_samples, n_cells, 3)
+    p_prev = np.array(p_prev_list)  # (n_samples, n_cells)
     U = np.array(U_list)  # (n_samples, n_cells, 3)
     timestamps = np.array(timestamps)
     
     u_max_norm_arr = np.array(u_max_norm_list)
-    return coordinates, boundary_coords, boundary_patches, patch_names, U, delta_delta_U, delta_delta_U_diff, delta_p_prev, delta_delta_p_prev, delta_delta_p, timestamps, u_max_norm_arr
+    return coordinates, boundary_coords, boundary_patches, patch_names, U, delta_delta_U, delta_delta_U_diff, delta_p_prev, delta_delta_p_prev, div_delta_delta_U, div_U, div_dU, delta_U, p_prev, delta_delta_p, timestamps, u_max_norm_arr
 
 
 def load_hdf5_field_data(data_file='ML_data/data.h5'):
@@ -159,6 +205,8 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
         delta_delta_p: (n_samples, n_cells) array of pressure double-increments
         delta_p_prev: (n_samples, n_cells) array of previous pressure increments
         delta_delta_p_prev: (n_samples, n_cells) array of previous pressure double-increments
+        delta_U: (n_samples, n_cells, 3) array of first velocity increments
+        p_prev: (n_samples, n_cells) array of absolute previous pressure
         U: (n_samples, n_cells, 3) array of velocities
         timestamps: (n_samples,) array of timesteps
         u_max_norm_arr: (n_samples,) array of velocity normalizations
@@ -171,6 +219,8 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     delta_delta_p_list = []
     delta_p_prev_list = []
     delta_delta_p_prev_list = []
+    delta_U_list = []
+    p_prev_list = []
     U_list = []
     timestamps = []
     u_max_norm_list = []
@@ -211,6 +261,19 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
                 U_list.append(group['U'][:])
             else:
                 U_list.append(np.zeros_like(group['delta_delta_U'][:]))
+
+            # Load delta_U (first velocity increment) if present
+            if 'dU' in group:
+                delta_U_list.append(group['dU'][:])
+            else:
+                delta_U_list.append(np.zeros_like(group['delta_delta_U'][:]))
+
+            # Load p_prev (absolute previous pressure) if present
+            if 'p_prev' in group:
+                p_prev_list.append(group['p_prev'][:])
+            else:
+                p_prev_list.append(np.zeros_like(group[ddp_key][:]))
+
             timestamps.append(group.attrs.get('timestep', -1))
             if 'U_MAX_NORM' in group:
                 u_max = group['U_MAX_NORM'][()]
@@ -223,11 +286,13 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     delta_delta_p = np.array(delta_delta_p_list)
     delta_p_prev = np.array(delta_p_prev_list)
     delta_delta_p_prev = np.array(delta_delta_p_prev_list)
+    delta_U = np.array(delta_U_list)
+    p_prev = np.array(p_prev_list)
     U = np.array(U_list)
     timestamps = np.array(timestamps)
     u_max_norm_arr = np.array(u_max_norm_list)
 
-    return delta_delta_U, delta_delta_U_diff, delta_delta_p, delta_p_prev, delta_delta_p_prev, U, timestamps, u_max_norm_arr
+    return delta_delta_U, delta_delta_U_diff, delta_delta_p, delta_p_prev, delta_delta_p_prev, delta_U, p_prev, U, timestamps, u_max_norm_arr
 
 
 def load_boundaries_dict(data_dir='ML_data'):

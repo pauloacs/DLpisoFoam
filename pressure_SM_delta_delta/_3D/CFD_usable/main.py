@@ -53,7 +53,10 @@ def load_tucker_and_NN(
 	dropout_rate,
 	regularization,
 	ranks,
-	verbose=True
+	verbose=True,
+	add_div_ddu_input=False,
+	add_div_du_input=False,
+	add_div_u_input=False,
 ):
 	"""
 	Load tucker factors and initialize the trained neural network model.

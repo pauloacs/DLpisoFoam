@@ -66,7 +66,7 @@ int num_cells_obstacle = p.boundaryField()[obst_patchID].size();
 
 /*double** input_vals;*/
 const int row = num_cells;
-const int col = 11;  // U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1)
+const int col = 15;  // U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1) + delta_U(3) + p_rgh_prev(1)
 const int col_init = 11; // 3 for delta_U, 3 for C, 3 for delta_U_prev, 1 for delta_p_CFD, 1 for delta_p_rgh_prev
 
 const int row_y_top = num_cells_y_top;
@@ -98,8 +98,10 @@ forAll(p.internalField(), id)
         input_vals_init[id][6] = delta_delta_U_prev[id].x();
         input_vals_init[id][7] = delta_delta_U_prev[id].y();
         input_vals_init[id][8] = delta_delta_U_prev[id].z();
-        input_vals_init[id][9] = delta_delta_p_rgh_CFD[id];
+        input_vals_init[id][9]  = delta_delta_p_rgh_CFD[id];
         input_vals_init[id][10] = delta_p_rgh_prev[id];
+        // input_vals_init has col_init=11 columns (indices 0-10)
+        // delta_U and p_rgh_prev are only used in the per-step input_vals (col=15)
 }
 
 forAll(p.boundaryField()[obst_patchID], id)

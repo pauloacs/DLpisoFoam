@@ -64,7 +64,7 @@ int main(int argc, char *argv[])
 	(
 		mesh, p_rgh, p, U, rho,
 		delta_U, delta_U_prev,
-		delta_p_rgh, delta_p_rgh_CFD, delta_p_rgh_prev,
+		delta_p_rgh, delta_p_rgh_CFD, delta_p_rgh_prev, p_rgh_prev,
 		delta_delta_U, delta_delta_U_prev,
 		delta_delta_p_rgh, delta_delta_p_rgh_prev, delta_delta_p_rgh_CFD
 	);
@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
 	int waitBeforeResampling  = mlDict.lookupOrDefault<int>("waitBeforeResampling",    0);
 
 	DataSampler dataSampler(
-		mesh, U, delta_U, delta_p_rgh_CFD, delta_delta_U, delta_delta_U_prev, delta_delta_p_rgh_CFD, delta_p_rgh_prev, delta_delta_p_rgh_prev, "ML_data",
+		mesh, U, delta_U, delta_p_rgh_CFD, delta_delta_U, delta_delta_U_prev, delta_delta_p_rgh_CFD, delta_p_rgh_prev, delta_delta_p_rgh_prev, p_rgh_prev, div_U, div_dU, div_delta_delta_U, "ML_data",
 		sourceScriptDir,
 		warmUpSteps, burstSteps, burstInterval, regularInterval, retrainInterval, windowFrames,
 		waitBeforeResampling
@@ -213,12 +213,12 @@ int main(int argc, char *argv[])
 				turbulence->correct();
 				thermophysicalTransport->correct();
 			}
-			delta_p_rgh_CFD = p_rgh - p_rgh_prev;
-			// Compute delta_delta fields
-			delta_delta_U = delta_U - delta_U_prev;
-			delta_delta_p_rgh_CFD = delta_p_rgh_CFD - delta_p_rgh_prev;
-            
 		}
+
+		// Calculate pressure deltas AFTER all PIMPLE iterations are complete
+		// These are the cumulative CFD-computed values for the entire time step
+		delta_p_rgh_CFD = p_rgh - p_rgh_prev;
+		delta_delta_p_rgh_CFD = delta_p_rgh_CFD - delta_p_rgh_prev;
 
 		rho = thermo.rho();
 
