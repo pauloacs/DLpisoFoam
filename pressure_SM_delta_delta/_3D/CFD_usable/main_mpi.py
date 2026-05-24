@@ -321,7 +321,6 @@ def load_tucker_and_NN(
 			print(f'[load_tucker_and_NN] Configuration stored. Model will be created in init_func.')
 			print(f'[load_tucker_and_NN] overlap_ratio: {overlap_ratio}')
 			print(f'[load_tucker_and_NN] add_U_input: {add_U_input}, add_dU_input: {add_dU_input}, add_ddu_input: {add_ddu_input}, use_previous_dp_input: {use_previous_dp_input}, add_p_prev_input: {add_p_prev_input}, add_ddp_prev_input: {add_ddp_prev_input}, add_div_ddu_input: {add_div_ddu_input}, add_div_du_input: {add_div_du_input}, add_div_u_input: {add_div_u_input}, last_tucker_rank: {last_tucker_rank}')
-		print(f'[load_tucker_and_NN] add_U_input: {add_U_input}, add_dU_input: {add_dU_input}, add_ddu_input: {add_ddu_input}, use_previous_dp_input: {use_previous_dp_input}, add_p_prev_input: {add_p_prev_input}, add_ddp_prev_input: {add_ddp_prev_input}, add_div_ddu_input: {add_div_ddu_input}, add_div_du_input: {add_div_du_input}, add_div_u_input: {add_div_u_input}, last_tucker_rank: {last_tucker_rank}')
 
 
 def reload_weights(weights_fn):
@@ -602,7 +601,6 @@ def py_func(array_in, U_max_norm):
 	  Channel 15:     sdf (signed distance function, always included as last channel)
 	"""
 
-	import pdb; pdb.set_trace()  # Debugging breakpoint
 	# Gathering all the inputs in 1 thread
 	if 'comm' in globals() and comm.Get_size() > 1:
 		array_global = comm.gather(array_in, root = 0)
@@ -664,6 +662,25 @@ def py_func(array_in, U_max_norm):
 		else:
 			p_rgh_prev = None
 
+		if add_div_ddu_input_g:
+			div_ddu = array[..., 15:16]
+			ch_idx += 1
+		else:
+			div_ddu = None
+		
+		if add_div_du_input_g:
+			div_du = array[..., 16:17]
+			ch_idx += 1
+		else:
+			div_du = None
+
+		if add_div_u_input_g:
+			div_u = array[..., 17:18]
+			ch_idx += 1
+		else:
+			div_u = None
+		
+
 		delta_U_changed = np.abs(delta_delta_U).sum(axis=-1)/np.abs(delta_delta_U).max()
 		delta_delta_U_changed = np.abs(delta_delta_U - delta_delta_U_prev).sum(axis=-1)
         
@@ -697,6 +714,21 @@ def py_func(array_in, U_max_norm):
 			delta_ddp_prev_adim = delta_delta_p_prev / (U_max_norm ** 2.0)
 		else:
 			delta_ddp_prev_adim = None
+		
+		if add_div_ddu_input_g:
+			div_ddu_adim = div_ddu / U_max_norm
+		else:
+			div_ddu_adim = None
+
+		if add_div_du_input_g:
+			div_du_adim = div_du / U_max_norm
+		else:
+			div_du_adim = None
+		
+		if add_div_u_input_g:
+			div_u_adim = div_u / U_max_norm
+		else:
+			div_u_adim = None
 
 		if verbose_g: 
 			print(f"Data pre-processing: {time.time()-t0} s")
@@ -740,6 +772,21 @@ def py_func(array_in, U_max_norm):
 		else:
 			p_rgh_prev_interp = None
 
+		if add_div_ddu_input_g:
+			div_ddu_interp = interpolate_fill_njit(div_ddu_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
+		else:
+			div_ddu_interp = None
+		
+		if add_div_du_input_g:
+			div_du_interp = interpolate_fill_njit(div_du_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
+		else:
+			div_du_interp = None
+
+		if add_div_u_input_g:
+			div_u_interp = interpolate_fill_njit(div_u_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
+		else:
+			div_u_interp = None
+
 		if verbose_g:
 			print(f"1st interpolation took: {time.time()-t0} s")
 
@@ -772,6 +819,15 @@ def py_func(array_in, U_max_norm):
 			ch_idx += 1
 		if add_ddp_prev_input_g:
 			interp_parts.append(delta_ddp_prev_interp[:, np.newaxis])  # delta_delta_p_prev channel
+			ch_idx += 1
+		if add_div_ddu_input_g:
+			interp_parts.append(div_ddu_interp[:, np.newaxis])  # div_ddu channel
+			ch_idx += 1
+		if add_div_du_input_g:
+			interp_parts.append(div_du_interp[:, np.newaxis])  # div_du channel
+			ch_idx += 1
+		if add_div_u_input_g:
+			interp_parts.append(div_u_interp[:, np.newaxis])  # div_u channel
 			ch_idx += 1
 		interp_stack = np.column_stack(interp_parts)
 		grid[indices_i, indices_j, indices_k, :ch_idx] = interp_stack
@@ -933,6 +989,9 @@ def py_func(array_in, U_max_norm):
 							if use_previous_dp_input_g:
 								_c = _vb + int(add_p_prev_input_g)
 								block[..., _c][_dm] -= np.mean(block[..., _c][_dm])
+							if add_ddp_prev_input_g:
+								_c2 = _c + int(use_previous_dp_input_g)
+								block[..., _c2][_dm] -= np.mean(block[..., _c2][_dm])
 
 					x_list[b] = block
 					indices_list[b] = [i, j, n_x - 1 - k]
@@ -941,7 +1000,7 @@ def py_func(array_in, U_max_norm):
 		x_array = x_list  # already an array
 
 		# DEBUG: Verify channel count
-		expected_channels = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + 3 + (1 if add_p_prev_input_g else 0) + (1 if use_previous_dp_input_g else 0) + (1 if add_ddp_prev_input_g else 0) + 1
+		expected_channels = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + 3 + (1 if add_p_prev_input_g else 0) + (1 if use_previous_dp_input_g else 0) + (1 if add_ddp_prev_input_g else 0) + 1 + int(add_div_ddu_input_g) + int(add_div_du_input_g) + int(add_div_u_input_g)
 		actual_channels = x_array.shape[-1]
 		if verbose_g:
 			print(f"[py_func DEBUG] x_array shape: {x_array.shape}")
@@ -979,8 +1038,14 @@ def py_func(array_in, U_max_norm):
 
 			res_concat = np.array(outputs["p_total"])
 			if inspect_results_g:
-				p_smooth_raw = np.array(outputs["p_smooth"])
-				p_local_raw  = np.array(outputs["p_local"])
+				if "p_smooth" in outputs:
+					p_smooth_raw = np.array(outputs["p_smooth"])
+				else:
+					p_smooth_raw = None
+				if "p_local" in outputs:
+					p_local_raw  = np.array(outputs["p_local"])
+				else:
+					p_local_raw = None
 			else:
 				p_smooth_raw = p_local_raw = None
 		else:
@@ -1154,18 +1219,9 @@ def py_func(array_in, U_max_norm):
 	# This scatters the value to each worker
 	delta_delta_p = comm.scatter(delta_delta_p_rankwise, root=0)
 
-
-	# --- Debug: Print dtype, shape, min, max, and first 5 values before returning to C++ ---
-	print('[PYTHON] delta_delta_p dtype:', delta_delta_p.dtype, 'shape:', delta_delta_p.shape)
-	print('[PYTHON] delta_delta_p min:', np.nanmin(delta_delta_p), 'max:', np.nanmax(delta_delta_p))
-	print('[PYTHON] delta_delta_p first 5:', delta_delta_p[:5])
-	print('[SURROGATE]: delta_delta_p after scatter: max={}, min={}, mean={}, std={}, nans={}/{}'.format(
-		np.nanmax(delta_delta_p), np.nanmin(delta_delta_p), np.nanmean(delta_delta_p), np.nanstd(delta_delta_p),
-		np.isnan(delta_delta_p).sum(), delta_delta_p.size
-	))
-
-	if np.any(np.isnan(delta_delta_p)):
-		print(f"Warning: NaN values detected in delta_delta_p at rank {rank} after scattering.")
+	if verbose_g:
+		if np.any(np.isnan(delta_delta_p)):
+			print(f"Warning: NaN values detected in delta_delta_p at rank {rank} after scattering.")
 
 	if verbose_g:
 		print(f"Process {rank} received object with shape {delta_delta_p.shape}")
@@ -1177,7 +1233,7 @@ def py_func(array_in, U_max_norm):
 		n_inf = np.isinf(delta_delta_p).sum()
 		raise ValueError(f"Output array contains {n_nan} NaNs and {n_inf} Infs before returning to C++.")
 	
-	return delta_delta_p * 0.25
+	return delta_delta_p * 1
 
 if __name__ == '__main__':
     print('This is the Python module for DLPoissonFOam')

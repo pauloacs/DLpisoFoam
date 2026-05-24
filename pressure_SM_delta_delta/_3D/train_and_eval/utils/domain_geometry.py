@@ -56,7 +56,7 @@ def _cluster_square_cylinders_3d(
         # The obstacle is connected to the floor, so we can extend the box downwards by dz to ensure it captures the full obstacle height
         # This is not a general implementation for arbitrary 3D obstacles, but it works for our specific case of square cylinders connected to the floor
         # To be improved
-        z_min, z_max = cluster_pts[:, 2].min() - 2 * dz, cluster_pts[:, 2].max()
+        z_min, z_max = cluster_pts[:, 2].min() - 2 * dz, cluster_pts[:, 2].max() + 2 * dz
         
         boxes.append((x_min, x_max, y_min, y_max, z_min, z_max))
     

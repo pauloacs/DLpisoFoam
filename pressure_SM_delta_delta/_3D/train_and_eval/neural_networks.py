@@ -1391,7 +1391,7 @@ def SimpleCNN3D_two_heads_(
 
 
 ## test no smooth
-def SimpleCNN3D_two_heads_(
+def SimpleCNN3D_two_heads(
     rank,
     in_channels=4,
     base_filters=16,
@@ -1530,7 +1530,7 @@ def SimpleCNN3D_two_heads_(
 
 
 # BEST SO FAR!!! (alpha 0.25)
-def SimpleCNN3D_two_heads(
+def SimpleCNN3D_two_heads_(
     rank,
     in_channels=4,
     base_filters=16,

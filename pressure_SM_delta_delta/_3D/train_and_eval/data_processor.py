@@ -343,8 +343,9 @@ class FeatureExtractAndWrite:
     self.max_abs_dddU_x, self.max_abs_dddU_y, self.max_abs_dddU_z = maxs_list[ch_idx:ch_idx+3]
     ch_idx += 3
     
-    # SDF maximum is set to default (will be computed from actual data if needed)
-    self.max_abs_dist = 1.0  # Default normalization for sdf
+    self.max_abs_dist = maxs_list[ch_idx]
+    ch_idx += 1
+
     if add_p_prev_input:
       self.max_abs_p_prev = maxs_list[ch_idx]
       ch_idx += 1
@@ -375,6 +376,7 @@ class FeatureExtractAndWrite:
       ch_idx += 1
     else:
       self.max_abs_div_u = 1.0  # unused
+
     self.max_abs_delta_delta_p = maxs_list[ch_idx]
 
     # Backward-compatible aliases
@@ -971,7 +973,7 @@ class FeatureExtractAndWrite:
     # Normalize obstacle/sdf and delta_p_prev separately
     sdf = inputs_obst[..., 0:1] / self.max_abs_dist  # First channel is always sdf
     obstacle = sdf
-    pressure = outputs[..., 0] / self.max_abs_delta_p
+    pressure = outputs[..., 0] / self.max_abs_delta_delta_p
 
     print("Transforming data using precomputed Tucker factors...")
     input_tensor = np.concatenate([velocity, obstacle], axis=-1)

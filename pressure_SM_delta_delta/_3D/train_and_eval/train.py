@@ -139,6 +139,51 @@ class Training:
 
       return loss_f
 
+  def my_mixed_weighted_mse_loss_masked(self, beta=1.0, cap=3.0, alpha=0.5):
+      def loss_f(y_true, y_pred):
+          if isinstance(y_pred, dict):
+              y_pred = y_pred["p_total"]
+          
+          # Create domain mask: True where inside domain (obst_bool != 0)
+          # obst_bool shape: (z, y, x, 1), y_true/y_pred shape: (batch, z, y, x)
+          if self.obst_bool is not None:
+              mask = tf.cast(self.obst_bool[:, :, :, 0] != 0, dtype=tf.float32)  # (z, y, x)
+              mask = tf.expand_dims(mask, axis=0)  # (1, z, y, x), broadcasts with batch
+          else:
+              mask = tf.ones_like(y_true)
+          
+          # Mask out outside-domain values
+          y_true_masked = y_true * mask
+          y_pred_masked = y_pred * mask
+          
+          error2 = tf.square(y_true_masked - y_pred_masked) * mask
+          
+          # Count valid elements for normalization
+          n_valid = tf.reduce_sum(mask)
+          
+          # MSE with mask normalization
+          mse = tf.reduce_sum(error2) / (n_valid + 1e-8)
+          
+          # Mean amplitude (per-batch) with mask
+          mean_abs = tf.reduce_sum(
+              tf.abs(y_true_masked),
+              axis=(1, 2, 3),
+              keepdims=True
+          ) / (tf.reduce_sum(mask, axis=(1, 2, 3), keepdims=True) + 1e-8)
+          
+          rel_amp = tf.abs(y_true_masked) / (mean_abs + 1e-8)
+          rel_amp = tf.clip_by_value(rel_amp, 0.0, cap)
+          
+          weights = (1.0 + beta * rel_amp) * mask
+          weighted_mse = tf.reduce_sum(weights * error2) / (n_valid + 1e-8)
+          
+          loss = (1.0 - alpha) * mse + alpha * weighted_mse
+          
+          return 100.0 * loss
+      
+      return loss_f
+
+
   @staticmethod
   def lowpass_3d(y, pool_size=(3, 7, 15)):
     """
@@ -265,8 +310,6 @@ class Training:
           return 100.0 * total_loss
 
       return loss_f
-
-
 
 
 
@@ -529,10 +572,19 @@ class Training:
     print("=== Visualization complete ===\n")
 
 
-  def plot_test_predictions_z_slices(self, model_h5_path: str, flatten_data: bool = False, n_z_slices: int = 5):
+  def plot_test_predictions_z_slices(self, model_h5_path: str, flatten_data: bool = False, n_z_slices: int = 5, obst_bool=None, mean_std_fn=None):
       """Plot 5 Z-slices (truth / prediction / |error|) for every test sample."""
       print(f"\n=== Plotting test predictions ({n_z_slices} Z-slices per sample) ===")
       os.makedirs(model_h5_path, exist_ok=True)
+
+      # Load standardization factors if provided
+      denorm_mean_out = None
+      denorm_std_out = None
+      if mean_std_fn is not None and os.path.exists(mean_std_fn):
+          data = np.load(mean_std_fn)
+          denorm_mean_out = data['mean_out']  # shape: (output_channels,) or scalar
+          denorm_std_out = data['std_out']    # shape: (output_channels,) or scalar
+          print(f"Loaded standardization factors from {mean_std_fn}")
 
       global_idx = 0
       for (x_batch, y_batch) in self.test_dataset:
@@ -546,6 +598,11 @@ class Training:
           predictions = self.model(x_batch, training=False)
           y_pred = predictions['p_total'].numpy() if isinstance(predictions, dict) else predictions.numpy()
           y_true = y_batch.numpy()
+
+          # Denormalize y_true and y_pred if standardization factors available
+          if denorm_mean_out is not None and denorm_std_out is not None:
+              y_true = y_true * denorm_std_out + denorm_mean_out
+              y_pred = y_pred * denorm_std_out + denorm_mean_out
 
           nz = y_true.shape[1]
           z_indices = [int(i * (nz - 1) / (n_z_slices - 1)) for i in range(n_z_slices)]
@@ -569,7 +626,8 @@ class Training:
                   for row, (sl, vm) in enumerate(zip(slices, vmaxes)):
                       cmap = 'RdBu_r' if row < 2 else 'Reds'
                       vmin = -vm if row < 2 else 0.0
-                      im = axes[row, col].imshow(sl, cmap=cmap, vmin=vmin, vmax=vm, aspect='auto')
+                      masked_arr = np.ma.array(sl, mask=obst_bool[z_idx, ..., 0] == 0)
+                      im = axes[row, col].imshow(masked_arr, cmap=cmap, vmin=vmin, vmax=vm, aspect='auto', interpolation='none')
                       title = f'{row_labels[row]}\nz={z_idx}' if col == 0 else f'z={z_idx}'
                       axes[row, col].set_title(title, fontsize=8)
                       axes[row, col].axis('off')
@@ -603,11 +661,13 @@ class Training:
     model_h5_path: str='',
     last_tucker_rank: int=4,
     use_feature_decomposition: bool=True,
-    block_size=None) -> None:
+    block_size=None,
+    obst_bool=None) -> None:
 
     train_path = self.train_tfrecord_fn
     test_path = self.test_tfrecord_fn
-
+    
+    self.obst_bool = obst_bool
     self.train_dataset = utils_io.load_dataset_tf(filename = train_path, batch_size = batch_size, buffer_size=1024)
     self.test_dataset = utils_io.load_dataset_tf(filename = test_path, batch_size = batch_size, buffer_size=1024)
 
@@ -628,7 +688,8 @@ class Training:
       #    lambda_smoothness=0.0,
       #    pool_size=(1, 3, 9),
       #)
-      self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=2.0, alpha=0.25)
+      self.loss_object = self.my_mixed_weighted_mse_loss_masked(beta=0.5, cap=2.0, alpha=0.05)
+      #self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=2.0, alpha=0.25)
     else:
       self.loss_object = self.my_mixed_weighted_mse_loss(beta=0.5, cap=2.0, alpha=0.5)
 
@@ -772,7 +833,9 @@ class Training:
     np.savetxt(f'{model_h5_path}/test_loss_beta{beta_1}lr{lr}reg{regularization}drop{dropout_rate}.txt', epochs_val_losses, fmt='%d')
 
     # Plot Z-slice predictions for all test samples
-    self.plot_test_predictions_z_slices(model_h5_path, flatten_data, n_z_slices=5)
+    # Denormalize using mean_std.npz if available in data_dir (extracted from the calling script context)
+    mean_std_path = os.path.join(os.getcwd(), 'ML_data', 'mean_std.npz')
+    self.plot_test_predictions_z_slices(model_h5_path, flatten_data, n_z_slices=5, obst_bool=obst_bool, mean_std_fn=mean_std_path)
 
     # Plot decomposed predictions (p_smooth, p_local) if using cnn_smooth_specialized
     if model_architecture.lower() == 'cnn_smooth_specialized':
