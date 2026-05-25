@@ -222,6 +222,9 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     delta_U_list = []
     p_prev_list = []
     U_list = []
+    div_delta_delta_U_list = []
+    div_dU_list = []
+    div_U_list = []
     timestamps = []
     u_max_norm_list = []
 
@@ -274,6 +277,22 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
             else:
                 p_prev_list.append(np.zeros_like(group[ddp_key][:]))
 
+            # Load divergence fields if present
+            if 'div_delta_delta_U' in group:
+                div_delta_delta_U_list.append(group['div_delta_delta_U'][:])
+            else:
+                div_delta_delta_U_list.append(np.zeros_like(group[ddp_key][:]))
+
+            if 'div_dU' in group:
+                div_dU_list.append(group['div_dU'][:])
+            else:
+                div_dU_list.append(np.zeros_like(group[ddp_key][:]))
+
+            if 'div_U' in group:
+                div_U_list.append(group['div_U'][:])
+            else:
+                div_U_list.append(np.zeros_like(group[ddp_key][:]))
+
             timestamps.append(group.attrs.get('timestep', -1))
             if 'U_MAX_NORM' in group:
                 u_max = group['U_MAX_NORM'][()]
@@ -289,10 +308,13 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     delta_U = np.array(delta_U_list)
     p_prev = np.array(p_prev_list)
     U = np.array(U_list)
+    div_delta_delta_U = np.array(div_delta_delta_U_list)
+    div_dU = np.array(div_dU_list)
+    div_U = np.array(div_U_list)
     timestamps = np.array(timestamps)
     u_max_norm_arr = np.array(u_max_norm_list)
 
-    return delta_delta_U, delta_delta_U_diff, delta_delta_p, delta_p_prev, delta_delta_p_prev, delta_U, p_prev, U, timestamps, u_max_norm_arr
+    return delta_delta_U, delta_delta_U_diff, delta_delta_p, delta_p_prev, delta_delta_p_prev, delta_U, p_prev, U, div_delta_delta_U, div_dU, div_U, timestamps, u_max_norm_arr
 
 
 def load_boundaries_dict(data_dir='ML_data'):

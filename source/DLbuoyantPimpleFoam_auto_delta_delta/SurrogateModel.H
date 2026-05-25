@@ -40,7 +40,7 @@ class SurrogateModel
     // --- Python / NumPy state ---
     double U_MAX_NORM_;
     double (*input_vals_init_)[11];
-    double (*input_vals_)[15];  // U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1) + delta_U(3) + p_rgh_prev(1)
+    double (*input_vals_)[18];  // U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1) + delta_U(3) + p_rgh_prev(1) + div_U(1) + div_dU(1) + div_delta_delta_U(1)
     double (*input_vals_z_top_)[3];
     double (*input_vals_z_bot_)[3];
     double (*input_vals_y_top_)[3];

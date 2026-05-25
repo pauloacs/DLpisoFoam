@@ -13,7 +13,7 @@ from pressure_SM_delta_delta._3D.train_and_eval.utils.data_processing import _un
 from pressure_SM_delta_delta._3D.train_and_eval.train import Training
 from pressure_SM_delta_delta._3D.auto_CFD.hdf5_data_loader import load_hdf5_field_data, load_boundaries_dict
 
-
+# --- Feature Extraction and Training ---
 def add_new_features_and_train():
 
     import argparse
@@ -43,14 +43,19 @@ def add_new_features_and_train():
         add_ddu_input = True  # backward-compatible default
 
     try:
+        from python_module import add_dddu_input
+    except ImportError:
+        add_dddu_input = True  # backward-compatible default
+
+    try:
         from python_module import add_U_input
     except ImportError:
         add_U_input = False  # backward-compatible default
 
     try:
-        from python_module import use_previous_dp_input
+        from python_module import add_dp_prev_input
     except ImportError:
-        use_previous_dp_input = False  # backward-compatible default
+        add_dp_prev_input = False  # backward-compatible default
 
     try:
         from python_module import add_ddp_prev_input
@@ -180,7 +185,7 @@ def add_new_features_and_train():
     if add_p_prev_input:
         p_prev_grid_flat = np.full((n_samples, n_grid_points), np.nan, dtype=np.float64)
     
-    if use_previous_dp_input:
+    if add_dp_prev_input:
         delta_p_prev_grid_flat = np.full((n_samples, n_grid_points), np.nan, dtype=np.float64)
 
     if add_ddp_prev_input:
@@ -224,7 +229,7 @@ def add_new_features_and_train():
                 p_prev[sample_idx, :] / (u_max_norm_arr[sample_idx] ** 2), vert, weights, fill_value=np.nan
             )
         
-        if use_previous_dp_input:
+        if add_dp_prev_input:
             delta_p_prev_grid_flat[sample_idx, :] = utils_data.interpolate_fill_njit(
                 delta_p_prev[sample_idx, :] / (u_max_norm_arr[sample_idx] ** 2), vert, weights, fill_value=np.nan
             )
@@ -248,7 +253,6 @@ def add_new_features_and_train():
             div_U_grid_flat[sample_idx, :] = utils_data.interpolate_fill_njit(
                 div_U[sample_idx, :] / u_max_norm_arr[sample_idx], vert, weights, fill_value=np.nan
             )
-
     print("Interpolation to grid complete.")
 
     # Stack dataset based on enabled flags
@@ -260,10 +264,11 @@ def add_new_features_and_train():
         dataset_parts.append(dU_grid_flat)
     if add_ddu_input:
         dataset_parts.append(delta_delta_U_grid_flat)
-    dataset_parts.append(delta_delta_U_diff_grid_flat)
+    if add_dddu_input:
+        dataset_parts.append(delta_delta_U_diff_grid_flat)
     if add_p_prev_input:
         dataset_parts.append(p_prev_grid_flat[..., np.newaxis])
-    if use_previous_dp_input:
+    if add_dp_prev_input:
         dataset_parts.append(delta_p_prev_grid_flat[..., np.newaxis])
     if add_ddp_prev_input:
         dataset_parts.append(delta_ddp_prev_grid_flat[..., np.newaxis])
@@ -276,17 +281,19 @@ def add_new_features_and_train():
     dataset_parts.append(delta_delta_p_grid_flat[..., np.newaxis])
     dataset = np.concatenate(dataset_parts, axis=-1)
     
-    # Calculate number of grid channels (including sdf)
-    n_grid_channels = 2 + 3  # sdf + ddp + dddU
+    # Calculate number of grid channels
+    n_grid_channels = 2  # sdf + ddp
     if add_U_input:
         n_grid_channels += 3
     if add_dU_input:
         n_grid_channels += 3
     if add_ddu_input:
         n_grid_channels += 3
+    if add_dddu_input:
+        n_grid_channels += 3
     if add_p_prev_input:
         n_grid_channels += 1
-    if use_previous_dp_input:
+    if add_dp_prev_input:
         n_grid_channels += 1
     if add_ddp_prev_input:
         n_grid_channels += 1
@@ -297,39 +304,36 @@ def add_new_features_and_train():
     if add_div_u_input:
         n_grid_channels += 1
 
-    # --- Reconstruct 3D gridded array using cached indices ---
+    # --- Reconstruct 3D gridded array using ch_idx (same as train_init) ---
     grid_shape_z = indices_i.max() + 1
     grid_shape_y = indices_j.max() + 1
     grid_shape_x = indices_k.max() + 1
     grid_shape = (n_samples, grid_shape_z, grid_shape_y, grid_shape_x, n_grid_channels)
     dataset_gridded = np.full(grid_shape, np.nan, dtype=np.float64)
 
-    # Compute ch_idx mapping (same order as train_init)
+    # Compute ch_idx mapping (same order as train_init buildstep)
     _ci = 0
     _u_idx = (_ci, _ci+3) if add_U_input else None; _ci += 3 if add_U_input else 0
     _dU_idx = (_ci, _ci+3) if add_dU_input else None; _ci += 3 if add_dU_input else 0
     _ddu_idx = (_ci, _ci+3) if add_ddu_input else None; _ci += 3 if add_ddu_input else 0
-    _dddu_idx = (_ci, _ci+3); _ci += 3
+    _dddu_idx = (_ci, _ci+3) if add_dddu_input else None; _ci += 3 if add_dddu_input else 0
     _sdf_idx = _ci; _ci += 1
     _p_prev_idx = _ci if add_p_prev_input else None; _ci += 1 if add_p_prev_input else 0
-    _dp_prev_idx = _ci if use_previous_dp_input else None; _ci += 1 if use_previous_dp_input else 0
+    _dp_prev_idx = _ci if add_dp_prev_input else None; _ci += 1 if add_dp_prev_input else 0
     _ddp_prev_idx = _ci if add_ddp_prev_input else None; _ci += 1 if add_ddp_prev_input else 0
     _div_ddu_idx = _ci if add_div_ddu_input else None; _ci += 1 if add_div_ddu_input else 0
-    _div_du_idx = _ci if add_div_du_input else None; _ci += 1 if add_div_du_input else 0
-    _div_u_idx = _ci if add_div_u_input else None; _ci += 1 if add_div_u_input else 0
+    _div_du_idx  = _ci if add_div_du_input  else None; _ci += 1 if add_div_du_input  else 0
+    _div_u_idx   = _ci if add_div_u_input   else None; _ci += 1 if add_div_u_input   else 0
     _ddp_idx = _ci
-
-    # Flat dataset indices (no sdf channel)
-    _ds_base = _dddu_idx[1]
+    # Flat dataset indices (no sdf)
+    _ds_base = (_dddu_idx[1] if add_dddu_input else (_ddu_idx[1] if add_ddu_input else (_dU_idx[1] if add_dU_input else (_u_idx[1] if add_U_input else 0))))
     _ds_p_prev_ch   = _ds_base
     _ds_dp_prev_ch  = _ds_base + (1 if add_p_prev_input else 0)
-    _ds_ddp_prev_ch = _ds_dp_prev_ch + (1 if use_previous_dp_input else 0)
+    _ds_ddp_prev_ch = _ds_dp_prev_ch + (1 if add_dp_prev_input else 0)
     _ds_div_ddu_ch  = _ds_ddp_prev_ch + (1 if add_ddp_prev_input else 0)
-    _ds_div_du_ch   = _ds_div_ddu_ch + (1 if add_div_ddu_input else 0)
-    _ds_div_u_ch    = _ds_div_du_ch + (1 if add_div_du_input else 0)
-    _ds_ddp_ch      = _ds_div_u_ch + (1 if add_div_u_input else 0)
-
-    obst_bool = (sdf != 0).reshape(grid_shape_z, grid_shape_y, grid_shape_x)
+    _ds_div_du_ch   = _ds_div_ddu_ch  + (1 if add_div_ddu_input else 0)
+    _ds_div_u_ch    = _ds_div_du_ch   + (1 if add_div_du_input  else 0)
+    _ds_ddp_ch      = _ds_div_u_ch    + (1 if add_div_u_input   else 0)
 
     for step in range(n_samples):
         if add_U_input:
@@ -338,11 +342,12 @@ def add_new_features_and_train():
             dataset_gridded[step, indices_i, indices_j, indices_k, _dU_idx[0]:_dU_idx[1]] = dataset[step, :, _dU_idx[0]:_dU_idx[1]]
         if add_ddu_input:
             dataset_gridded[step, indices_i, indices_j, indices_k, _ddu_idx[0]:_ddu_idx[1]] = dataset[step, :, _ddu_idx[0]:_ddu_idx[1]]
-        dataset_gridded[step, indices_i, indices_j, indices_k, _dddu_idx[0]:_dddu_idx[1]] = dataset[step, :, _dddu_idx[0]:_dddu_idx[1]]
+        if add_dddu_input:
+            dataset_gridded[step, indices_i, indices_j, indices_k, _dddu_idx[0]:_dddu_idx[1]] = dataset[step, :, _dddu_idx[0]:_dddu_idx[1]]
         dataset_gridded[step, indices_i, indices_j, indices_k, _sdf_idx] = sdf
         if add_p_prev_input:
             dataset_gridded[step, indices_i, indices_j, indices_k, _p_prev_idx] = dataset[step, :, _ds_p_prev_ch]
-        if use_previous_dp_input:
+        if add_dp_prev_input:
             dataset_gridded[step, indices_i, indices_j, indices_k, _dp_prev_idx] = dataset[step, :, _ds_dp_prev_ch]
         if add_ddp_prev_input:
             dataset_gridded[step, indices_i, indices_j, indices_k, _ddp_prev_idx] = dataset[step, :, _ds_ddp_prev_ch]
@@ -361,7 +366,7 @@ def add_new_features_and_train():
         f.create_dataset('data', data=dataset_gridded)
     print(f"Stacked data (U, p, sdf) saved to {gridded_h5_fn}.")
 
-    # --- Debug Plots ---
+    # --- Debug Plots: Save slices of gridded data like in train_init.py ---
     import matplotlib.pyplot as plt
     os.makedirs('plots_debug', exist_ok=True)
     var_names = []
@@ -371,10 +376,12 @@ def add_new_features_and_train():
         var_names.extend(['dU_x', 'dU_y', 'dU_z'])
     if add_ddu_input:
         var_names.extend(['ddU_x', 'ddU_y', 'ddU_z'])
-    var_names.extend(['dddU_x', 'dddU_y', 'dddU_z', 'sdf'])
+    if add_dddu_input:
+        var_names.extend(['dddU_x', 'dddU_y', 'dddU_z'])
+    var_names.extend(['sdf'])
     if add_p_prev_input:
         var_names.append('p_prev')
-    if use_previous_dp_input:
+    if add_dp_prev_input:
         var_names.append('delta_p_prev')
     if add_ddp_prev_input:
         var_names.append('delta_delta_p_prev')
@@ -385,9 +392,10 @@ def add_new_features_and_train():
     if add_div_u_input:
         var_names.append('div_U')
     var_names.append('delta_delta_p')
-
+    # Use the first sample for plotting
     grid = dataset_gridded[0]
     for var_idx in range(n_grid_channels):
+        # Plot slice through middle of grid (z-x plane at middle y)
         plt.figure(figsize=(10, 6))
         plt.imshow(grid[1:-1, int(grid.shape[1] / 2), 1:-1, var_idx], cmap='jet')
         plt.colorbar(label=var_names[var_idx])
@@ -396,6 +404,7 @@ def add_new_features_and_train():
         plt.ylabel('Z')
         plt.savefig(f'plots_debug/{var_names[var_idx]}_zx_slice_t0.png')
         plt.close()
+        # Plot slice through middle of grid (y-x plane at middle z)
         plt.figure(figsize=(10, 6))
         plt.imshow(grid[int(grid.shape[0] / 2), :, :, var_idx], cmap='jet')
         plt.colorbar(label=var_names[var_idx])
@@ -451,9 +460,10 @@ def add_new_features_and_train():
         flatten_data=True,
         maxs_list=maxs_list,
         add_ddu_input=add_ddu_input,
+        add_dddu_input=add_dddu_input,
         add_U_input=add_U_input,
         add_dU_input=add_dU_input,
-        use_previous_dp_input=use_previous_dp_input,
+        add_dp_prev_input=add_dp_prev_input,
         add_p_prev_input=add_p_prev_input,
         add_ddp_prev_input=add_ddp_prev_input,
         add_div_ddu_input=add_div_ddu_input,
@@ -488,6 +498,7 @@ def add_new_features_and_train():
 
     Train = Training(standardization_method, train_tfrecord_fn, test_tfrecord_fn)
 
+    # For the AUTO CFD solver:
     # Always regenerate TFRecords so they match the current sliding-window data.
     for fn in (train_tfrecord_fn, test_tfrecord_fn):
         if os.path.exists(fn):
@@ -510,12 +521,12 @@ def add_new_features_and_train():
         flatten_data=True,
         weights_fn=os.path.join(data_dir, 'weights.h5'),
         model_h5_path=data_dir,
-        last_tucker_rank=last_tucker_rank if use_feature_decomposition else (1 + 3 * (1 + int(add_U_input) + int(add_dU_input) + int(add_ddu_input)) + int(add_p_prev_input) + int(use_previous_dp_input) + int(add_ddp_prev_input) + int(add_div_ddu_input) + int(add_div_du_input) + int(add_div_u_input)),
+        last_tucker_rank=last_tucker_rank if use_feature_decomposition else (1 + 3 * (int(add_U_input) + int(add_dU_input) + int(add_ddu_input) + int(add_dddu_input)) + int(add_p_prev_input) + int(add_dp_prev_input) + int(add_ddp_prev_input) + int(add_div_ddu_input) + int(add_div_du_input) + int(add_div_u_input)),
         use_feature_decomposition=use_feature_decomposition,
         block_size=block_size,
         add_U_input=add_U_input,
         add_ddu_input=add_ddu_input,
-        use_previous_dp_input=use_previous_dp_input,
+        add_dp_prev_input=add_dp_prev_input,
     )
     print("Model training complete.")
 

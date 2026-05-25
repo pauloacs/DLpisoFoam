@@ -66,7 +66,7 @@ int num_cells_obstacle = p.boundaryField()[obst_patchID].size();
 
 /*double** input_vals;*/
 const int row = num_cells;
-const int col = 15;  // U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1) + delta_U(3) + p_rgh_prev(1)
+const int col = 18;  // U(3) + delta_delta_U(3) + delta_delta_U_prev(3) + delta_delta_p_rgh_prev(1) + delta_p_rgh_prev(1) + delta_U(3) + p_rgh_prev(1) + div_U(1) + div_dU(1) + div_delta_delta_U(1)
 const int col_init = 11; // 3 for delta_U, 3 for C, 3 for delta_U_prev, 1 for delta_p_CFD, 1 for delta_p_rgh_prev
 
 const int row_y_top = num_cells_y_top;

@@ -33,6 +33,13 @@ forAll(delta_delta_p_rgh.internalField(), id)
     // p_rgh_prev (channel 14) — absolute previous pressure
     input_vals[id][14] = p_rgh_prev[id];
 
+    // div_delta_delta_U (channel 15)
+    input_vals[id][15] = div_delta_delta_U[id];
+    // div_dU (channel 16)
+    input_vals[id][16] = div_dU[id];
+    // div_U (channel 17)
+    input_vals[id][17] = div_U[id];
+
     // Calculate the maximum norm of U for the current time step
     // To enable non-dimensionalization of the velocity field
     double u_norm = std::sqrt(

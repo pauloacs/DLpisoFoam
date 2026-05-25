@@ -118,9 +118,10 @@ def load_tucker_and_NN(
 	inspect_output_dir='SM_inspect',
 	use_feature_decomposition=True,
 	add_ddu_input=True,
+	add_dddu_input=True,
 	add_U_input=False,
 	add_dU_input=False,
-	use_previous_dp_input=False,
+	add_dp_prev_input=False,
 	add_p_prev_input=False,
 	add_ddp_prev_input=False,
 	add_div_ddu_input=False,
@@ -211,11 +212,12 @@ def load_tucker_and_NN(
 			maxs = np.loadtxt(maxs_fn)
 
 		global max_abs_U_x, max_abs_U_y, max_abs_U_z, max_abs_dU_x, max_abs_dU_y, max_abs_dU_z, max_abs_ddU_x, max_abs_ddU_y, max_abs_ddU_z, max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z, max_abs_dist, max_abs_delta_delta_p, max_abs_delta_p_prev, max_abs_ddp_prev, max_abs_p_prev, max_abs_div_ddu, max_abs_div_du, max_abs_div_u
-		global add_U_input_g, add_dU_input_g, add_ddu_input_g, use_previous_dp_input_g, add_p_prev_input_g, add_ddp_prev_input_g, add_div_ddu_input_g, add_div_du_input_g, add_div_u_input_g
+		global add_U_input_g, add_dU_input_g, add_ddu_input_g, add_dddu_input_g, add_dp_prev_input_g, add_p_prev_input_g, add_ddp_prev_input_g, add_div_ddu_input_g, add_div_du_input_g, add_div_u_input_g
 		add_U_input_g = add_U_input
 		add_dU_input_g = add_dU_input
 		add_ddu_input_g = add_ddu_input
-		use_previous_dp_input_g = use_previous_dp_input
+		add_dddu_input_g = add_dddu_input
+		add_dp_prev_input_g = add_dp_prev_input
 		add_p_prev_input_g = add_p_prev_input
 		add_ddp_prev_input_g = add_ddp_prev_input
 		add_div_ddu_input_g = add_div_ddu_input
@@ -242,8 +244,11 @@ def load_tucker_and_NN(
 		else:
 			max_abs_ddU_x = max_abs_ddU_y = max_abs_ddU_z = 1.0  # unused
 		
-		max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z = maxs[ch_idx:ch_idx+3]
-		ch_idx += 3
+		if add_dddu_input:
+			max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z = maxs[ch_idx:ch_idx+3]
+			ch_idx += 3
+		else:
+			max_abs_dddU_x = max_abs_dddU_y = max_abs_dddU_z = 1.0  # unused
 		max_abs_dist = maxs[ch_idx]
 		ch_idx += 1
 		if add_p_prev_input:
@@ -251,7 +256,7 @@ def load_tucker_and_NN(
 			ch_idx += 1
 		else:
 			max_abs_p_prev = 1.0  # unused
-		if use_previous_dp_input:
+		if add_dp_prev_input:
 			max_abs_delta_p_prev = maxs[ch_idx]
 			ch_idx += 1
 		else:
@@ -287,19 +292,21 @@ def load_tucker_and_NN(
 		std_out = data['std_out']
 
 		# Auto-calculate last_tucker_rank if not provided
-		# Base is 4; each input flag adds 3, use_previous_dp_input adds 1: [U if add_U_input] [ddU if add_ddu_input] dddU sdf delta_p [delta_p_prev if use_previous_dp_input] -> mapped through Tucker
-		# Actually for CNN (use_feature_decomposition=False), it's: [U if add_U_input] [ddU if add_ddu_input] dddU [+delta_p_prev if use_previous_dp_input] -> input channels
+		# Base is 4; each input flag adds 3, add_dp_prev_input adds 1: [U if add_U_input] [ddU if add_ddu_input] dddU sdf delta_p [delta_p_prev if add_dp_prev_input] -> mapped through Tucker
+		# Actually for CNN (use_feature_decomposition=False), it's: [U if add_U_input] [ddU if add_ddu_input] dddU [+delta_p_prev if add_dp_prev_input] -> input channels
 		# For Tucker decomposition (use_feature_decomposition=True), it uses the last Tucker factor dimension
-		last_tucker_rank = 4  # base
+		last_tucker_rank = 1  # base: sdf only
 		if add_U_input:
 			last_tucker_rank += 3
 		if add_dU_input:
 			last_tucker_rank += 3
 		if add_ddu_input:
 			last_tucker_rank += 3
+		if add_dddu_input:
+			last_tucker_rank += 3
 		if add_p_prev_input:
 			last_tucker_rank += 1
-		if use_previous_dp_input:
+		if add_dp_prev_input:
 			last_tucker_rank += 1
 		if add_ddp_prev_input:
 			last_tucker_rank += 1
@@ -320,7 +327,7 @@ def load_tucker_and_NN(
 		if verbose:
 			print(f'[load_tucker_and_NN] Configuration stored. Model will be created in init_func.')
 			print(f'[load_tucker_and_NN] overlap_ratio: {overlap_ratio}')
-			print(f'[load_tucker_and_NN] add_U_input: {add_U_input}, add_dU_input: {add_dU_input}, add_ddu_input: {add_ddu_input}, use_previous_dp_input: {use_previous_dp_input}, add_p_prev_input: {add_p_prev_input}, add_ddp_prev_input: {add_ddp_prev_input}, add_div_ddu_input: {add_div_ddu_input}, add_div_du_input: {add_div_du_input}, add_div_u_input: {add_div_u_input}, last_tucker_rank: {last_tucker_rank}')
+			print(f'[load_tucker_and_NN] add_U_input: {add_U_input}, add_dU_input: {add_dU_input}, add_ddu_input: {add_ddu_input}, add_dddu_input: {add_dddu_input}, add_dp_prev_input: {add_dp_prev_input}, add_p_prev_input: {add_p_prev_input}, add_ddp_prev_input: {add_ddp_prev_input}, add_div_ddu_input: {add_div_ddu_input}, add_div_du_input: {add_div_du_input}, add_div_u_input: {add_div_u_input}, last_tucker_rank: {last_tucker_rank}')
 
 
 def reload_weights(weights_fn):
@@ -594,9 +601,9 @@ def py_func(array_in, U_max_norm):
 	  Channels 0-2:   U (velocity, if add_U_input_g=True)
 	  Channels 3-5:   dU (velocity increment, if add_dU_input_g=True)
 	  Channels 6-8:   ddU (second velocity increment, if add_ddu_input_g=True)
-	  Channels 9-11:  dddU (velocity difference, always included)
+	  Channels 9-11:  dddU (velocity difference, if add_dddu_input_g=True)
 	  Channel 12:     p_prev (previous pressure, if add_p_prev_input_g=True)
-	  Channel 13:     dp_prev (previous pressure increment, if use_previous_dp_input_g=True)
+	  Channel 13:     dp_prev (previous pressure increment, if add_dp_prev_input_g=True)
 	  Channel 14:     ddp_prev (second pressure increment, if add_ddp_prev_input_g=True)
 	  Channel 15:     sdf (signed distance function, always included as last channel)
 	"""
@@ -634,15 +641,16 @@ def py_func(array_in, U_max_norm):
 		if add_ddu_input_g:
 			ch_idx += 3
 		
-		# dddU is always present
+		# dddU (optional)
 		delta_delta_U_diff = delta_delta_U - delta_delta_U_prev
-		ch_idx += 3
+		if add_dddu_input_g:
+			ch_idx += 3
 		
 		# Channel 9: delta_delta_p_prev (SM input if add_ddp_prev_input, else not used)
 		delta_delta_p_prev = array[..., 9:10]
 
-		# Channel 10: delta_p_prev — SM input (if use_previous_dp_input)
-		if use_previous_dp_input_g:
+		# Channel 10: delta_p_prev — SM input (if add_dp_prev_input)
+		if add_dp_prev_input_g:
 			delta_p_prev = array[..., 10:11]
 			ch_idx += 1
 		else:
@@ -695,10 +703,13 @@ def py_func(array_in, U_max_norm):
 			delta_U_adim = delta_U / U_max_norm  # dU normalized
 		if add_ddu_input_g:
 			delta_delta_U_adim = delta_delta_U / U_max_norm  # ddU normalized
-		delta_delta_U_diff_adim = delta_delta_U_diff / U_max_norm  # dddU normalized
+		if add_dddu_input_g:
+			delta_delta_U_diff_adim = delta_delta_U_diff / U_max_norm  # dddU normalized
+		else:
+			delta_delta_U_diff_adim = None
 		
 		# Normalize delta_p_prev (SM input) if present
-		if use_previous_dp_input_g:
+		if add_dp_prev_input_g:
 			delta_p_prev_adim = delta_p_prev / (U_max_norm ** 2.0)
 		else:
 			delta_p_prev_adim = None
@@ -751,13 +762,16 @@ def py_func(array_in, U_max_norm):
 			ddU_y_interp = interpolate_fill_njit(delta_delta_U_adim[:, 1], vert_OFtoNP_array, weights_OFtoNP_array)
 			ddU_z_interp = interpolate_fill_njit(delta_delta_U_adim[:, 2], vert_OFtoNP_array, weights_OFtoNP_array)
 		
-		dddU_x_interp = interpolate_fill_njit(delta_delta_U_diff_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
-		dddU_y_interp = interpolate_fill_njit(delta_delta_U_diff_adim[:, 1], vert_OFtoNP_array, weights_OFtoNP_array)
-		dddU_z_interp = interpolate_fill_njit(delta_delta_U_diff_adim[:, 2], vert_OFtoNP_array, weights_OFtoNP_array)
+		if add_dddu_input_g:
+			dddU_x_interp = interpolate_fill_njit(delta_delta_U_diff_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
+			dddU_y_interp = interpolate_fill_njit(delta_delta_U_diff_adim[:, 1], vert_OFtoNP_array, weights_OFtoNP_array)
+			dddU_z_interp = interpolate_fill_njit(delta_delta_U_diff_adim[:, 2], vert_OFtoNP_array, weights_OFtoNP_array)
+		else:
+			dddU_x_interp = dddU_y_interp = dddU_z_interp = None
 		delta_U_changed_interp = interpolate_fill_njit(delta_U_changed, vert_OFtoNP_array, weights_OFtoNP_array)
 		
 		# Interpolate delta_p_prev (SM input) and delta_delta_p_prev
-		if use_previous_dp_input_g:
+		if add_dp_prev_input_g:
 			delta_p_prev_interp = interpolate_fill_njit(delta_p_prev_adim[:, 0], vert_OFtoNP_array, weights_OFtoNP_array)
 		else:
 			delta_p_prev_interp = None
@@ -792,8 +806,8 @@ def py_func(array_in, U_max_norm):
 
 		t0 = time.time()
 
-		# Grid channels: [U(3 if add_U)] [dU(3 if add_dU)] [ddU(3 if add_ddu)] dddU(3) [p_prev(1 if add_p_prev)] [dp_prev(1 if use_prev_dp)] [ddp_prev(1 if add_ddp_prev)] sdf(1)
-		n_grid_ch = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + 3 + (1 if add_p_prev_input_g else 0) + (1 if use_previous_dp_input_g else 0) + (1 if add_ddp_prev_input_g else 0) + (1 if add_div_ddu_input_g else 0) + (1 if add_div_du_input_g else 0) + (1 if add_div_u_input_g else 0) + 1
+		# Grid channels: [U(3 if add_U)] [dU(3 if add_dU)] [ddU(3 if add_ddu)] [dddU(3 if add_dddu)] [p_prev(1 if add_p_prev)] [dp_prev(1 if add_dp_prev)] [ddp_prev(1 if add_ddp_prev)] sdf(1)
+		n_grid_ch = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + (3 if add_dddu_input_g else 0) + (1 if add_p_prev_input_g else 0) + (1 if add_dp_prev_input_g else 0) + (1 if add_ddp_prev_input_g else 0) + (1 if add_div_ddu_input_g else 0) + (1 if add_div_du_input_g else 0) + (1 if add_div_u_input_g else 0) + 1
 		grid = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x, n_grid_ch), dtype=np.float64)
 		delta_U_change_grid = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x), dtype=np.float64)
 
@@ -809,12 +823,13 @@ def py_func(array_in, U_max_norm):
 		if add_ddu_input_g:
 			interp_parts.append(np.column_stack([ddU_x_interp, ddU_y_interp, ddU_z_interp]))
 			ch_idx += 3
-		interp_parts.append(np.column_stack([dddU_x_interp, dddU_y_interp, dddU_z_interp]))
-		ch_idx += 3
+		if add_dddu_input_g:
+			interp_parts.append(np.column_stack([dddU_x_interp, dddU_y_interp, dddU_z_interp]))
+			ch_idx += 3
 		if add_p_prev_input_g:
 			interp_parts.append(p_rgh_prev_interp[:, np.newaxis])  # p_prev channel
 			ch_idx += 1
-		if use_previous_dp_input_g:
+		if add_dp_prev_input_g:
 			interp_parts.append(delta_p_prev_interp[:, np.newaxis])  # delta_p_prev channel
 			ch_idx += 1
 		if add_ddp_prev_input_g:
@@ -841,7 +856,7 @@ def py_func(array_in, U_max_norm):
 
 		# delta_delta_Ux, Uy, Uz slices (always at first 3 channels if U is not present, or after U if present)
 		u_offset = 3 if add_U_input_g else 0
-		ddu_offset = u_offset + (3 if add_ddu_input_g else 0)
+		ddu_offset = u_offset + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0)
 		axs[0, 0].imshow(grid[mid_z, :, :, ddu_offset], aspect='auto')
 		axs[0, 0].set_title('delta_delta_Ux (z mid-slice)')
 		axs[0, 1].imshow(grid[:, mid_y, :, ddu_offset+1], aspect='auto')
@@ -860,8 +875,8 @@ def py_func(array_in, U_max_norm):
 		axs[1, 1].set_title('sdf (z mid-slice)')
 
 		# delta_p_prev if present (comes before sdf)
-		if use_previous_dp_input_g:
-			dp_prev_ch_idx = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + 3 + (1 if add_p_prev_input_g else 0)
+		if add_dp_prev_input_g:
+			dp_prev_ch_idx = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + (3 if add_dddu_input_g else 0) + (1 if add_p_prev_input_g else 0)
 			axs[1, 2].imshow(grid[mid_z, :, :, dp_prev_ch_idx], aspect='auto')
 			axs[1, 2].set_title('delta_p_prev (z mid-slice)')
 		else:
@@ -885,10 +900,11 @@ def py_func(array_in, U_max_norm):
 			norm_parts.extend([max_abs_dU_x, max_abs_dU_y, max_abs_dU_z])
 		if add_ddu_input_g:
 			norm_parts.extend([max_abs_ddU_x, max_abs_ddU_y, max_abs_ddU_z])
-		norm_parts.extend([max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z])  # dddU
+		if add_dddu_input_g:
+			norm_parts.extend([max_abs_dddU_x, max_abs_dddU_y, max_abs_dddU_z])  # dddU
 		if add_p_prev_input_g:
 			norm_parts.append(max_abs_p_prev)  # p_prev
-		if use_previous_dp_input_g:
+		if add_dp_prev_input_g:
 			norm_parts.append(max_abs_delta_p_prev)  # delta_p_prev
 		if add_ddp_prev_input_g:
 			norm_parts.append(max_abs_ddp_prev)  # delta_delta_p_prev
@@ -962,12 +978,12 @@ def py_func(array_in, U_max_norm):
 
 						# Remove per-block domain mean from pressure input channels (sdf is last: n_grid_ch-1)
 						_sdf_ch = n_grid_ch - 1
-						_vb = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + 3
+						_vb = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + (3 if add_dddu_input_g else 0)
 						_dm = block[..., _sdf_ch] != 0
 						if _dm.any():
 							if add_p_prev_input_g:
 								block[..., _vb][_dm] -= np.mean(block[..., _vb][_dm])
-							if use_previous_dp_input_g:
+							if add_dp_prev_input_g:
 								_c = _vb + int(add_p_prev_input_g)
 								block[..., _c][_dm] -= np.mean(block[..., _c][_dm])
 
@@ -981,16 +997,16 @@ def py_func(array_in, U_max_norm):
 
 						# Remove per-block domain mean from pressure input channels (sdf is last: n_grid_ch-1)
 						_sdf_ch = n_grid_ch - 1
-						_vb = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + 3
+						_vb = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + (3 if add_dddu_input_g else 0)
 						_dm = block[..., _sdf_ch] != 0
 						if _dm.any():
 							if add_p_prev_input_g:
 								block[..., _vb][_dm] -= np.mean(block[..., _vb][_dm])
-							if use_previous_dp_input_g:
+							if add_dp_prev_input_g:
 								_c = _vb + int(add_p_prev_input_g)
 								block[..., _c][_dm] -= np.mean(block[..., _c][_dm])
 							if add_ddp_prev_input_g:
-								_c2 = _c + int(use_previous_dp_input_g)
+								_c2 = _c + int(add_dp_prev_input_g)
 								block[..., _c2][_dm] -= np.mean(block[..., _c2][_dm])
 
 					x_list[b] = block
@@ -1000,12 +1016,12 @@ def py_func(array_in, U_max_norm):
 		x_array = x_list  # already an array
 
 		# DEBUG: Verify channel count
-		expected_channels = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + 3 + (1 if add_p_prev_input_g else 0) + (1 if use_previous_dp_input_g else 0) + (1 if add_ddp_prev_input_g else 0) + 1 + int(add_div_ddu_input_g) + int(add_div_du_input_g) + int(add_div_u_input_g)
+		expected_channels = (3 if add_U_input_g else 0) + (3 if add_dU_input_g else 0) + (3 if add_ddu_input_g else 0) + (3 if add_dddu_input_g else 0) + (1 if add_p_prev_input_g else 0) + (1 if add_dp_prev_input_g else 0) + (1 if add_ddp_prev_input_g else 0) + 1 + int(add_div_ddu_input_g) + int(add_div_du_input_g) + int(add_div_u_input_g)
 		actual_channels = x_array.shape[-1]
 		if verbose_g:
 			print(f"[py_func DEBUG] x_array shape: {x_array.shape}")
 			print(f"[py_func DEBUG] Expected channels: {expected_channels}, Actual channels: {actual_channels}")
-			print(f"[py_func DEBUG] Input flags - add_U: {add_U_input_g}, add_dU: {add_dU_input_g}, add_ddu: {add_ddu_input_g}, add_p_prev: {add_p_prev_input_g}, use_dp_prev: {use_previous_dp_input_g}, add_ddp_prev: {add_ddp_prev_input_g}")
+			print(f"[py_func DEBUG] Input flags - add_U: {add_U_input_g}, add_dU: {add_dU_input_g}, add_ddu: {add_ddu_input_g}, add_dddu: {add_dddu_input_g}, add_p_prev: {add_p_prev_input_g}, use_dp_prev: {add_dp_prev_input_g}, add_ddp_prev: {add_ddp_prev_input_g}")
 		if actual_channels != expected_channels:
 			raise ValueError(f"Channel mismatch in x_array: expected {expected_channels}, got {actual_channels}")
 
@@ -1233,7 +1249,7 @@ def py_func(array_in, U_max_norm):
 		n_inf = np.isinf(delta_delta_p).sum()
 		raise ValueError(f"Output array contains {n_nan} NaNs and {n_inf} Infs before returning to C++.")
 	
-	return delta_delta_p * 1
+	return delta_delta_p * 0.5
 
 if __name__ == '__main__':
     print('This is the Python module for DLPoissonFOam')
