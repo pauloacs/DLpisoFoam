@@ -1,0 +1,272 @@
+// vim: set fileencoding=utf-8 fileformat=unix :
+// -*- coding: utf-8 -*-
+// vim: set syntax=cpp ts=8 et sw=4 sts=4 sta :
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  4.x                                   |
+|   \\  /    A nd           | Web:      www.OpenFOAM.org                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version         2.0;
+    format          ascii;
+    class           dictionary;
+    object          blockMeshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+convertToMeters 1;
+
+h 	5. ;  // cube height
+#calc "Info<< \">> building height   h =\" << $h << endl";
+
+a	5. ;  // cube width
+b 	5. ;  // cube length
+A	#calc "3 * $a" ;  // width of underlying surface area;
+B	#calc "3 * $b" ;  // length of underlying surface area;
+#calc "Info<< \">> building width    a = \" << $a << endl";
+#calc "Info<< \">> building length   b = \" << $b << endl";
+#calc "Info<< \">> total area with   A = \" << $A << endl";
+#calc "Info<< \">> total area length B = \" << $B << endl";
+
+AmaHalf #calc ".5 * ($B - $b)" ;  // half-width between buildings
+BmbHalf #calc ".5 * ($B - $b)" ;  // half-length between buildings
+#calc "Info<< \">> half-width betwen buildings   da = \" << $AmaHalf << endl";
+#calc "Info<< \">> half-length between buildings db = \" << $BmbHalf << endl";
+
+// x-coordinates marking cubes and their surroundings;
+i00	#calc "0 * $B" ;
+i01	#calc "0 * $B + $BmbHalf" ;
+i02	#calc "0 * $B + $BmbHalf + $b" ;
+i10	#calc "1 * $B" ;
+// i11	#calc "1 * $B + $BmbHalf" ;
+// i12	#calc "1 * $B + $BmbHalf + $b" ;
+// i20	#calc "2 * $B" ;
+// i21	#calc "2 * $B + $BmbHalf" ;
+// i22	#calc "2 * $B + $BmbHalf + $b" ;
+// i30	#calc "3 * $B" ;
+
+// y-coordinates marking cubes and their surroundings;
+j00	#calc "0 * $A" ;
+j01	#calc "0 * $A + $AmaHalf" ;
+j02	#calc "0 * $A + $AmaHalf + $a" ;
+j10	#calc "1 * $A" ;
+// j11	#calc "1 * $A + $AmaHalf" ;
+// j12	#calc "1 * $A + $AmaHalf + $a" ;
+// j20	#calc "2 * $A" ;
+// j21	#calc "2 * $A + $AmaHalf" ;
+// j22	#calc "2 * $A + $AmaHalf + $a" ;
+// j30	#calc "3 * $A" ;
+
+// z-coordinates
+Ztop    #calc "13 * $h" ;   // height of domain top;
+
+
+vertices
+(
+    // wall region
+    ($i00  $j00   0)  // 0
+    ($i01  $j00   0)
+    ($i02  $j00   0)
+    ($i10  $j00   0)
+    ($i00  $j01   0)  // 4
+    ($i01  $j01   0)
+    ($i02  $j01   0)
+    ($i10  $j01   0)
+    ($i00  $j02   0)  // 8
+    ($i01  $j02   0)
+    ($i02  $j02   0)
+    ($i10  $j02   0)
+    ($i00  $j10   0)  // 12
+    ($i01  $j10   0)
+    ($i02  $j10   0)
+    ($i10  $j10   0)
+    // cube height
+    ($i00  $j00  $h)  // 16
+    ($i01  $j00  $h)
+    ($i02  $j00  $h)
+    ($i10  $j00  $h)
+    ($i00  $j01  $h)  // 20
+    ($i01  $j01  $h)
+    ($i02  $j01  $h)
+    ($i10  $j01  $h)
+    ($i00  $j02  $h)  // 24
+    ($i01  $j02  $h)
+    ($i02  $j02  $h)
+    ($i10  $j02  $h)
+    ($i00  $j10  $h)  // 28
+    ($i01  $j10  $h)
+    ($i02  $j10  $h)
+    ($i10  $j10  $h)
+    // domain top
+    ($i00  $j00  $Ztop)  // 32
+    ($i01  $j00  $Ztop)
+    ($i02  $j00  $Ztop)
+    ($i10  $j00  $Ztop)
+    ($i00  $j01  $Ztop)  // 36
+    ($i01  $j01  $Ztop)
+    ($i02  $j01  $Ztop)
+    ($i10  $j01  $Ztop)
+    ($i00  $j02  $Ztop)  // 40
+    ($i01  $j02  $Ztop)
+    ($i02  $j02  $Ztop)
+    ($i10  $j02  $Ztop)
+    ($i00  $j10  $Ztop)  // 44
+    ($i01  $j10  $Ztop)
+    ($i02  $j10  $Ztop)
+    ($i10  $j10  $Ztop)
+);
+
+blocks
+(
+    // rules: for (0 1 2 3 4 5 6 7)
+    //        0-1 is the i direction
+    //        1-2 is the j direction
+    //        3   describes the bottom ij plane
+    //        0-4 is the k direction
+    //        4-5 is the i direction at upper ij plane
+    //        1-2 is the j direction at upper ij plane
+    //        4   describes the upper ij plane
+    // Bottom part - building region
+    hex ( 0  1  5  4 16 17 21 20) ( 6  6 10) simpleGrading (.5 .5 1)  // SW
+    hex ( 1  2  6  5 17 18 22 21) (10  6 10) simpleGrading (1  .5 1)  // S
+    hex ( 2  3  7  6 18 19 23 22) ( 6  6 10) simpleGrading (2  .5 1)  // SE
+    hex ( 4  5  9  8 20 21 25 24) ( 6 10 10) simpleGrading (.5 1  1)  // W
+    // hex (5 6 10  9 21 22 26 25) (10 10 10) simpleGrading (1 1 1)  // cube
+    hex ( 6  7 11 10 22 23 27 26) ( 6 10 10) simpleGrading (2  1  1)  // E
+    hex ( 8  9 13 12 24 25 29 28) ( 6  6 10) simpleGrading (.5 2  1)  // NW
+    hex ( 9 10 14 13 25 26 30 29) (10  6 10) simpleGrading (1  2  1)  // N
+    hex (10 11 15 14 26 27 31 30) ( 6  6 10) simpleGrading (2  2  1)  // NE
+    // Upper part - Atmosphere
+    hex (16 17 21 20 32 33 37 36) ( 6  6 20) simpleGrading (.5 .5 17)  // SW
+    hex (17 18 22 21 33 34 38 37) (10  6 20) simpleGrading (1  .5 17)  // S
+    hex (18 19 23 22 34 35 39 38) ( 6  6 20) simpleGrading (2  .5 17)  // SE
+    hex (20 21 25 24 36 37 41 40) ( 6 10 20) simpleGrading (.5 1  17)  // W
+    hex (21 22 26 25 37 38 42 41) (10 10 20) simpleGrading (1  1  17)  // mid
+    hex (22 23 27 26 38 39 43 42) ( 6 10 20) simpleGrading (2  1  17)  // E
+    hex (24 25 29 28 40 41 45 44) ( 6  6 20) simpleGrading (.5 2  17)  // NW
+    hex (25 26 30 29 41 42 46 45) (10  6 20) simpleGrading (1  2  17)  // N
+    hex (26 27 31 30 42 43 47 46) ( 6  6 20) simpleGrading (2  2  17)  // NE
+);
+
+edges
+(
+);
+
+boundary
+(
+    west
+    {
+        type patch;
+        faces
+        (
+            (0 16 20  4)
+            (4 20 24  8)
+            (8 24 28 12)
+            (16 32 36 20)
+            (20 36 40 24)
+            (24 40 44 28)
+        );
+    }
+    east
+    {
+        type patch;
+        faces
+        (
+            (15 31 27 11)
+            (11 27 23  7)
+            ( 7 23 19  3)
+            (31 47 43 27)
+            (27 43 39 23)
+            (23 39 35 19)
+        );
+    }
+    south
+    {
+        type patch;
+        faces
+        (
+            (3 19 18 2)
+            (2 18 17 1)
+            (1 17 16 0)
+            (19 35 34 18)
+            (18 34 33 17)
+            (17 33 32 16)
+        );
+    }
+    north
+    {
+        type patch;
+        faces
+        (
+            (12 28 29 13)
+            (13 29 30 14)
+            (14 30 31 15)
+            (28 44 45 29)
+            (29 45 46 30)
+            (30 46 47 31)
+        );
+    }
+    top
+    {
+        type patch;
+        faces
+        (
+            // (16 17 21 20)
+            // (17 18 22 21)
+            // (18 19 23 22)
+            // (22 23 27 26)
+            // (26 27 31 30)
+            // (25 26 30 29)
+            // (24 25 29 28)
+            // (20 21 25 24)
+            (32 33 37 36)
+            (33 34 38 37)
+            (34 35 39 38)
+            (36 37 41 40)
+            (37 38 42 41)
+            (38 39 43 42)
+            (40 41 45 44)
+            (41 42 46 45)
+            (42 43 47 46)
+
+        );
+    }
+    ground
+    {
+        type wall;
+        faces
+        (
+            ( 0  4  5  1)
+            ( 4  8  9  5)
+            ( 8 12 13  9)
+            ( 9 13 14 10)
+            (10 14 15 11)
+            ( 6 10 11  7)
+            ( 2  6  7  3)
+            ( 1  5  6  2)
+        );
+    }
+    building
+    {
+        type wall;
+        faces
+        (
+            // ( 5  9 10  6) // top
+            ( 9 25 21  5) // west
+            ( 6 22 26 10) // east
+            ( 5 21 22  6) // south
+            (10 26 25  9) // north
+            (21 25 26 22) // top
+        );
+    }
+);
+
+mergePatchPairs
+(
+);
+
+
+// ************************************************************************* //

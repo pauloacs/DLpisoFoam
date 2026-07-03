@@ -1,0 +1,199 @@
+# Standard library imports
+import os
+import random
+
+# Set environment variable for TensorFlow deterministic operations (for reproducibility)
+os.environ['TF_DETERMINISTIC_OPS'] = '1'
+
+# Third-party library imports
+import numpy as np
+
+# Set seeds for reproducibility across libraries
+random.seed(0)
+np.random.seed(0)
+
+# TensorFlow imports
+import tensorflow as tf
+
+# Enable deterministic random behavior in TensorFlow
+tf.keras.utils.set_random_seed(0)
+
+# Enable GPU memory growth for reproducibility and efficient resource use
+physical_devices = tf.config.list_physical_devices('GPU')
+for device in physical_devices:
+    tf.config.experimental.set_memory_growth(device, True)
+
+from .utils import model_utils as utils_model
+from .utils import sampling as utils_sampling
+from .utils import io_operations as utils_io
+
+import warnings
+from .data_processor import CFDDataProcessor, FeatureExtractAndWrite
+from .train import Training
+
+warnings.filterwarnings("ignore", message="Unmanaged memory use is high")
+warnings.filterwarnings("ignore", message="Sending large graph of size")
+warnings.filterwarnings("ignore", message="full garbage collections took")
+
+def main_train(
+  dataset_path,
+  first_sim,
+  last_sim,
+  first_t,
+  last_t,
+  num_epoch,
+  lr,
+  beta,
+  batch_size,
+  standardization_method,
+  n_samples_per_frame,
+  block_size,
+  grid_res,
+  ranks,
+  model_architecture,
+  dropout_rate,
+  gridded_h5_fn,
+  outarray_flat_fn,
+  regularization,
+  new_model,
+  chunk_size
+):
+
+  new_model = new_model.lower() == 'true'
+
+  if 'mlp' in model_architecture.lower():
+    flatten_data = True
+  else:
+    flatten_data = False
+
+  n_layers, width = utils_model.define_model_arch(model_architecture)
+
+  model_name = f'{model_architecture}-{standardization_method}-drop{dropout_rate}-lr{lr}-reg{regularization}-batch{batch_size}'
+
+  gridded_h5_fns = utils_io.get_gridded_h5_filenames(
+    gridded_h5_fn,
+    first_sim,
+    last_sim
+  )
+  all_files_exist = all(os.path.isfile(fn) for fn in gridded_h5_fns)
+  
+  if not all_files_exist:
+    print('Numpy gridded data not available ... Reading original CFD simulations hdf5 dataset\n')
+    processor = CFDDataProcessor(
+      grid_res=grid_res,
+      block_size=block_size,
+      original_dataset_path=dataset_path,
+      n_samples_per_frame=n_samples_per_frame,
+      first_sim=first_sim,
+      last_sim=last_sim,
+      first_t=first_t,
+      last_t=last_t,
+      standardization_method=standardization_method,
+      chunk_size=chunk_size,
+      gridded_h5_fn=gridded_h5_fn
+    )
+    processor.write_gridded_simulation_data()
+
+  sample_indices_fn = 'sample_indices_per_sim_per_time.pkl'
+  if not os.path.isfile(sample_indices_fn):
+    print('Sample indices file not found. Creating new sample indices...')
+    _ = utils_sampling.define_sample_indexes(
+        n_samples_per_frame,
+        block_size,
+        grid_res,
+        first_sim,
+        last_sim,
+        first_t,
+        last_t,
+        dataset_path,
+        sample_indices_fn
+        )
+
+  if os.path.isfile('maxs'):
+    print('Numpy gridded data is available... loading it\n')
+    maxs_list = np.loadtxt('maxs')
+  else:
+    maxs_list = utils_sampling.calculate_and_save_block_abs_max(
+      first_sim,
+      last_sim,
+      first_t,
+      last_t,
+      sample_indices_fn,
+      gridded_h5_fn,
+      block_size
+    )
+
+  if not os.path.isfile(outarray_flat_fn):
+    print('Data after tucker decomposition is not available... Applying Tucker decomposition \n')
+    feature_writer = FeatureExtractAndWrite(
+      grid_res=grid_res,
+      block_size=block_size,
+      original_dataset_path=dataset_path,
+      n_samples_per_frame=n_samples_per_frame,
+      first_sim=first_sim,
+      last_sim=last_sim,
+      first_t=first_t,
+      last_t=last_t,
+      standardization_method=standardization_method,
+      chunk_size=chunk_size,
+      ranks=ranks,
+      gridded_h5_fn=gridded_h5_fn,
+      flatten_data=flatten_data,
+      maxs_list=maxs_list
+    )
+
+    if os.path.exists('tucker_factors.pkl'):
+      compute_tucker_factors = False
+      print("Tucker factors file found. Using existing factors for feature extraction.")
+    else:
+      compute_tucker_factors = True
+      print("Tucker factors file not found. Computing Tucker factors from the data.")
+      
+    feature_writer(outarray_flat_fn, compute_tucker_factors=compute_tucker_factors)
+
+  Train = Training(standardization_method, train_tfrecord_fn='train_data.tfrecords', test_tfrecord_fn='test_data.tfrecords')
+  # If you want to read the crude dataset (hdf5) again, delete the gridded_h5_fn file
+  Train.prepare_data_to_tf(
+      outarray_flat_fn=outarray_flat_fn,
+      normalization_factors_fn='mean_std.npz',
+      flatten_data=flatten_data
+  ) # prepare and save data to tf records
+  Train.load_data_and_train(
+      lr, batch_size, model_name, beta, num_epoch, n_layers, width, dropout_rate, regularization, model_architecture, new_model, ranks, flatten_data,
+      weights_fn=os.path.join(os.path.dirname(outarray_flat_fn), 'weights.h5'),
+      model_h5_path=os.path.dirname(outarray_flat_fn)
+  )
+
+if __name__ == '__main__':
+
+  original_dataset_path = 'dataset_plate_deltas_5sim20t.hdf5'
+
+  num_sims_placa = 5
+  num_ts = 5
+
+  # Training Parameters
+  num_epoch = 5000
+  lr = 1e-5
+  beta = 0.99
+  batch_size = 1024 #*8
+  ## Possible methods:
+  ## 'std', 'min_max' or 'max_abs'
+  standardization_method = 'std'
+
+  # Data-Processing Parameters
+  n_samples_per_frame = int(1e4) #no. of samples per simulation
+  block_size = 128
+  grid_res = 2.5e-4
+  max_num_PC = 512 # to not exceed the width of the NN
+
+  model_architecture = 'mlp_small'  # Available: mlp_small/big/huge, mlp_attention, cnn, senet3d, inception3d, residual_densenet3d, depthwise_separable_cnn3d, dilated_cnn3d, asymmetric_cnn3d, unet3d, unet3d_deep, unet3d_attention, mixer, gnn, fno3d
+  dropout_rate = 0.1
+  regularization = 1e-4
+
+  outarray_fn = '../blocks_dataset/gridded_sim_data.h5'
+  outarray_flat_fn = '../blocks_dataset/PC_data.h5'
+
+  new_model = True
+
+  main_train(original_dataset_path, first_sim, last_sim, num_ts, num_epoch, lr, beta, batch_size, standardization_method, \
+    n_samples_per_frame, block_size, grid_res, max_num_PC, model_architecture, dropout_rate, outarray_fn, outarray_flat_fn, regularization, new_model)
