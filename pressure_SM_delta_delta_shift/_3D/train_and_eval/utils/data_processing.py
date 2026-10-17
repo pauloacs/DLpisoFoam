@@ -90,6 +90,100 @@ def interp_weights(
     return vertices, wts
 
 
+def trilinear_interp_weights(grid_points, mesh_points):
+    axes = [np.unique(grid_points[:, component]) for component in range(3)]
+    if any(axis.size < 2 for axis in axes):
+        raise ValueError('Trilinear interpolation requires at least two nodes per axis.')
+    node_shape = tuple(axis.size for axis in axes)
+    if np.prod(node_shape) != len(grid_points):
+        raise ValueError('Trilinear interpolation requires a complete Cartesian grid.')
+    grid_indices = tuple(
+        np.searchsorted(axis, grid_points[:, component])
+        for component, axis in enumerate(axes)
+    )
+    node_lookup = np.empty(node_shape, dtype=np.int64)
+    node_lookup[grid_indices] = np.arange(len(grid_points))
+    lower_indices = []
+    fractions = []
+    for component, axis in enumerate(axes):
+        coordinates = np.clip(mesh_points[:, component], axis[0], axis[-1])
+        lower = np.clip(np.searchsorted(axis, coordinates, side='right') - 1, 0, axis.size - 2)
+        lower_indices.append(lower)
+        fractions.append((coordinates - axis[lower]) / (axis[lower + 1] - axis[lower]))
+    vertices = []
+    weights = []
+    for offset_x in (0, 1):
+        for offset_y in (0, 1):
+            for offset_z in (0, 1):
+                offsets = (offset_x, offset_y, offset_z)
+                vertices.append(node_lookup[tuple(
+                    lower + offset for lower, offset in zip(lower_indices, offsets)
+                )])
+                weight = np.ones(len(mesh_points), dtype=np.float64)
+                for fraction, offset in zip(fractions, offsets):
+                    weight *= fraction if offset else 1.0 - fraction
+                weights.append(weight)
+    return np.column_stack(vertices), np.column_stack(weights)
+
+
+def trilinear_scatter_weights(mesh_points, grid_points, cell_volumes):
+    """Build oracle-style volume-weighted eight-node restriction; unsupported nodes return zero."""
+    cell_volumes = np.asarray(cell_volumes, dtype=np.float64)
+    if cell_volumes.shape != (len(mesh_points),) or not np.all(np.isfinite(cell_volumes)) or np.any(cell_volumes <= 0):
+        raise ValueError('Trilinear scatter requires finite positive cell volumes for every mesh cell.')
+    nodes, weights = trilinear_interp_weights(grid_points, mesh_points)
+    destinations = nodes.ravel()
+    sources = np.repeat(np.arange(len(mesh_points)), 8)
+    contributions = (weights * cell_volumes[:, None]).ravel()
+    occupied = contributions > 0
+    destinations, sources, contributions = destinations[occupied], sources[occupied], contributions[occupied]
+    order = np.argsort(destinations, kind='stable')
+    destinations, sources, contributions = destinations[order], sources[order], contributions[order]
+    counts = np.bincount(destinations, minlength=len(grid_points))
+    totals = np.bincount(destinations, weights=contributions, minlength=len(grid_points))
+    slots = np.arange(len(destinations)) - np.repeat(np.cumsum(counts) - counts, counts)
+    vertices = np.zeros((len(grid_points), max(1, int(counts.max()))), dtype=np.int64)
+    normalized = np.zeros(vertices.shape, dtype=np.float64)
+    vertices[destinations, slots] = sources
+    normalized[destinations, slots] = contributions / totals[destinations]
+    return vertices, normalized
+
+
+def mesh_to_grid_weights(mesh_points, grid_points, cell_volumes):
+    """Use trilinear scatter with linear mesh interpolation/extrapolation for unsupported nodes."""
+    from scipy.spatial import Delaunay
+
+    vertices, weights = trilinear_scatter_weights(mesh_points, grid_points, cell_volumes)
+    missing = ~np.any(weights > 0, axis=1)
+    if not np.any(missing):
+        return vertices, weights
+    triangulation = Delaunay(mesh_points)
+    targets = grid_points[missing]
+    simplices = triangulation.find_simplex(targets)
+    valid = np.all(np.isfinite(triangulation.transform), axis=(1, 2))
+    outside = simplices < 0
+    if np.any(outside):
+        boundary = np.flatnonzero(np.any(triangulation.neighbors < 0, axis=1) & valid)
+        if not len(boundary):
+            raise ValueError('No finite boundary tetrahedra available for mesh extrapolation.')
+        centres = mesh_points[triangulation.simplices[boundary]].mean(axis=1)
+        nearest = cKDTree(centres).query(targets[outside])[1]
+        simplices[outside] = boundary[nearest]
+    if not np.all(valid[simplices]):
+        raise ValueError('Mesh interpolation selected a degenerate tetrahedron.')
+    transform = triangulation.transform[simplices]
+    barycentric = np.einsum('nij,nj->ni', transform[:, :3], targets - transform[:, 3])
+    fill_weights = np.column_stack((barycentric, 1. - barycentric.sum(axis=1)))
+    if vertices.shape[1] < 4:
+        padding = ((0, 0), (0, 4 - vertices.shape[1]))
+        vertices, weights = np.pad(vertices, padding), np.pad(weights, padding)
+    vertices[missing] = 0
+    weights[missing] = 0.
+    vertices[missing, :4] = triangulation.simplices[simplices]
+    weights[missing, :4] = fill_weights
+    return vertices, weights
+
+
 @njit(parallel=True)
 def interpolate_fill_njit(
     values: np.ndarray,
@@ -97,20 +191,19 @@ def interpolate_fill_njit(
     wts: np.ndarray,
     fill_value: float = np.nan) -> np.ndarray:
     """
-    Interpolate based on previously computed vertices (vtx) and weights (wts) and fill.
+    Evaluate interpolation/extrapolation stencils, filling only nonfinite weights.
     """
     n = vtx.shape[0]
     ret = np.empty(n, dtype=values.dtype)
     
     for i in prange(n):
-        # Check for negative weights
-        has_negative = False
+        has_invalid = False
         for j in range(wts.shape[1]):
-            if wts[i, j] < 0:
-                has_negative = True
+            if not np.isfinite(wts[i, j]):
+                has_invalid = True
                 break
         
-        if has_negative:
+        if has_invalid:
             ret[i] = fill_value
         else:
             # Manual dot product
@@ -176,10 +269,11 @@ def _unpack_grid_res(grid_res):
     return dx, dy, dz
 
 
-def get_grid_shape(limits: dict, grid_res) -> tuple[int, int, int]:
+def get_grid_shape(limits: dict, grid_res, oracle_aligned=False) -> tuple[int, int, int]:
     """
     Compute the number of grid points along each axis for a uniform grid
     that fully covers the domain (extends half a cell beyond each limit).
+    With oracle_aligned=True, use ceil(span/spacing)+1 nodes from the mesh minimum.
 
     Args:
         limits (dict): Dictionary with keys 'x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max'
@@ -190,6 +284,16 @@ def get_grid_shape(limits: dict, grid_res) -> tuple[int, int, int]:
         tuple: (nx, ny, nz) number of grid points along x, y, z axes
     """
     dx, dy, dz = _unpack_grid_res(grid_res)
+
+    if oracle_aligned:
+        counts = []
+        for axis, spacing in zip(('x', 'y', 'z'), (dx, dy, dz)):
+            ratio = (limits[f'{axis}_max'] - limits[f'{axis}_min']) / spacing
+            nearest = np.rint(ratio)
+            if abs(ratio - nearest) <= 64 * np.finfo(float).eps * max(1., abs(ratio)):
+                ratio = nearest
+            counts.append(max(2, int(np.ceil(ratio)) + 1))
+        return tuple(counts)
 
     x_start = limits['x_min'] - dx / 2
     x_end   = limits['x_max'] + dx / 2
@@ -204,10 +308,11 @@ def get_grid_shape(limits: dict, grid_res) -> tuple[int, int, int]:
     return nx, ny, nz
 
 
-def create_uniform_grid(limits: dict, grid_res):
+def create_uniform_grid(limits: dict, grid_res, oracle_aligned=False):
     """
     Creates a uniform 3D grid that fully covers the domain
     (extends half a cell beyond each limit in every direction).
+    With oracle_aligned=True, start at the mesh minimum and keep exact spacing.
 
     Args:
         limits (dict): Dictionary with keys 'x_min', 'x_max', 'y_min', 'y_max', 'z_min', 'z_max'
@@ -218,7 +323,13 @@ def create_uniform_grid(limits: dict, grid_res):
         tuple: Three flattened arrays (XX0, YY0, ZZ0) representing the grid coordinates
     """
     dx, dy, dz = _unpack_grid_res(grid_res)
-    nx, ny, nz = get_grid_shape(limits, grid_res)
+    nx, ny, nz = get_grid_shape(limits, grid_res, oracle_aligned=oracle_aligned)
+
+    if oracle_aligned:
+        axes = [limits[f'{axis}_min'] + np.arange(count) * spacing
+                for axis, count, spacing in zip(('x', 'y', 'z'), (nx, ny, nz), (dx, dy, dz))]
+        grid_x, grid_y, grid_z = np.meshgrid(*axes)
+        return grid_x.ravel(), grid_y.ravel(), grid_z.ravel()
 
     X0 = np.linspace(limits['x_min'] - dx / 2, limits['x_max'] + dx / 2, num=nx)
     Y0 = np.linspace(limits['y_min'] - dy / 2, limits['y_max'] + dy / 2, num=ny)

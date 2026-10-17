@@ -2057,6 +2057,7 @@ class Training:
       )
 
     self.len_train = n_train
+    self.len_test = n_samples - n_train
     return 0
 
 
@@ -2098,8 +2099,13 @@ class Training:
     test_path = self.test_tfrecord_fn
 
     self.obst_bool = obst_bool
-    self.train_dataset = utils_io.load_dataset_tf(filename=train_path, batch_size=batch_size, buffer_size=1024)
-    self.test_dataset = utils_io.load_dataset_tf(filename=test_path, batch_size=batch_size, buffer_size=1024)
+    shuffle_buffer_cap = 8
+    train_buffer_size = min(shuffle_buffer_cap, max(1, self.len_train))
+    test_buffer_size = min(shuffle_buffer_cap, max(1, self.len_test))
+    self.train_dataset = utils_io.load_dataset_tf(filename=train_path, batch_size=batch_size,
+                                                  buffer_size=train_buffer_size)
+    self.test_dataset = utils_io.load_dataset_tf(filename=test_path, batch_size=batch_size,
+                                                 buffer_size=test_buffer_size)
 
     _norm_fn = os.path.join(model_h5_path, 'mean_std.npz')
     _mean_in = _std_in = _mean_out = _std_out = None

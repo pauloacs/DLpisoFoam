@@ -38,6 +38,10 @@ def add_new_features_and_train():
         lr, batch_size, beta, num_epochs, feature_extraction_chunk_size,
         retrain_from_scratch, last_tucker_rank, use_feature_decomposition
     )
+    from python_module import var_to_predict
+    var_to_predict = str(var_to_predict).lower()
+    if var_to_predict not in ("dp", "ddp"):
+        raise ValueError("var_to_predict must be dp or ddp")
 
     try:
         from python_module import add_ddUStar_input
@@ -188,6 +192,19 @@ def add_new_features_and_train():
         use_s_roi_penalty = False
 
     gridded_h5_fn = os.path.join(data_dir, 'gridded_data.h5')
+    import python_module as case_config
+    unsupported_features = [
+        name for name in (
+            'add_distance_to_outlet_input', 'add_grad_sdf_input',
+            'add_UdotNwall_input', 'add_ddpPrev_input',
+        ) if getattr(case_config, name, False)
+    ]
+    if unsupported_features or not getattr(case_config, 'enforce_zero_mean_pressure', True):
+        raise ValueError(
+            "Incremental preprocessing does not yet match initial training for "
+            f"{unsupported_features or ['enforce_zero_mean_pressure=False']}. "
+            "Update aborted before changing artifacts; use initial training until this path is aligned."
+        )
     sample_idx_fn = os.path.join(data_dir, 'sample_idx_per_time.npy')
     maxs_list_fn = os.path.join(data_dir, 'maxs')
     tucker_factors_fn = os.path.join(data_dir, 'tucker_factors.pkl')
@@ -218,7 +235,7 @@ def add_new_features_and_train():
     print(f"Copied to {hdf5_file_copy}.")
 
     try:
-        ddUStar, ddUStarDiff, ddp, dpPrev, ddpPrev, gradDpPrev, laplaceDpPrev, uDotGradDpPrev, gradDpPrevMag, rAU, HbyA, divHbyA, dHbyA, dDivHbyA, rAUGradDpPrev, divRAUGradDpPrev, pressureEqResidualp, rAUGradpPrev, divRAUGradpPrev, dUStar, dUCorrPrev, ddUCorrPrev, p_prev, U, divDDUStar, divDUStar, divUStar, ddUCorr, timestamps, u_max_norm_arr = load_hdf5_field_data(hdf5_file_copy)
+        ddUStar, ddUStarDiff, ddp, dpPrev, ddpPrev, gradDpPrev, laplaceDpPrev, uDotGradDpPrev, gradDpPrevMag, rAU, HbyA, divHbyA, dHbyA, dDivHbyA, rAUGradDpPrev, divRAUGradDpPrev, pressureEqResidualp, rAUGradpPrev, divRAUGradpPrev, dUStar, dUCorrPrev, ddUCorrPrev, p_prev, U, divDDUStar, divDUStar, divUStar, ddUCorr, timestamps, u_max_norm_arr, dp_target, gradpPrev = load_hdf5_field_data(hdf5_file_copy)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error loading HDF5 data: {e}")
         exit(1)
@@ -232,6 +249,12 @@ def add_new_features_and_train():
 
     n_sample_frames = len(timestamps)
     print(f"Loaded {n_sample_frames} new samples from HDF5 file")
+    if var_to_predict == "dp":
+        ddp = dp_target
+        gradDpPrev = gradpPrev
+        print("[Target] dp selected: using dp label and grad(p_prev) as shifter reference")
+    else:
+        print("[Target] ddp selected: using ddp label and grad(dpPrev) as shifter reference")
     print(f"ddUStar shape: {ddUStar.shape}, ddUStarDiff shape: {ddUStarDiff.shape}, ddp shape: {ddp.shape}")
 
     # --- Sliding window: keep (window_frames - n_sample_frames) oldest frames of features ---
@@ -820,7 +843,7 @@ def add_new_features_and_train():
         var_names.append('divDUStar')
     if add_divUStar_input:
         var_names.append('divUStar')
-    var_names.append('ddp')
+    var_names.append(var_to_predict)
     if predict_ddUCorr_output:
         var_names.extend(['ddUCorr_x', 'ddUCorr_y', 'ddUCorr_z'])
     # Use the first sample for plotting

@@ -148,6 +148,58 @@ def _gaussian_filter3d(arr, buf0, buf1, sigmas, radii, output):
         ndimage.gaussian_filter1d(buf1, sigma=sigmas[2], axis=2, order=0, mode="constant", radius=radii[2], output=output)
 
 
+def prepare_pressure_gauge(grid_points, fluid_mask, reference_faces):
+    from scipy.spatial import cKDTree
+
+    grid_points = np.asarray(grid_points, dtype=np.float64)
+    fluid_mask = np.asarray(fluid_mask, dtype=bool).reshape(-1)
+    reference_faces = np.asarray(reference_faces, dtype=np.float64)
+    if grid_points.ndim != 2 or grid_points.shape[1] != 3 or len(fluid_mask) != len(grid_points):
+        raise ValueError('Pressure gauge requires grid coordinates and a matching fluid mask.')
+    if reference_faces.ndim != 2 or reference_faces.shape[1] != 7 or not len(reference_faces):
+        raise ValueError('Pressure gauge requires mesh reference faces [centre(3), normal(3), area].')
+    if not np.isfinite(reference_faces).all() or np.any(reference_faces[:, 6] <= 0):
+        raise ValueError('Pressure reference faces must be finite with positive areas.')
+    fluid_indices = np.flatnonzero(fluid_mask)
+    if len(fluid_indices) < 4 or not np.isfinite(grid_points).all():
+        raise ValueError('Insufficient finite fluid-grid samples for pressure extrapolation.')
+    tree = cKDTree(grid_points[fluid_indices])
+    count = min(64, len(fluid_indices))
+    distances, neighbours = tree.query(reference_faces[:, :3], k=count)
+    vertices = np.zeros((len(reference_faces), count), dtype=np.int64)
+    weights = np.zeros((len(reference_faces), count), dtype=np.float64)
+    for face_index, face in enumerate(reference_faces):
+        normal_length = np.linalg.norm(face[3:6])
+        if normal_length <= 0:
+            raise ValueError('Pressure reference face has a zero normal.')
+        candidates = fluid_indices[neighbours[face_index]]
+        offsets = grid_points[candidates] - face[:3]
+        scale = max(float(distances[face_index, -1]), np.finfo(float).eps)
+        inward = offsets @ (face[3:6] / normal_length) <= 1e-10 * scale
+        candidates = candidates[inward]
+        offsets = offsets[inward] / scale
+        if len(candidates) < 4:
+            raise ValueError('Insufficient inward fluid samples at a pressure reference face.')
+        design = np.column_stack((np.ones(len(candidates)), offsets))
+        proximity = 1.0 / np.maximum(np.linalg.norm(offsets, axis=1), 1e-3)
+        target = np.array([1., 0., 0., 0.])
+        coefficients = np.linalg.lstsq((design * proximity[:, None]).T, target, rcond=None)[0]
+        face_weights = coefficients * proximity
+        if not np.allclose(face_weights @ design, target, rtol=0., atol=1e-8):
+            raise ValueError('Fluid-grid geometry cannot support affine extrapolation to the reference face.')
+        vertices[face_index, :len(candidates)] = candidates
+        weights[face_index, :len(candidates)] = face_weights
+    return vertices, weights, reference_faces[:, 6].copy()
+
+
+def apply_pressure_gauge(field, pressure_gauge, reference=0.):
+    vertices, weights, areas = pressure_gauge
+    face_values = np.sum(field.reshape(-1)[vertices] * weights, axis=1)
+    correction = np.average(face_values, weights=areas) - reference
+    field -= correction
+    return correction
+
+
 def assemble_prediction(
     array,
     indices_list,
@@ -170,6 +222,8 @@ def assemble_prediction(
     plot_results=False,
     plot_call_count=1,
     plot_output_dir="assembly_plots",
+    pressure_gauge=None,
+    enforce_pressure_gauge=True,
 ):
     """
     Reconstructs the flow domain based on squared blocks (delta-delta fields).
@@ -289,15 +343,6 @@ def assemble_prediction(
                     flow_bool_grid[z0:z1, y0:y1, x0:x1] = flow_bool
 
 
-    outlet_has_fluid = np.any(x_array[:, :, :, -1, -1] != 0)  # SDF is always the last channel
-
-    if outlet_has_fluid:
-        correction = plane_combo_mean(result, 3.0, -1, -1.0, -2, 3.0)
-    else:
-        correction = plane_combo_mean(result, 3.0, -2, -1.0, -3, 3.0)
-    sub_scalar_inplace(result, correction)
-
-
     if apply_filter:
         result = ndimage.gaussian_filter(result, sigma=filter_tuple)
         #_gaussian_filter3d(result, tmp0, tmp1, _f_sigmas, _f_radii, output=result)
@@ -316,6 +361,20 @@ def assemble_prediction(
     #    np.subtract(result, ddpPrev_grid, out=tmp0)
     #    pressure_delta_before_weight = tmp0.copy()
         result = result_unweighted * delta_U_change_grid
+
+    if enforce_pressure_gauge:
+        if pressure_gauge is not None:
+            apply_pressure_gauge(result, pressure_gauge, Ref_BC)
+        else:
+            fluid_columns = np.flatnonzero(np.any(flow_bool_grid != 0, axis=(0, 1)))
+            if len(fluid_columns) < 2:
+                raise ValueError('Pressure gauge needs at least two fluid sample planes.')
+            near, previous = fluid_columns[-1], fluid_columns[-2]
+            valid = (flow_bool_grid[..., near] != 0) & (flow_bool_grid[..., previous] != 0)
+            if not valid.any():
+                raise ValueError('Pressure gauge has no matching fluid samples on its reference planes.')
+            correction = np.mean((3. * result[..., near][valid] - result[..., previous][valid]) / 2.) - Ref_BC
+            sub_scalar_inplace(result, correction)
 
     #    if apply_filter:
     #        _gaussian_filter3d(tmp0, tmp0, tmp1, _f_sigmas, _f_radii, output=tmp1)

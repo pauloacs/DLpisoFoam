@@ -398,6 +398,12 @@ class FeatureExtractAndWrite:
     self.add_ddUCorrPrev_input = add_ddUCorrPrev_input
     self.predict_ddUCorr_output = predict_ddUCorr_output
     self.enforce_zero_mean_pressure = enforce_zero_mean_pressure
+    self.use_feature_decomposition = use_feature_decomposition
+    if self.use_feature_decomposition and self.predict_ddUCorr_output:
+      raise ValueError(
+        "predict_ddUCorr_output=True is not supported with Tucker decomposition. "
+        "Set use_feature_decomposition=False."
+      )
     self.add_distance_to_outlet_input = add_distance_to_outlet_input
     self.add_grad_sdf_input = add_grad_sdf_input
     self.add_UdotNwall_input = add_UdotNwall_input
@@ -596,7 +602,6 @@ class FeatureExtractAndWrite:
     self.max_abs_delta_Uy = self.max_abs_dddU_y
     self.max_abs_delta_Uz = self.max_abs_dddU_z
     self.last_tucker_rank = last_tucker_rank
-    self.use_feature_decomposition = use_feature_decomposition
 
     with open(self.sample_indices_fn, 'rb') as f:
       self.sample_indices_per_sim_per_time = pk.load(f)
@@ -1384,10 +1389,13 @@ class FeatureExtractAndWrite:
       #       for _gc in range(3):
       #         inputs_u[step, ..., _gbase + _gc][mask] -= np.mean(inputs_u[step, ..., _gbase + _gc][mask])
 
-    array = np.c_[inputs_u, inputs_obst, outputs]
-    reshaped_array = array.reshape(array.shape[0], -1)
-    unique_indices = np.unique(reshaped_array, axis=0, return_index=True)[1]
-    unique_array = array[unique_indices]
+    if self.n_samples_per_frame > 1 and inputs_u.shape[0] > 1:
+      array = np.c_[inputs_u, inputs_obst, outputs]
+      reshaped_array = array.reshape(array.shape[0], -1)
+      unique_indices = np.unique(reshaped_array, axis=0, return_index=True)[1]
+      unique_array = array[unique_indices]
+    else:
+      unique_array = None
     
     # Extract based on total velocity channels
     # The leading ddUStarDiff block must be counted conditionally; otherwise the
@@ -1395,10 +1403,11 @@ class FeatureExtractAndWrite:
     vel_end = 3 * (int(add_ddUStarDiff_input) + int(add_U_input) + int(add_dUStar_input) + int(add_ddUStar_input) + int(add_dUCorrPrev_input) + int(add_ddUCorrPrev_input)) + int(add_pPrev_input) + int(add_dpPrev_input) + int(add_ddpPrev_input) + 3 * int(add_gradDpPrev_input) + int(add_laplacian_dpPrev_input) + int(add_uDotGradDpPrev_input) + int(add_gradDpPrevMag_input) + int(include_rAU_input) + 3 * int(include_HbyA_input) + int(include_divHbyA_input) + 3 * int(include_dHbyA_input) + int(include_dDivHbyA_input) + 3 * int(add_rAUGradDpPrev_input) + int(add_divRAUGradDpPrev_input) + int(add_pressureEqResidualp_input) + 3 * int(add_rAUGradpPrev_input) + int(add_divRAUGradpPrev_input) + int(add_divDDUStar_input) + int(add_divDUStar_input) + int(add_divUStar_input) + int(add_distance_to_outlet_input) + 3 * int(add_grad_sdf_input) + int(add_UdotNwall_input)
     # inputs_obst now has sdf (1 channel) + dpPrev (1 channel if add_dpPrev_input)
     obst_end = vel_end + 1
-    inputs_u = unique_array[..., 0:vel_end]
-    inputs_obst = unique_array[..., vel_end:obst_end]
     n_out_ch = 4 if predict_ddUCorr_output else 1
-    outputs = unique_array[..., obst_end:obst_end + n_out_ch]
+    if unique_array is not None:
+      inputs_u = unique_array[..., 0:vel_end]
+      inputs_obst = unique_array[..., vel_end:obst_end]
+      outputs = unique_array[..., obst_end:obst_end + n_out_ch]
 
     return inputs_u, inputs_obst, outputs
 
@@ -1467,7 +1476,14 @@ class FeatureExtractAndWrite:
     if self.add_grad_sdf_input:
       norm_parts.extend([self.max_abs_grad_sdf_x, self.max_abs_grad_sdf_y, self.max_abs_grad_sdf_z])
 
-    velocity = inputs_u / np.array(norm_parts)
+    if self.add_UdotNwall_input:
+      norm_parts.append(self.max_abs_UdotNwall)
+    if len(norm_parts) != inputs_u.shape[-1]:
+      raise ValueError(
+        f"Normalization count {len(norm_parts)} does not match "
+        f"inputs_u channels {inputs_u.shape[-1]}."
+      )
+    velocity = inputs_u / np.asarray(norm_parts, dtype=np.float64)
     
     # Normalize obstacle/sdf and dpPrev separately
     sdf = inputs_obst[..., 0:1] / self.max_abs_dist  # First channel is always sdf
@@ -1517,6 +1533,34 @@ class FeatureExtractAndWrite:
       norm_parts.append(self.max_abs_dpPrev)
     if self.add_ddpPrev_input:
       norm_parts.append(self.max_abs_ddpPrev)
+    if self.add_gradDpPrev_input:
+      norm_parts.extend([self.max_abs_gradDpPrev_x, self.max_abs_gradDpPrev_y, self.max_abs_gradDpPrev_z])
+    if self.add_laplacian_dpPrev_input:
+      norm_parts.append(self.max_abs_laplacian_dpPrev)
+    if self.add_uDotGradDpPrev_input:
+      norm_parts.append(self.max_abs_uDotGradDpPrev)
+    if self.add_gradDpPrevMag_input:
+      norm_parts.append(self.max_abs_gradDpPrevMag)
+    if self.include_rAU_input:
+      norm_parts.append(self.max_abs_rAU)
+    if self.include_HbyA_input:
+      norm_parts.extend([self.max_abs_HbyA_x, self.max_abs_HbyA_y, self.max_abs_HbyA_z])
+    if self.include_divHbyA_input:
+      norm_parts.append(self.max_abs_divHbyA)
+    if self.include_dHbyA_input:
+      norm_parts.extend([self.max_abs_dHbyA_x, self.max_abs_dHbyA_y, self.max_abs_dHbyA_z])
+    if self.include_dDivHbyA_input:
+      norm_parts.append(self.max_abs_dDivHbyA)
+    if self.add_rAUGradDpPrev_input:
+      norm_parts.extend([self.max_abs_rAUGradDpPrev_x, self.max_abs_rAUGradDpPrev_y, self.max_abs_rAUGradDpPrev_z])
+    if self.add_divRAUGradDpPrev_input:
+      norm_parts.append(self.max_abs_divRAUGradDpPrev)
+    if self.add_pressureEqResidualp_input:
+      norm_parts.append(self.max_abs_pressureEqResidualp)
+    if self.add_rAUGradpPrev_input:
+      norm_parts.extend([self.max_abs_rAUGradpPrev_x, self.max_abs_rAUGradpPrev_y, self.max_abs_rAUGradpPrev_z])
+    if self.add_divRAUGradpPrev_input:
+      norm_parts.append(self.max_abs_divRAUGradpPrev)
     if self.add_divDDUStar_input:
       norm_parts.append(self.max_abs_div_ddu)
     if self.add_divDUStar_input:
@@ -1528,7 +1572,14 @@ class FeatureExtractAndWrite:
     if self.add_grad_sdf_input:
       norm_parts.extend([self.max_abs_grad_sdf_x, self.max_abs_grad_sdf_y, self.max_abs_grad_sdf_z])
 
-    velocity = inputs_u / np.array(norm_parts)
+    if self.add_UdotNwall_input:
+      norm_parts.append(self.max_abs_UdotNwall)
+    if len(norm_parts) != inputs_u.shape[-1]:
+      raise ValueError(
+        f"Normalization count {len(norm_parts)} does not match "
+        f"inputs_u channels {inputs_u.shape[-1]}."
+      )
+    velocity = inputs_u / np.asarray(norm_parts, dtype=np.float64)
     
     # Normalize obstacle/sdf and dpPrev separately
     sdf = inputs_obst[..., 0:1] / self.max_abs_dist  # First channel is always sdf

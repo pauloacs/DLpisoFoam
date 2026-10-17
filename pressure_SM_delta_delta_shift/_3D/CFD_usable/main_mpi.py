@@ -35,7 +35,7 @@ from pressure_SM_delta_delta_shift._3D.train_and_eval.utils.domain_geometry impo
 from pressure_SM_delta_delta_shift._3D.train_and_eval.utils.model_utils import define_model_arch
 from pressure_SM_delta_delta_shift._3D.train_and_eval.utils import data_processing as utils_data
 
-from pressure_SM_delta_delta_shift._3D.train_and_eval.assembly import assemble_prediction
+from pressure_SM_delta_delta_shift._3D.train_and_eval.assembly import assemble_prediction, prepare_pressure_gauge, apply_pressure_gauge
 from pressure_SM_delta_delta_shift._3D.train_and_eval.neural_networks import (
     MLP, SimpleCNN3D, Simple_multi_layer_3D, FNO3d, GNN, MLP_Mixer_3D, 
     UNet3D, UNet3D_deep, UNet3D_attention, SymmetricPadding3D, SimpleCNN3D_two_heads, SimpleCNN3D_two_heads_smooth, SimpleCNN3D_multi_out, SimpleCNN3D_multi_out_divU
@@ -307,6 +307,9 @@ def load_tucker_and_NN(
 	clip_UdotNwall_to_inflow=False,
 	use_s_roi_penalty=False,
 	compression_clip_percentile=75.0,
+	var_to_predict='ddp',
+	ddp_full_coarse_prediction=False,
+	extrapolation_weight_factor=1.0,
 ):
 	"""
 	Load tucker factors and initialize the trained neural network model.
@@ -336,6 +339,13 @@ def load_tucker_and_NN(
 	use_feature_decomposition_g = use_feature_decomposition
 	global compression_clip_percentile_g
 	compression_clip_percentile_g = float(compression_clip_percentile)
+	global var_to_predict_g, ddp_full_coarse_prediction_g
+	var_to_predict_g = str(var_to_predict).lower()
+	ddp_full_coarse_prediction_g = bool(ddp_full_coarse_prediction)
+	global extrapolation_weight_factor_g
+	extrapolation_weight_factor_g = float(extrapolation_weight_factor)
+	if not np.isfinite(extrapolation_weight_factor_g) or not np.isfinite(float(output_weight_factor)):
+		raise ValueError('Pressure weight factors must be finite.')
 
 	if model_arch.lower() in ['cnn_shifter', 'cnn_shifter_lightweight', 'simplecnn3d_ddp_shifter', 'simplecnn3d_ddp_shifter_lightweight', 'cnn_shifter_velocity', 'simplecnn3d_ddp_shifter_velocity'] and use_feature_decomposition:
 		raise ValueError('[load_tucker_and_NN] cnn_shifter requires use_feature_decomposition=False.')
@@ -872,7 +882,7 @@ def reload_weights(weights_fn):
 			print(f"[reload_weights] WARNING: normalization file not found: {std_vals_fn}")
 
 
-def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_boundary, obst_boundary):
+def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_boundary, obst_boundary, reference_faces=None, mesh_bounds=None):
 	"""
 	Initialization function for the simulation.
 
@@ -885,6 +895,8 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		z_bot_boundary (ndarray): Bottom boundary in z-direction.
 		y_top_boundary (ndarray): Top boundary in y-direction.
 		z_top_boundary (ndarray): Top boundary in z-direction.
+		reference_faces (ndarray): Mesh pressure-reference face centres, outward normals, and areas.
+		mesh_bounds (ndarray): Exact mesh-point bounds, shape (2, 3). Array column 11 contains cell volumes.
 
 	Returns:
 		int: Returns 0 after successful initialization.
@@ -910,6 +922,14 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		z_bot_global = [z_bot_boundary]
 		y_top_global = [y_top_boundary]
 		z_top_global = [z_top_boundary]
+	if reference_faces is None:
+		raise ValueError('Mesh pressure-reference faces are required; rebuild the solver with the eight-argument init interface.')
+	reference_faces_global = comm.gather(np.asarray(reference_faces, dtype=np.float64), root=0)
+	if mesh_bounds is None or array.ndim != 2 or array.shape[1] != 12:
+		raise ValueError('Oracle-aligned transfer requires mesh bounds and cell volumes; rebuild DLpimpleFoam_auto.')
+	mesh_bounds = np.asarray(mesh_bounds, dtype=np.float64)
+	if mesh_bounds.shape != (2, 3) or not np.all(np.isfinite(mesh_bounds)) or np.any(mesh_bounds[1] <= mesh_bounds[0]):
+		raise ValueError('Mesh bounds must contain finite increasing minimum/maximum coordinates.')
 
 	global len_rankwise
 
@@ -940,33 +960,16 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		global vert_OFtoNP, weights_OFtoNP, vert_NPtoOF, weights_NPtoOF
 		global grid_shape_z, grid_shape_y, grid_shape_x
 
-		# Use min/max across all relevant arrays for robust domain bounding
-		all_x = [array_concat[...,3]]
-		all_y = [array_concat[...,4]]
-		all_z = [array_concat[...,5]]
-		# Add obstacle and boundary arrays if they have the right shape
-		for arr in [obst, y_bot, y_top, z_bot, z_top]:
-			arr = np.asarray(arr)
-			if arr.ndim > 1 and arr.shape[-1] >= 3:
-				all_x.append(arr[...,0])
-				all_y.append(arr[...,1])
-				all_z.append(arr[...,2])
+		limits = {f'{axis}_{side}': mesh_bounds[index, component]
+			for component, axis in enumerate(('x', 'y', 'z'))
+			for index, side in enumerate(('min', 'max'))}
 
-		limits = {
-			'x_min': np.min(np.concatenate(all_x)),
-			'x_max': np.max(np.concatenate(all_x)),
-			'y_min': np.min(np.concatenate(all_y)),
-			'y_max': np.max(np.concatenate(all_y)),
-			'z_min': np.min(np.concatenate(all_z)),
-			'z_max': np.max(np.concatenate(all_z))
-		}
-
-		X0, Y0, Z0 = create_uniform_grid(limits, grid_res)
+		X0, Y0, Z0 = create_uniform_grid(limits, grid_res, oracle_aligned=True)
 		xyz0 = np.concatenate((np.expand_dims(X0, axis=1), np.expand_dims(Y0, axis=1), np.expand_dims(Z0, axis=1)), axis=-1)
 		points = array_concat[...,3:6] #coordinates
 
 		#print( 'Calculating verts and weights' )
-		vert_OFtoNP, weights_OFtoNP = interp_weights(points, xyz0, interp_method='IDW')
+		vert_OFtoNP, weights_OFtoNP = utils_data.mesh_to_grid_weights(points, xyz0, array_concat[:, 11])
 		assert np.all(np.isfinite(weights_OFtoNP)), "NaN values found in weights_OFtoNP"
 		assert np.all(np.isfinite(vert_OFtoNP)), "NaN values found in vert_OFtoNP"
 
@@ -977,7 +980,7 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		vert_OFtoNP = list(vert_OFtoNP)
 		weights_OFtoNP = list(weights_OFtoNP)
 
-		vert_NPtoOF, weights_NPtoOF = interp_weights(xyz0, points, interp_method='IDW')
+		vert_NPtoOF, weights_NPtoOF = utils_data.trilinear_interp_weights(xyz0, points)
 		assert np.all(np.isfinite(weights_NPtoOF)), "NaN values found in weights_NPtoOF"
 		assert np.all(np.isfinite(vert_NPtoOF)), "NaN values found in vert_NPtoOF"
 
@@ -996,13 +999,13 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		}
 
 		domain_bool, sdf = domain_dist(boundaries, xyz0, grid_res)
-		grid_shape_x, grid_shape_y, grid_shape_z = utils_data.get_grid_shape(limits, grid_res)
+		grid_shape_x, grid_shape_y, grid_shape_z = utils_data.get_grid_shape(limits, grid_res, oracle_aligned=True)
 
 		x0 = np.min(X0)
 		y0 = np.min(Y0)
 		z0 = np.min(Z0)
 
-		indices = np.zeros((X0.shape[0], 3), dtype=np.int64)  # zeros: non-domain points default to (0,0,0) instead of garbage
+		indices = np.zeros((X0.shape[0], 3), dtype=np.int64)
 		obst_bool = np.zeros((grid_shape_z, grid_shape_y, grid_shape_x, 1))
 		sdfunct = obst_bool.copy()
 
@@ -1011,13 +1014,13 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		delta_ux_interp = interpolate_fill_njit(delta_ux, vert_OFtoNP_array, weights_OFtoNP_array) 
 
 		for (step, x_y_z) in enumerate(xyz0):
+			ii = int(round((x_y_z[..., 2] - z0) / dz))
+			jj = int(round((x_y_z[..., 1] - y0) / dy))
+			kk = int(round((x_y_z[..., 0] - x0) / dx))
+			indices[step, 0] = ii
+			indices[step, 1] = jj
+			indices[step, 2] = kk
 			if domain_bool[step] * (~np.isnan(delta_ux_interp[step])):
-				ii = int(round((x_y_z[..., 2] - z0) / dz))
-				jj = int(round((x_y_z[..., 1] - y0) / dy))
-				kk = int(round((x_y_z[..., 0] - x0) / dx))
-				indices[step, 0] = ii
-				indices[step, 1] = jj
-				indices[step, 2] = kk
 				sdfunct[ii, jj, kk, :] = sdf[step]
 				obst_bool[ii, jj, kk, :] = int(1)
 
@@ -1028,6 +1031,16 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		indices_i = indices[:, 0].astype(np.int32)
 		indices_j = indices[:, 1].astype(np.int32)
 		indices_k = indices[:, 2].astype(np.int32)
+		global pressure_gauge_g
+		reference_geometry = np.concatenate(reference_faces_global, axis=0)
+		gauge_vertices, gauge_weights, gauge_areas = prepare_pressure_gauge(
+			xyz0, domain_bool & (sdf != 0), reference_geometry
+		)
+		grid_flat_indices = np.ravel_multi_index(
+			(indices_i, indices_j, indices_k), (grid_shape_z, grid_shape_y, grid_shape_x)
+		)
+		pressure_gauge_g = (grid_flat_indices[gauge_vertices], gauge_weights, gauge_areas)
+		print(f'[init_func] Mesh-derived pressure gauge: {len(gauge_areas)} reference faces, area={gauge_areas.sum():.6g}')
 
 		# Compute static geometric grids for optional inputs
 		global dist_to_outlet_grid, grad_sdf_grid, UdotNwall_grid
@@ -1157,6 +1170,8 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 							if ddp_key in group:
 								# Load pressure as numpy array - already at OF mesh points
 								ddpML_value = np.array(group[ddp_key][:], dtype=np.float64)
+								if var_to_predict_g == 'dp':
+									ddpML_value = np.array(group['dp'][:], dtype=np.float64) if 'dp' in group else np.array(group['dpPrev'][:], dtype=np.float64) + ddpML_value
 								oracle_ddp_cache_g.append(ddpML_value)
 							else:
 								oracle_ddp_cache_g.append(None)
@@ -1181,7 +1196,7 @@ def init_func(array, z_top_boundary, z_bot_boundary, y_top_boundary, y_bot_bound
 		#sys.stdout.flush()
 	return 0
 
-def py_func(array_in, U_max_norm):
+def py_func(array_in, U_max_norm, simulation_time=None):
 	"""
 	Method called at each simulation time step to compute the pressure field based on an input velocity field.
 
@@ -1259,7 +1274,7 @@ def py_func(array_in, U_max_norm):
 			dpPrev = None
 
 		if add_gradDpPrev_input_g:
-			gradDpPrev = array[..., 22:25]
+			gradDpPrev = array[..., 46:49] if var_to_predict_g == 'dp' else array[..., 22:25]
 		else:
 			gradDpPrev = None
 
@@ -1799,6 +1814,23 @@ def py_func(array_in, U_max_norm):
 			
 			ch_idx += 1
 		grid[:, :, :, ch_idx] = sdfunct[:, :, :, 0]  # sdf is at position ch_idx
+		grid *= (sdfunct[..., 0] != 0)[..., None]
+		if add_ddpPrev_input_g:
+			velocity_channels = 3 * (
+				int(add_U_input_g) + int(add_dUStar_input_g)
+				+ int(add_ddUStar_input_g) + int(add_ddUStarDiff_input_g)
+				+ int(add_dUCorrPrev_input_g) + int(add_ddUCorrPrev_input_g)
+			)
+			ddp_prev_channel = velocity_channels + int(add_pPrev_input_g) + int(add_dpPrev_input_g)
+			fluid_mask = sdfunct[..., 0] != 0
+			values = grid[..., ddp_prev_channel][fluid_mask]
+			if values.size:
+				threshold = np.percentile(np.abs(values), compression_clip_percentile_g)
+				tail = np.abs(values) > threshold
+				values[tail] = np.sign(values[tail]) * (
+					threshold + threshold * np.arcsinh((np.abs(values[tail]) - threshold) / (threshold + 1e-30))
+				)
+				grid[..., ddp_prev_channel][fluid_mask] = values
 
 		delta_U_change_grid[indices_i, indices_j, indices_k] = delta_U_changed_interp
 
@@ -1970,43 +2002,6 @@ def py_func(array_in, U_max_norm):
 					b += 1
 
 		x_array = x_list  # already an array
-
-		# ------------------------------------------------------------
-		# Optional compression with per-call threshold inside fluid domain
-		# ------------------------------------------------------------
-		clip_ddp_and_gradDpPrev = True
-		clip_percentile = compression_clip_percentile_g
-
-		fluid_mask_3d = sdfunct[:, :, :, 0] != 0  # True inside flow domain
-
-		def compress_tail_asinh(arr3d, fluid_mask, q=95.0):
-			vals = np.abs(arr3d[fluid_mask])
-			if vals.size == 0:
-				return arr3d, np.nan
-
-			thr = np.percentile(vals, q)
-			out = arr3d.copy()
-			x = out[fluid_mask]
-			ax = np.abs(x)
-			mask = ax > thr
-			out_vals = x.copy()
-			excess = ax[mask] - thr
-			compressed = thr + thr * np.arcsinh(excess / (thr + 1e-30))
-			out_vals[mask] = np.sign(x[mask]) * compressed
-			out[fluid_mask] = out_vals
-			return out, thr
-
-		if clip_ddp_and_gradDpPrev:
-			# Compute ddpPrev channel index
-			_vb = (3 if add_U_input_g else 0) + (3 if add_dUStar_input_g else 0) + (3 if add_ddUStar_input_g else 0) + (3 if add_ddUStarDiff_input_g else 0) + (3 if add_dUCorrPrev_input_g else 0) + (3 if add_ddUCorrPrev_input_g else 0)
-			if add_ddpPrev_input_g:
-				_c2 = _vb + int(add_pPrev_input_g) + int(add_dpPrev_input_g)  # ddpPrev channel index
-				x_array[0, ..., _c2], _thr_ddpPrev = compress_tail_asinh(
-					x_array[0, ..., _c2],
-					fluid_mask_3d,
-					q=clip_percentile,
-				)
-
 
 		# DEBUG: Verify channel count
 		expected_channels = (
@@ -2295,51 +2290,6 @@ def py_func(array_in, U_max_norm):
 		if verbose_g:
 			print(f"Processing before assembly : {time.time()-t0} s", flush=True)
 
-		# === ORACLE MODE: Short-circuit if oracle data available ===
-		global _py_func_call_count
-		if oracle_mode_g and len(oracle_ddp_cache_g) > 0 and rank == 0:
-			if _py_func_call_count < len(oracle_ddp_cache_g):
-				oracle_ddp = oracle_ddp_cache_g[_py_func_call_count]
-				if oracle_ddp is not None:
-					# Oracle data available - return it directly (already at mesh points)
-					print(f'[oracle] Call {_py_func_call_count}: Using oracle ddp and optional delta_delta_U', flush=True)
-					_py_func_call_count += 1
-					# Split by rank and return
-					if predict_ddUCorr_g:
-						# Load velocity if available, otherwise use zeros
-						oracle_ddu = oracle_ddu_cache_g[_py_func_call_count - 1] if _py_func_call_count - 1 < len(oracle_ddu_cache_g) else None
-						if oracle_ddu is not None:
-							# Use actual velocity from oracle
-							oracle_full = np.column_stack([
-								oracle_ddp,
-								oracle_ddu[:, 0],  # ddUx
-								oracle_ddu[:, 1],  # ddUy
-								oracle_ddu[:, 2]   # ddUz
-							])
-						else:
-							# No velocity data available, use zeros
-							oracle_full = np.column_stack([
-								oracle_ddp,
-								np.zeros_like(oracle_ddp),
-								np.zeros_like(oracle_ddp),
-								np.zeros_like(oracle_ddp)
-							])
-						output_rankwise = np.split(oracle_full, np.cumsum(len_rankwise)[:-1])
-					else:
-
-						if oracle_model_with_interp_g:
-							# To inpect the interpolation influence on results
-							# 1. interpolate to grid -> 2.reinterpolate to mesh
-							oracle_ddp_grid = interpolate_fill_njit(oracle_ddp, vert_OFtoNP_array, weights_OFtoNP_array)
-							oracle_ddp = interpolate_fill_njit(oracle_ddp_grid, vert_NPtoOF_array, weights_NPtoOF_array)
-						
-						output_rankwise = np.split(oracle_ddp, np.cumsum(len_rankwise)[:-1])
-
-					result = comm.scatter(output_rankwise, root=0)
-					result = np.asarray(result, dtype=np.float64)
-					print(output_weight_factor_g)
-					return output_weight_factor_g * result
-
 		t0 = time.time()
 
 		Ref_BC = 0
@@ -2364,6 +2314,7 @@ def py_func(array_in, U_max_norm):
 			plot_results=inspect_results_g,
 			plot_call_count=_inspect_call_count,
 			plot_output_dir=inspect_output_dir_g,
+			pressure_gauge=pressure_gauge_g,
 		)
 
 		if predict_ddUCorr_g:
@@ -2377,6 +2328,7 @@ def py_func(array_in, U_max_norm):
 					_res_ch = _res_ch.astype(np.float64, copy=False)
 				_ch_common = dict(_assemble_common)
 				_ch_common['plot_output_dir'] = os.path.join(inspect_output_dir_g, _ch_labels[_ch])
+				_ch_common['enforce_pressure_gauge'] = _ch == 0
 				_assembled = assemble_prediction(_res_ch, **_ch_common)
 				change_in_deltap_ch.append(_assembled)
 			# Stack into (grid_z, grid_y, grid_x, 4)
@@ -2438,6 +2390,16 @@ def py_func(array_in, U_max_norm):
 		t0 = time.time()
 
 		# CHANGED: use cached indices arrays for faster indexing
+		change_in_deltap *= output_weight_factor_g
+		if var_to_predict_g == 'ddp' and ddp_full_coarse_prediction_g:
+			dpPrev_grid_flat = interpolate_fill_njit(
+				array[..., 10], vert_OFtoNP_array, weights_OFtoNP_array
+			)
+			dpPrev_grid = np.zeros(change_in_deltap.shape[:3], dtype=np.float64)
+			dpPrev_grid[indices_i, indices_j, indices_k] = dpPrev_grid_flat
+			pressure_grid = change_in_deltap[..., 0] if predict_ddUCorr_g else change_in_deltap
+			pressure_grid += extrapolation_weight_factor_g * dpPrev_grid
+			apply_pressure_gauge(pressure_grid, pressure_gauge_g)
 		if predict_ddUCorr_g:
 			# change_in_deltap shape: (grid_z, grid_y, grid_x, 4)
 			change_in_deltap_flat = change_in_deltap[indices_i, indices_j, indices_k, :]  # (n_cells, 4)
@@ -2449,6 +2411,25 @@ def py_func(array_in, U_max_norm):
 			change_in_deltap = change_in_deltap[indices_i, indices_j, indices_k]
 			ddp = interpolate_fill_njit(change_in_deltap, vert_NPtoOF_array, weights_NPtoOF_array)
 		#p = deltaP_prev + change_in_deltap
+		global _py_func_call_count
+		if oracle_mode_g and _py_func_call_count < len(oracle_ddp_cache_g):
+			oracle_pressure = oracle_ddp_cache_g[_py_func_call_count]
+			if oracle_pressure is not None:
+				full_coarse = var_to_predict_g == 'ddp' and ddp_full_coarse_prediction_g
+				ddp = output_weight_factor_g * oracle_pressure
+				if oracle_model_with_interp_g or full_coarse:
+					oracle_grid = interpolate_fill_njit(ddp, vert_OFtoNP_array, weights_OFtoNP_array)
+					if full_coarse:
+						oracle_grid += extrapolation_weight_factor_g * interpolate_fill_njit(
+							array[..., 10], vert_OFtoNP_array, weights_OFtoNP_array
+						)
+					ddp = interpolate_fill_njit(oracle_grid, vert_NPtoOF_array, weights_NPtoOF_array)
+				if predict_ddUCorr_g:
+					oracle_velocity = oracle_ddu_cache_g[_py_func_call_count]
+					if oracle_velocity is None:
+						oracle_velocity = np.zeros((len(ddp), 3), dtype=np.float64)
+					delta_delta_U_x, delta_delta_U_y, delta_delta_U_z = (output_weight_factor_g * oracle_velocity).T
+				_py_func_call_count += 1
 
 		if verbose_g:
 			print(f"Final Interpolation took: {time.time()-t0} s", flush=True)
@@ -2473,12 +2454,14 @@ def py_func(array_in, U_max_norm):
 	else:
 		output_rankwise = None
 
-	for output_rank_i in output_rankwise:
-		if np.any(np.isnan(output_rank_i)):
-			nan_count = np.sum(np.isnan(output_rank_i))
-			if verbose_g:
-				print(f"Number of NaN values in output_rankwise: {nan_count}")
-			raise ValueError("Warning: NaN values detected in output_rankwise before scattering.")
+	# output_rankwise exists only on rank 0. Validate it there before scatter.
+	if rank == 0:
+		for output_rank_i in output_rankwise:
+			if np.any(np.isnan(output_rank_i)):
+				nan_count = np.sum(np.isnan(output_rank_i))
+				if verbose_g:
+					print(f"Number of NaN values in output_rankwise: {nan_count}")
+				raise ValueError("NaN values detected in output_rankwise before scattering.")
 
 	# This scatters the value to each worker
 	result = comm.scatter(output_rankwise, root=0)
@@ -2490,14 +2473,20 @@ def py_func(array_in, U_max_norm):
 	if verbose_g:
 		print(f"Process {rank} received object with shape {result.shape}", flush=True)
 
-	# Enforce float64 dtype and check for NaNs/Infs before returning to C++
+	# Enforce the 2-D C++ contract: (nCells,1) or (nCells,4).
 	result = np.asarray(result, dtype=np.float64)
+	if result.ndim == 1:
+		result = result[:, None]
+	if result.ndim != 2 or result.shape[1] not in (1, 4):
+		raise ValueError(
+			f"Invalid result shape {result.shape}; C++ expects (nCells,1) or (nCells,4)."
+		)
 	if not np.all(np.isfinite(result)):
 		n_nan = np.isnan(result).sum()
 		n_inf = np.isinf(result).sum()
 		raise ValueError(f"Output array contains {n_nan} NaNs and {n_inf} Infs before returning to C++.")
 
-	weighted_result = output_weight_factor_g * result
+	weighted_result = result
 
 	if verbose_g and not predict_ddUCorr_g and rank == 0:
 		# Physical check diagnostic: compare prediction vs previous (both are 1D arrays at mesh points)

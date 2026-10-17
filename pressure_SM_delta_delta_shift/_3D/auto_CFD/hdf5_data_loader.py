@@ -49,6 +49,8 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
     ddUStarDiff_list = []
     ddUCorr_list = []
     ddp_list = []
+    dp_target_list = []
+    gradpPrev_list = []
     dpPrev_list = []
     ddpPrev_list = []
     gradDpPrev_list = []
@@ -126,7 +128,7 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
 
             ddUStar_arr = group['ddUStar'][:]     # (n_cells, 3)
             ddUStarDiff_arr = group['ddUStarDiff'][:]  # (n_cells, 3)
-            ddp = group[ddp_key][:]     # (n_cells,)
+            ddp = group[ddp_key][:]
             
             # Load dpPrev if present (new key 'dpPrev', old key 'dpML_prev', oldest 'pressure_increment_prev')
             dpPrev_key = 'dpPrev' if 'dpPrev' in group else ('dpML_prev' if 'dpML_prev' in group else 'pressure_increment_prev')
@@ -134,6 +136,21 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
                 dpPrev = group[dpPrev_key][:]
             else:
                 dpPrev = np.zeros(n_cells)  # placeholder if not available
+            dp_target = group['dp'][:] if 'dp' in group else dpPrev + ddp
+
+            if 'gradpPrev' in group:
+                gradpPrev = group['gradpPrev'][:]
+            elif 'rAU' in group and 'rAUGradpPrev' in group:
+                _rau = group['rAU'][:]
+                _weighted = group['rAUGradpPrev'][:]
+                gradpPrev = np.divide(
+                    _weighted,
+                    _rau[:, None],
+                    out=np.zeros_like(_weighted),
+                    where=np.abs(_rau[:, None]) > 1e-30,
+                )
+            else:
+                gradpPrev = np.zeros((n_cells, 3))
 
             # Load ddpPrev if present (new key 'ddpPrev', old key 'ddpML_prev' for backward compat)
             if 'ddpPrev' in group or 'ddpML_prev' in group:
@@ -281,6 +298,8 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
             ddUStar_list.append(ddUStar_arr)
             ddUStarDiff_list.append(ddUStarDiff_arr)
             ddp_list.append(ddp)
+            dp_target_list.append(dp_target)
+            gradpPrev_list.append(gradpPrev)
             dpPrev_list.append(dpPrev)
             ddpPrev_list.append(ddpPrev)
             gradDpPrev_list.append(gradDpPrev)
@@ -307,6 +326,8 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
     ddUStarDiff = np.array(ddUStarDiff_list)   # (n_samples, n_cells, 3)
     ddUCorr = np.array(ddUCorr_list)           # (n_samples, n_cells, 3)
     ddp = np.array(ddp_list)  # (n_samples, n_cells)
+    dp_target = np.array(dp_target_list)
+    gradpPrev = np.array(gradpPrev_list)
     dpPrev = np.array(dpPrev_list)  # (n_samples, n_cells)
     ddpPrev = np.array(ddpPrev_list)  # (n_samples, n_cells)
     gradDpPrev = np.array(gradDpPrev_list)  # (n_samples, n_cells, 3)
@@ -334,7 +355,94 @@ def load_hdf5_samples(data_file='ML_data/data.h5'):
     timestamps = np.array(timestamps)
     
     u_max_norm_arr = np.array(u_max_norm_list)
-    return coordinates, boundary_coords, boundary_patches, patch_names, U, ddUStar, ddUStarDiff, dpPrev, ddpPrev, gradDpPrev, laplaceDpPrev, uDotGradDpPrev, gradDpPrevMag, rAU, HbyA, divHbyA, dHbyA, dDivHbyA, rAUGradDpPrev, divRAUGradDpPrev, pressureEqResidualp, rAUGradpPrev, divRAUGradpPrev, divDDUStar, divUStar, divDUStar, dUStar, dUCorrPrev, ddUCorrPrev, p_prev, ddp, ddUCorr, timestamps, u_max_norm_arr
+    return coordinates, boundary_coords, boundary_patches, patch_names, U, ddUStar, ddUStarDiff, dpPrev, ddpPrev, gradDpPrev, laplaceDpPrev, uDotGradDpPrev, gradDpPrevMag, rAU, HbyA, divHbyA, dHbyA, dDivHbyA, rAUGradDpPrev, divRAUGradDpPrev, pressureEqResidualp, rAUGradpPrev, divRAUGradpPrev, divDDUStar, divUStar, divDUStar, dUStar, dUCorrPrev, ddUCorrPrev, p_prev, ddp, ddUCorr, timestamps, u_max_norm_arr, dp_target, gradpPrev
+
+
+def load_hdf5_samples_selected(data_file, required_fields):
+    """Load only requested per-cell fields plus geometry and solver metadata."""
+    required_fields = set(required_fields) | {'ddp'}
+    scalar_fields = {
+        'ddp', 'dp', 'dpPrev', 'ddpPrev', 'laplaceDpPrev', 'uDotGradDpPrev',
+        'gradDpPrevMag', 'rAU', 'divHbyA', 'dDivHbyA', 'divRAUGradDpPrev',
+        'pressureEqResidualp', 'divRAUGradpPrev', 'divDDUStar', 'divUFirstPred',
+    }
+    vector_fields = {
+        'U', 'ddUStar', 'ddUStarDiff', 'dUStar', 'ddUCorr', 'dUCorrPrev',
+        'ddUCorrPrev', 'gradDpPrev', 'gradpPrev', 'HbyA', 'dHbyA',
+        'rAUGradDpPrev', 'rAUGradpPrev',
+    }
+    unknown = required_fields - scalar_fields - vector_fields - {'p_prev'}
+    if unknown:
+        raise ValueError(f"Unknown HDF5 training fields requested: {sorted(unknown)}")
+
+    if not os.path.exists(data_file):
+        raise FileNotFoundError(f"HDF5 data file not found: {data_file}")
+
+    fields = {name: [] for name in required_fields}
+    timestamps = []
+    u_max_norm = []
+    patch_names = {}
+    with h5py.File(data_file, 'r') as handle:
+        coordinates = handle['/coordinates'][:]
+        boundary_coords = handle['/boundary_coordinates'][:] if '/boundary_coordinates' in handle else None
+        boundary_patches = handle['/boundary_patches'][:] if '/boundary_patches' in handle else None
+        for attr_name in handle.attrs:
+            if attr_name.startswith('patch_'):
+                patch_index = int(attr_name.split('_')[1])
+                patch_name = handle.attrs[attr_name]
+                patch_names[patch_index] = patch_name.decode('utf-8') if isinstance(patch_name, bytes) else patch_name
+        if boundary_coords is not None and boundary_patches is not None and patch_names:
+            keep = np.array([patch_names[index] not in ('outlet', 'inlet') for index in boundary_patches])
+            boundary_coords = boundary_coords[keep]
+            boundary_patches = boundary_patches[keep]
+
+        sample_keys = sorted(key for key in handle if key.startswith('sample_'))
+        if not sample_keys:
+            raise ValueError("No sample groups (sample_*) found in HDF5 file")
+
+        for sample_key in sample_keys:
+            group = handle[sample_key]
+            ddp_key = next((key for key in ('ddp', 'ddpML', 'pressure_increment') if key in group), None)
+            if ddp_key is None:
+                raise ValueError(f"{sample_key} is missing the required ddp training target")
+            ddp = group[ddp_key][:] if 'ddp' in required_fields else None
+            if 'ddp' in required_fields:
+                fields['ddp'].append(ddp)
+            aliases = {'dpPrev': ('dpPrev', 'dpML_prev', 'pressure_increment_prev'),
+                       'ddpPrev': ('ddpPrev', 'ddpML_prev')}
+            for name in required_fields - {'ddp', 'dp'}:
+                dataset_name = next((key for key in aliases.get(name, (name,)) if key in group), None)
+                if name == 'gradpPrev' and dataset_name is None and 'rAUGradpPrev' in group and 'rAU' in group:
+                    weighted = group['rAUGradpPrev'][:]
+                    coefficient = group['rAU'][:]
+                    value = np.divide(weighted, coefficient[:, None], out=np.zeros_like(weighted),
+                                      where=np.abs(coefficient[:, None]) > 1e-30)
+                elif dataset_name is not None:
+                    value = group[dataset_name][:]
+                else:
+                    raise ValueError(f"{sample_key} is missing requested training field '{name}'")
+                fields[name].append(value)
+
+            if 'dp' in required_fields:
+                if 'dp' in group:
+                    fields['dp'].append(group['dp'][:])
+                else:
+                    dp_prev_key = next((key for key in aliases['dpPrev'] if key in group), None)
+                    dp_prev = group[dp_prev_key][:] if dp_prev_key else np.zeros_like(group[ddp_key][:])
+                    fields['dp'].append(dp_prev + group[ddp_key][:])
+            timestamps.append(group.attrs.get('timestep', -1))
+            norm = group['U_MAX_NORM'][()] if 'U_MAX_NORM' in group else 1.0
+            u_max_norm.append(float(norm))
+
+    return {
+        'coordinates': coordinates,
+        'boundary_coords': boundary_coords,
+        'boundary_patches': boundary_patches,
+        'patch_names': patch_names,
+        'timestamps': np.asarray(timestamps),
+        'U_MAX_NORM': np.asarray(u_max_norm),
+        **{name: np.asarray(values) for name, values in fields.items()},
+    }
 
 
 def load_hdf5_field_data(data_file='ML_data/data.h5'):
@@ -370,6 +478,8 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     ddUStarDiff_list = []
     ddUCorr_list = []
     ddp_list = []
+    dp_target_list = []
+    gradpPrev_list = []
     dpPrev_list = []
     ddpPrev_list = []
     gradDpPrev_list = []
@@ -422,6 +532,10 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
                 dpPrev_list.append(group[dpPrev_key][:])
             else:
                 dpPrev_list.append(np.zeros_like(group[ddp_key][:]))
+            if 'dp' in group:
+                dp_target_list.append(group['dp'][:])
+            else:
+                dp_target_list.append(dpPrev_list[-1] + ddp_list[-1])
 
             # Load ddpPrev (new key 'ddpPrev', old key 'ddpML_prev' for backward compat)
             if 'ddpPrev' in group or 'ddpML_prev' in group:
@@ -494,6 +608,20 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
             else:
                 rAUGradpPrev_list.append(np.zeros((group['ddUStar'].shape[0], 3)))
 
+            if 'gradpPrev' in group:
+                gradpPrev_list.append(group['gradpPrev'][:])
+            elif 'rAU' in group and 'rAUGradpPrev' in group:
+                _rau = group['rAU'][:]
+                _weighted = group['rAUGradpPrev'][:]
+                gradpPrev_list.append(np.divide(
+                    _weighted,
+                    _rau[:, None],
+                    out=np.zeros_like(_weighted),
+                    where=np.abs(_rau[:, None]) > 1e-30,
+                ))
+            else:
+                gradpPrev_list.append(np.zeros((group['ddUStar'].shape[0], 3)))
+
             if 'divRAUGradpPrev' in group:
                 divRAUGradpPrev_list.append(group['divRAUGradpPrev'][:])
             else:
@@ -562,6 +690,8 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     ddUStarDiff = np.array(ddUStarDiff_list)
     ddUCorr = np.array(ddUCorr_list)
     ddp = np.array(ddp_list)
+    dp_target = np.array(dp_target_list)
+    gradpPrev = np.array(gradpPrev_list)
     dpPrev = np.array(dpPrev_list)
     ddpPrev = np.array(ddpPrev_list)
     gradDpPrev = np.array(gradDpPrev_list)
@@ -589,7 +719,7 @@ def load_hdf5_field_data(data_file='ML_data/data.h5'):
     timestamps = np.array(timestamps)
     u_max_norm_arr = np.array(u_max_norm_list)
 
-    return ddUStar, ddUStarDiff, ddp, dpPrev, ddpPrev, gradDpPrev, laplaceDpPrev, uDotGradDpPrev, gradDpPrevMag, rAU, HbyA, divHbyA, dHbyA, dDivHbyA, rAUGradDpPrev, divRAUGradDpPrev, pressureEqResidualp, rAUGradpPrev, divRAUGradpPrev, dUStar, dUCorrPrev, ddUCorrPrev, p_prev, U, divDDUStar, divDUStar, divUStar, ddUCorr, timestamps, u_max_norm_arr
+    return ddUStar, ddUStarDiff, ddp, dpPrev, ddpPrev, gradDpPrev, laplaceDpPrev, uDotGradDpPrev, gradDpPrevMag, rAU, HbyA, divHbyA, dHbyA, dDivHbyA, rAUGradDpPrev, divRAUGradDpPrev, pressureEqResidualp, rAUGradpPrev, divRAUGradpPrev, dUStar, dUCorrPrev, ddUCorrPrev, p_prev, U, divDDUStar, divDUStar, divUStar, ddUCorr, timestamps, u_max_norm_arr, dp_target, gradpPrev
 
 
 def load_boundaries_dict(data_dir='ML_data'):

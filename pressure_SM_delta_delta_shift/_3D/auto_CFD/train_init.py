@@ -16,7 +16,7 @@ from pressure_SM_delta_delta_shift._3D.train_and_eval.utils.data_processing impo
 import h5py
 from pressure_SM_delta_delta_shift._3D.train_and_eval.data_processor import FeatureExtractAndWrite
 from pressure_SM_delta_delta_shift._3D.train_and_eval.train import Training
-from pressure_SM_delta_delta_shift._3D.auto_CFD.hdf5_data_loader import load_hdf5_samples, save_cell_centers_and_boundaries, load_boundaries_dict
+from pressure_SM_delta_delta_shift._3D.auto_CFD.hdf5_data_loader import load_hdf5_samples_selected, save_cell_centers_and_boundaries, load_boundaries_dict
 from pressure_SM_delta_delta_shift._3D.train_and_eval.neural_networks_shifter import SimpleCNN3D_ddp_shifter
 from pressure_SM_delta_delta_shift._3D.train_and_eval.shifter_loss import ShifterLoss
 
@@ -298,8 +298,58 @@ def main():
         try:
             from python_module import use_s_roi_penalty
         except ImportError:
-            use_s_roi_penalty = True  # default: disabled
+            use_s_roi_penalty = False  # default: disabled
 
+        # Resolve architecture requirements before creating any data products.
+        _arch = model_architecture.lower()
+        _shifter_arches = {
+            'cnn_shifter',
+            'cnn_shifter_lightweight',
+            'simplecnn3d_ddp_shifter',
+            'simplecnn3d_ddp_shifter_lightweight',
+            'cnn_shifter_velocity',
+            'simplecnn3d_ddp_shifter_velocity',
+        }
+        _velocity_shifter_arches = {
+            'cnn_shifter_velocity',
+            'simplecnn3d_ddp_shifter_velocity',
+        }
+        is_shifter_arch_config = _arch in _shifter_arches
+        is_velocity_shifter_arch_config = _arch in _velocity_shifter_arches
+
+        if is_shifter_arch_config:
+            if use_feature_decomposition:
+                raise ValueError(
+                    f"[{model_architecture}] requires use_feature_decomposition=False."
+                )
+            if not add_gradDpPrev_input:
+                raise ValueError(
+                    f"[{model_architecture}] requires add_gradDpPrev_input=True."
+                )
+            if predict_ddUCorr_output:
+                raise ValueError(
+                    "Shifter architectures reconstruct ddp internally and are not compatible "
+                    "with predict_ddUCorr_output=True."
+                )
+
+        if is_velocity_shifter_arch_config and not add_U_input:
+            raise ValueError(
+                f"[{model_architecture}] requires add_U_input=True."
+            )
+
+        # The current dP-aware pressure-only training path appends dpPrev to y.
+        # Without dpPrev, the configured dP loss and plotting code would read the
+        # following feature channel under the wrong name.
+        if not is_shifter_arch_config and not predict_ddUCorr_output and not add_dpPrev_input:
+            raise ValueError(
+                "Pressure-only training currently uses the dP-aware loss and therefore "
+                "requires add_dpPrev_input=True."
+            )
+
+        from python_module import var_to_predict, ddp_full_coarse_prediction
+        var_to_predict = str(var_to_predict).lower()
+        if var_to_predict not in ("dp", "ddp"):
+            raise ValueError("var_to_predict must be dp or ddp")
         # =========================================================
         # Configuration validation
         # predict_ddUCorr_output=True  → cnn_multi_out_divu + my_weighted_loss_split
@@ -317,9 +367,14 @@ def main():
                     "[predict_ddUCorr_output=True] 'cnn_multi_out_divu' needs the divU channel "
                     "as input. Set 'add_divUStar_input = True' in python_module."
                 )
+        _effective_model_label = (
+            model_architecture
+            if is_shifter_arch_config
+            else ('cnn_multi_out_divu' if predict_ddUCorr_output else 'cnn_two_heads')
+        )
         print(
-            f"[Config] predict_ddUCorr_output={predict_ddUCorr_output} → "
-            f"model='{'cnn_multi_out_divu' if predict_ddUCorr_output else 'cnn_two_heads'}', "
+            f"[Config] predict_ddUCorr_output={predict_ddUCorr_output} -> "
+            f"model='{_effective_model_label}', "
             f"use_feature_decomposition={use_feature_decomposition}"
         )
 
@@ -341,6 +396,46 @@ def main():
 
         core_data_fn = os.path.join(data_dir, 'core_data.h5')
 
+        hdf5_field_flags = {
+            'add_U_input': 'U',
+            'add_dUStar_input': 'dUStar',
+            'add_ddUStar_input': 'ddUStar',
+            'add_ddUStarDiff_input': 'ddUStarDiff',
+            'add_dUCorrPrev_input': 'dUCorrPrev',
+            'add_ddUCorrPrev_input': 'ddUCorrPrev',
+            'add_pPrev_input': 'p_prev',
+            'add_dpPrev_input': 'dpPrev',
+            'add_ddpPrev_input': 'ddpPrev',
+            'add_laplacian_dpPrev_input': 'laplaceDpPrev',
+            'add_uDotGradDpPrev_input': 'uDotGradDpPrev',
+            'add_gradDpPrevMag_input': 'gradDpPrevMag',
+            'include_rAU_input': 'rAU',
+            'include_HbyA_input': 'HbyA',
+            'include_divHbyA_input': 'divHbyA',
+            'include_dHbyA_input': 'dHbyA',
+            'include_dDivHbyA_input': 'dDivHbyA',
+            'add_rAUGradDpPrev_input': 'rAUGradDpPrev',
+            'add_divRAUGradDpPrev_input': 'divRAUGradDpPrev',
+            'add_pressureEqResidualp_input': 'pressureEqResidualp',
+            'add_rAUGradpPrev_input': 'rAUGradpPrev',
+            'add_divRAUGradpPrev_input': 'divRAUGradpPrev',
+            'add_divUStar_input': 'divUFirstPred',
+        }
+        required_hdf5_fields = {'ddp'}
+        local_config = locals()
+        for flag_name, field_name in hdf5_field_flags.items():
+            if local_config.get(flag_name, False):
+                required_hdf5_fields.add(field_name)
+        if add_gradDpPrev_input:
+            required_hdf5_fields.add('gradpPrev' if var_to_predict == 'dp' else 'gradDpPrev')
+        if add_UdotNwall_input:
+            required_hdf5_fields.add('U')
+        if predict_ddUCorr_output:
+            required_hdf5_fields.add('ddUCorr')
+        if var_to_predict == 'dp':
+            required_hdf5_fields.update(('dp', 'dpPrev'))
+        print(f"Reading selected HDF5 fields: {sorted(required_hdf5_fields)}")
+
         # --- Load data from HDF5 ---
         hdf5_file = os.path.join(data_dir, 'data.h5')
         hdf5_file_copy = os.path.join(data_dir, 'data_init_copy.h5')
@@ -361,9 +456,57 @@ def main():
 
 
         # Load delta-delta fields (second differences) from HDF5
+        with h5py.File(hdf5_file_copy, 'r') as geometry:
+            if 'cell_volumes' not in geometry or 'mesh_bounds' not in geometry:
+                raise ValueError('Oracle-aligned training requires fresh samples with cell_volumes and mesh_bounds; rebuild DLpimpleFoam_auto and resample. Existing data has been preserved.')
+            cell_volumes = geometry['cell_volumes'][:]
+            mesh_bounds = geometry['mesh_bounds'][:]
+        if mesh_bounds.shape != (2, 3) or not np.all(np.isfinite(mesh_bounds)) or np.any(mesh_bounds[1] <= mesh_bounds[0]):
+            raise ValueError('Training mesh bounds must contain finite increasing minimum/maximum coordinates.')
         try:
-            cell_centers, boundary_coords, boundary_patches, patch_names, U, ddUStar, ddUStarDiff, dpPrev, ddpPrev, gradDpPrev, laplaceDpPrev, uDotGradDpPrev, gradDpPrevMag, rAU, HbyA, divHbyA, dHbyA, dDivHbyA, rAUGradDpPrev, divRAUGradDpPrev, pressureEqResidualp, rAUGradpPrev, divRAUGradpPrev, divDDUStar, divUStar, divDUStar, dUStar, dUCorrPrev, ddUCorrPrev, p_prev, ddp, ddUCorr, timestamps, U_MAX_NORM_arr = \
-                load_hdf5_samples(hdf5_file_copy)
+            samples = load_hdf5_samples_selected(hdf5_file_copy, required_hdf5_fields)
+            cell_centers = samples['coordinates']
+            boundary_coords = samples['boundary_coords']
+            boundary_patches = samples['boundary_patches']
+            patch_names = samples['patch_names']
+            timestamps = samples['timestamps']
+            U_MAX_NORM_arr = samples['U_MAX_NORM']
+            U = samples.get('U')
+            ddUStar = samples.get('ddUStar')
+            ddUStarDiff = samples.get('ddUStarDiff')
+            dpPrev = samples.get('dpPrev')
+            ddpPrev = samples.get('ddpPrev')
+            gradDpPrev = samples.get('gradDpPrev')
+            laplaceDpPrev = samples.get('laplaceDpPrev')
+            uDotGradDpPrev = samples.get('uDotGradDpPrev')
+            gradDpPrevMag = samples.get('gradDpPrevMag')
+            rAU = samples.get('rAU')
+            HbyA = samples.get('HbyA')
+            divHbyA = samples.get('divHbyA')
+            dHbyA = samples.get('dHbyA')
+            dDivHbyA = samples.get('dDivHbyA')
+            rAUGradDpPrev = samples.get('rAUGradDpPrev')
+            divRAUGradDpPrev = samples.get('divRAUGradDpPrev')
+            pressureEqResidualp = samples.get('pressureEqResidualp')
+            rAUGradpPrev = samples.get('rAUGradpPrev')
+            divRAUGradpPrev = samples.get('divRAUGradpPrev')
+            divDDUStar = samples.get('divDDUStar')
+            divUStar = samples.get('divUFirstPred')
+            divDUStar = samples.get('divDUStar')
+            dUStar = samples.get('dUStar')
+            dUCorrPrev = samples.get('dUCorrPrev')
+            ddUCorrPrev = samples.get('ddUCorrPrev')
+            p_prev = samples.get('p_prev')
+            ddp = samples['ddp']
+            ddUCorr = samples.get('ddUCorr')
+            dp_target = samples.get('dp')
+            gradpPrev = samples.get('gradpPrev')
+            if var_to_predict == "dp":
+                ddp = dp_target
+                gradDpPrev = gradpPrev
+                print("[Target] dp selected: using dp label and grad(p_prev) as shifter reference")
+            else:
+                print("[Target] ddp selected: using ddp label and grad(dpPrev) as shifter reference")
         except (FileNotFoundError, ValueError) as e:
             print(f"Error loading HDF5 data: {e}")
             exit(1)
@@ -379,13 +522,7 @@ def main():
         print(f"Loaded {n_sample_frames} samples from HDF5 file")
         print(f"Cell centers shape: {cell_centers.shape}")
         print(f"Boundary coordinates shape: {boundary_coords.shape if boundary_coords is not None else 'None'}")
-        print(f"U shape: {U.shape}, ddUStar shape: {ddUStar.shape}, ddp shape: {ddp.shape}, dpPrev shape: {dpPrev.shape}, ddpPrev shape: {ddpPrev.shape}, gradDpPrev shape: {gradDpPrev.shape}")
-        print(f"laplaceDpPrev shape: {laplaceDpPrev.shape}, uDotGradDpPrev shape: {uDotGradDpPrev.shape}, gradDpPrevMag shape: {gradDpPrevMag.shape}")
-        print(f"rAUGradDpPrev shape: {rAUGradDpPrev.shape}, divRAUGradDpPrev shape: {divRAUGradDpPrev.shape}, pressureEqResidualp shape: {pressureEqResidualp.shape}")
-        print(f"rAUGradpPrev shape: {rAUGradpPrev.shape}, divRAUGradpPrev shape: {divRAUGradpPrev.shape}")
-        print(f"dUStar shape: {dUStar.shape}, p_prev shape: {p_prev.shape}")
-        print(f"dUCorrPrev shape: {dUCorrPrev.shape}, ddUCorrPrev shape: {ddUCorrPrev.shape}")
-        print(f"U_MAX_NORM array shape: {U_MAX_NORM_arr.shape}")
+        print(f"Loaded field shapes: { {name: value.shape for name, value in samples.items() if isinstance(value, np.ndarray)} }")
 
         # Save coordinates and boundaries for compatibility
         save_cell_centers_and_boundaries(cell_centers, boundary_coords, boundary_patches, 
@@ -397,17 +534,14 @@ def main():
         else:
             raise ValueError("No boundary points loaded")
 
-        vert, weights = utils_data.interp_weights(cell_centers, boundary_points, interp_method='IDW')
-        np.save(os.path.join(data_dir, 'interp_weights.npy'), weights)
-        np.save(os.path.join(data_dir, 'interp_vertices.npy'), vert)
-        print("Interpolation weights and vertices saved.")
-
         # Get grid limits using both cell centers and boundaries
-        cfd_mesh_limits = get_grid_limits(cell_centers, boundary_points)
+        cfd_mesh_limits = {f'{axis}_{side}': mesh_bounds[index, component]
+                   for component, axis in enumerate(('x', 'y', 'z'))
+                   for index, side in enumerate(('min', 'max'))}
         print('CFD mesh limits:', cfd_mesh_limits)
 
         # Create the grid using the limits and grid_res
-        X0, Y0, Z0 = utils_data.create_uniform_grid(cfd_mesh_limits, grid_res)
+        X0, Y0, Z0 = utils_data.create_uniform_grid(cfd_mesh_limits, grid_res, oracle_aligned=True)
         grid_points = np.concatenate(
             (np.expand_dims(X0, axis=1),
              np.expand_dims(Y0, axis=1),
@@ -425,7 +559,7 @@ def main():
 
         boundaries_dict = load_boundaries_dict(data_dir)
         # Calculate SDF and domain mask on the grid using boundary dict
-        grid_shape_x, grid_shape_y, grid_shape_z = utils_data.get_grid_shape(cfd_mesh_limits, grid_res)
+        grid_shape_x, grid_shape_y, grid_shape_z = utils_data.get_grid_shape(cfd_mesh_limits, grid_res, oracle_aligned=True)
 
         # Adjust block_size_tuple if any dimension exceeds grid shape
         block_size_z, block_size_y, block_size_x = block_size_tuple
@@ -444,7 +578,7 @@ def main():
         print('SDF and domain mask arrays saved.')
 
         # Compute interpolation weights and vertices from cell centers to grid points
-        vert, weights = utils_data.interp_weights(cell_centers, grid_points, interp_method='IDW')
+        vert, weights = utils_data.mesh_to_grid_weights(cell_centers, grid_points, cell_volumes)
         np.save(os.path.join(data_dir, 'interp_weights.npy'), weights)
         np.save(os.path.join(data_dir, 'interp_vertices.npy'), vert)
         print("Interpolation weights and vertices (cell centers -> grid) saved.")
@@ -455,7 +589,7 @@ def main():
         # ddp has shape (n_samples, n_cells) - scalar field
 
         print("Interpolating delta-delta fields to grid and normalizing with U_MAX_NORM...")
-        n_samples = ddUStar.shape[0]
+        n_samples = len(timestamps)
         n_grid_points = grid_points.shape[0]
 
         # Pass block_size_tuple to all downstream processing and feature extraction
@@ -465,8 +599,13 @@ def main():
         # Initialize output arrays
         U_grid_flat = None
         dU_grid_flat = None
-        ddUStar_grid_flat = np.full((n_samples, n_grid_points, 3), np.nan, dtype=np.float64)
-        ddUStarDiff_grid_flat = np.full((n_samples, n_grid_points, 3), np.nan, dtype=np.float64)
+        dUStar_grid_flat = None
+        ddUStar_grid_flat = None
+        ddUStarDiff_grid_flat = None
+        if add_ddUStar_input:
+            ddUStar_grid_flat = np.full((n_samples, n_grid_points, 3), np.nan, dtype=np.float64)
+        if add_ddUStarDiff_input:
+            ddUStarDiff_grid_flat = np.full((n_samples, n_grid_points, 3), np.nan, dtype=np.float64)
         ddp_grid_flat = np.full((n_samples, n_grid_points), np.nan, dtype=np.float64)
         p_prev_grid_flat = None
         dpPrev_grid_flat = None
@@ -600,14 +739,16 @@ def main():
                         ddUCorrPrev[sample_idx, :, component] / norm, vert, weights, fill_value=np.nan
                     )
 
-            # Interpolate and normalize ddUStar components
-            for component in range(3):
-                ddUStar_grid_flat[sample_idx, :, component] = utils_data.interpolate_fill_njit(
-                    ddUStar[sample_idx, :, component] / norm, vert, weights, fill_value=np.nan
-                )
-                ddUStarDiff_grid_flat[sample_idx, :, component] = utils_data.interpolate_fill_njit(
-                    ddUStarDiff[sample_idx, :, component] / norm, vert, weights, fill_value=np.nan
-                )
+            if add_ddUStar_input:
+                for component in range(3):
+                    ddUStar_grid_flat[sample_idx, :, component] = utils_data.interpolate_fill_njit(
+                        ddUStar[sample_idx, :, component] / norm, vert, weights, fill_value=np.nan
+                    )
+            if add_ddUStarDiff_input:
+                for component in range(3):
+                    ddUStarDiff_grid_flat[sample_idx, :, component] = utils_data.interpolate_fill_njit(
+                        ddUStarDiff[sample_idx, :, component] / norm, vert, weights, fill_value=np.nan
+                    )
 
             # Interpolate and normalize previous pressure (if enabled)
             if add_pPrev_input:
@@ -800,11 +941,10 @@ def main():
             dataset_parts.append(divDUStar_grid_flat[..., np.newaxis])
         if add_divUStar_input:
             dataset_parts.append(divUStar_grid_flat[..., np.newaxis])
+        n_input_parts = len(dataset_parts)
         dataset_parts.append(ddp_grid_flat[..., np.newaxis])
         if predict_ddUCorr_output:
             dataset_parts.append(ddUCorr_grid_flat)
-
-        dataset = np.concatenate(dataset_parts, axis=-1)
 
 
         # Save indices for later reuse
@@ -819,9 +959,6 @@ def main():
         sdfunct = np.full((grid_shape_z, grid_shape_y, grid_shape_x, 1), 0.0, dtype=float)
         obst_bool = np.zeros_like(sdfunct, dtype=int)
 
-        # Example: using delta_ux_interp as delta_U_grid[..., 0]
-        delta_ux_interp = ddUStar_grid_flat[0, :, 0]  # first sample, x-component
-
         for step, x_y_z in enumerate(xyz0):
             ii = int(round((x_y_z[2] - z0) / dz))
             jj = int(round((x_y_z[1] - y0) / dy))
@@ -829,7 +966,7 @@ def main():
             indices[step, 0] = ii
             indices[step, 1] = jj
             indices[step, 2] = kk
-            if domain_bool[step] and not np.isnan(delta_ux_interp[step]):
+            if domain_bool[step]:
                 sdfunct[ii, jj, kk, 0] = sdf[step]
                 obst_bool[ii, jj, kk, 0] = 1
 
@@ -1122,58 +1259,15 @@ def main():
 
         # First pass: fill dataset_gridded with data from all samples
         for step in range(n_samples):
-            if add_U_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, u_idx[0]:u_idx[1]] = dataset[step, :, u_idx[0]:u_idx[1]]
-            if add_dUStar_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, dU_idx[0]:dU_idx[1]] = dataset[step, :, dU_idx[0]:dU_idx[1]]
-            if add_ddUStar_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, ddu_idx[0]:ddu_idx[1]] = dataset[step, :, ddu_idx[0]:ddu_idx[1]]
-            if add_ddUStarDiff_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, dddu_idx[0]:dddu_idx[1]] = dataset[step, :, dddu_idx[0]:dddu_idx[1]]
-            if add_dUCorrPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, dUCorrPrev_idx[0]:dUCorrPrev_idx[1]] = dataset[step, :, dUCorrPrev_idx[0]:dUCorrPrev_idx[1]]
-            if add_ddUCorrPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, ddUCorrPrev_idx[0]:ddUCorrPrev_idx[1]] = dataset[step, :, ddUCorrPrev_idx[0]:ddUCorrPrev_idx[1]]
-            if add_pPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, p_prev_idx] = dataset[step, :, dataset_p_prev_ch]
-            if add_dpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, dpPrev_idx] = dataset[step, :, dataset_dpPrev_ch]
-            if add_ddpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, ddpPrev_idx] = dataset[step, :, dataset_ddpPrev_ch]
-            if add_gradDpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, gradDpPrev_idx[0]:gradDpPrev_idx[1]] = dataset[step, :, dataset_gradDpPrev_ch:dataset_gradDpPrev_ch+3]
-            if add_laplacian_dpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, laplaceDpPrev_idx] = dataset[step, :, dataset_laplaceDpPrev_ch]
-            if add_uDotGradDpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, uDotGradDpPrev_idx] = dataset[step, :, dataset_uDotGradDpPrev_ch]
-            if add_gradDpPrevMag_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, gradDpPrevMag_idx] = dataset[step, :, dataset_gradDpPrevMag_ch]
-            if include_rAU_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, rAU_idx] = dataset[step, :, dataset_rAU_ch]
-            if include_HbyA_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, HbyA_idx[0]:HbyA_idx[1]] = dataset[step, :, dataset_HbyA_ch:dataset_HbyA_ch+3]
-            if include_divHbyA_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, divHbyA_idx] = dataset[step, :, dataset_divHbyA_ch]
-            if include_dHbyA_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, dHbyA_idx[0]:dHbyA_idx[1]] = dataset[step, :, dataset_dHbyA_ch:dataset_dHbyA_ch+3]
-            if include_dDivHbyA_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, dDivHbyA_idx] = dataset[step, :, dataset_dDivHbyA_ch]
-            if add_rAUGradDpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, rAUGradDpPrev_idx[0]:rAUGradDpPrev_idx[1]] = dataset[step, :, dataset_rAUGradDpPrev_ch:dataset_rAUGradDpPrev_ch+3]
-            if add_divRAUGradDpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, divRAUGradDpPrev_idx] = dataset[step, :, dataset_divRAUGradDpPrev_ch]
-            if add_pressureEqResidualp_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, pressureEqResidualp_idx] = dataset[step, :, dataset_pressureEqResidualp_ch]
-            if add_rAUGradpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, rAUGradpPrev_idx[0]:rAUGradpPrev_idx[1]] = dataset[step, :, dataset_rAUGradpPrev_ch:dataset_rAUGradpPrev_ch+3]
-            if add_divRAUGradpPrev_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, divRAUGradpPrev_idx] = dataset[step, :, dataset_divRAUGradpPrev_ch]
-            if add_divDDUStar_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, div_ddu_idx] = dataset[step, :, dataset_div_ddu_ch]
-            if add_divDUStar_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, div_du_idx] = dataset[step, :, dataset_div_du_ch]
-            if add_divUStar_input:
-                dataset_gridded[step, indices_i, indices_j, indices_k, div_u_idx] = dataset[step, :, dataset_div_u_ch]
+            channel_start = 0
+            for part in dataset_parts[:n_input_parts]:
+                channel_end = channel_start + part.shape[-1]
+                dataset_gridded[step, indices_i, indices_j, indices_k, channel_start:channel_end] = part[step]
+                channel_start = channel_end
+            if channel_start != sdf_idx:
+                raise ValueError(f"Training input channels ({channel_start}) do not match sdf index ({sdf_idx}).")
+
+            dataset_gridded[step, indices_i, indices_j, indices_k, sdf_idx] = sdf
             if add_distance_to_outlet_input and dist_to_outlet_flat is not None:
                 dataset_gridded[step, indices_i, indices_j, indices_k, dist_to_outlet_idx] = dist_to_outlet_flat
             if add_grad_sdf_input and grad_sdf_flat_x is not None:
@@ -1182,12 +1276,10 @@ def main():
                 dataset_gridded[step, indices_i, indices_j, indices_k, grad_sdf_idx[0] + 2] = grad_sdf_flat_z
             if add_UdotNwall_input and UdotNwall_grid_flat is not None:
                 dataset_gridded[step, indices_i, indices_j, indices_k, UdotNwall_idx] = UdotNwall_grid_flat[step, :]
-            dataset_gridded[step, indices_i, indices_j, indices_k, sdf_idx] = sdf  # sdf last among inputs
 
-            # ddp to PREDICT
-            dataset_gridded[step, indices_i, indices_j, indices_k, ddp_idx] = dataset[step, :, dataset_ddp_ch]
+            dataset_gridded[step, indices_i, indices_j, indices_k, ddp_idx] = ddp_grid_flat[step]
             if predict_ddUCorr_output:
-                dataset_gridded[step, indices_i, indices_j, indices_k, ddU_CFD_idx[0]:ddU_CFD_idx[1]] = dataset[step, :, dataset_ddp_ch+1:dataset_ddp_ch+4]
+                dataset_gridded[step, indices_i, indices_j, indices_k, ddU_CFD_idx[0]:ddU_CFD_idx[1]] = ddUCorr_grid_flat[step]
 
             # Values inside non-flow regions are not important for training and can be set to zero or masked out.
             mask = obst_bool[:, :, :, 0] == 0
@@ -1198,13 +1290,14 @@ def main():
         # ============================================================
         for step in range(n_samples):
             if clip_ddp_and_gradDpPrev:
-                _ddp_arr = dataset_gridded[step, :, :, :, ddp_idx]
-                ddp_soft, _thr_ddp = compress_tail_asinh(
-                    _ddp_arr,
-                    fluid_mask_3d,
-                    q=clip_percentile
-                )
-                dataset_gridded[step, :, :, :, ddp_idx] = ddp_soft
+                if not is_shifter_arch_config:
+                    _ddp_arr = dataset_gridded[step, :, :, :, ddp_idx]
+                    ddp_soft, _thr_ddp = compress_tail_asinh(
+                        _ddp_arr,
+                        fluid_mask_3d,
+                        q=clip_percentile
+                    )
+                    dataset_gridded[step, :, :, :, ddp_idx] = ddp_soft
 
                 if add_ddpPrev_input:
                     ddpPrev_soft, _thr_ddpPrev = compress_tail_asinh(
@@ -1649,6 +1742,39 @@ def main():
                 maxs_fn=maxs_fn
             )
 
+        div_u_training_grid = (
+            np.nanmean(dataset_gridded[..., div_u_idx], axis=0)
+            if div_u_idx is not None else None
+        )
+
+        del dataset_gridded, dataset_parts
+        del U_grid_flat, dUStar_grid_flat, ddUStar_grid_flat, ddUStarDiff_grid_flat
+        del ddp_grid_flat, p_prev_grid_flat, dpPrev_grid_flat, ddpPrev_grid_flat
+        del dUCorrPrev_grid_flat, ddUCorrPrev_grid_flat, gradDpPrev_grid_flat
+        del laplaceDpPrev_grid_flat, uDotGradDpPrev_grid_flat, gradDpPrevMag_grid_flat
+        del rAU_grid_flat, HbyA_grid_flat, divHbyA_grid_flat, dHbyA_grid_flat
+        del dDivHbyA_grid_flat, rAUGradDpPrev_grid_flat, divRAUGradDpPrev_grid_flat
+        del pressureEqResidualp_grid_flat, rAUGradpPrev_grid_flat, divRAUGradpPrev_grid_flat
+        del divDDUStar_grid_flat, divDUStar_grid_flat, divUStar_grid_flat, ddUCorr_grid_flat
+        del U, dUStar, ddUStar, ddUStarDiff, dpPrev, ddpPrev, gradDpPrev
+        del laplaceDpPrev, uDotGradDpPrev, gradDpPrevMag, rAU, HbyA, divHbyA
+        del dHbyA, dDivHbyA, rAUGradDpPrev, divRAUGradDpPrev, pressureEqResidualp
+        del rAUGradpPrev, divRAUGradpPrev, divDDUStar, divUStar, divDUStar
+        del dUCorrPrev, ddUCorrPrev, p_prev, ddp, ddUCorr, dp_target, gradpPrev
+        del samples, cell_centers, boundary_coords, boundary_patches, patch_names
+        del cell_volumes, mesh_bounds, vert, weights, grid_points, xyz0, X0, Y0, Z0
+        del indices, indices_i, indices_j, indices_k, domain_bool, sdf, sdfunct
+        del dist_to_outlet_flat, grad_sdf_flat_x, grad_sdf_flat_y, grad_sdf_flat_z
+        del UdotNwall_grid_flat
+        if single_block_mode:
+            del ddpML_data, obst_mask
+            if add_pPrev_input:
+                del p_prev_data
+            if add_dpPrev_input:
+                del dpPrev_data
+            if add_ddpPrev_input:
+                del ddpPrev_data
+
         # Extract features and write them using FeatureExtractAndWrite
         # When use_feature_decomposition=False, raw normalized blocks are written instead of Tucker cores.
         # In that case, flatten_data must be False (CNN takes the full 3D block).
@@ -1730,18 +1856,8 @@ def main():
 
         # RUN the FIRST NN train
         Train = Training(standardization_method, train_tfrecord_fn, test_tfrecord_fn)
-        is_shifter_arch = model_architecture.lower() in [
-            'cnn_shifter',
-            'cnn_shifter_lightweight',
-            'simplecnn3d_ddp_shifter',
-            'simplecnn3d_ddp_shifter_lightweight',
-            'cnn_shifter_velocity',
-            'simplecnn3d_ddp_shifter_velocity',
-        ]
-        is_velocity_shifter_arch = model_architecture.lower() in [
-            'cnn_shifter_velocity',
-            'simplecnn3d_ddp_shifter_velocity',
-        ]
+        is_shifter_arch = is_shifter_arch_config
+        is_velocity_shifter_arch = is_velocity_shifter_arch_config
         grad_ch_tuple = None
         u_ch_tuple = None
         if is_shifter_arch:
@@ -1765,6 +1881,7 @@ def main():
             gradDpPrev_input_ch_idxs=grad_ch_tuple,
             U_input_ch_idxs=u_ch_tuple,
             uDotGradDpPrev_input_ch_idx=None,
+            force_rewrite_tfrecords=True,
         )
         Train.load_data_and_train(
             lr=lr,
@@ -1788,7 +1905,7 @@ def main():
             obst_bool=obst_bool,
             predict_ddUCorr_output=predict_ddUCorr_output,
             div_u_ch_idx=div_u_idx,
-            div_u_grid=np.nanmean(dataset_gridded[:, :, :, :, div_u_idx], axis=0) if div_u_idx is not None else None,
+            div_u_grid=div_u_training_grid,
             grid_res=grid_res,
             dp_prev_input_ch_idx=dataset_dpPrev_ch,
             dp_prev_maxs_idx=dataset_dpPrev_ch + 1,  # +1: SDF at _vel_end shifts pressure channels by 1 in maxs file
