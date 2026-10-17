@@ -1,0 +1,4 @@
+DLpimpleFoam_oracle.C
+OracleGrid.C
+
+EXE = $(FOAM_APPBIN)/DLpimpleFoam_oracle

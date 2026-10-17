@@ -1,0 +1,19 @@
+FoamFile { version 2.0; format ascii; class dictionary; object oracleDict; }
+integrationMode rerunUEqnWithOraclePressure;
+useVelocityIncrement false;
+useInterpolation false;
+gridRes (0.05 0.05 0.125);
+outputWeightFactor 1;
+stateReconstructionCorrectors 3;
+adaptiveStateReconstruction true;
+minStateReconstructionCorrectors 1;
+stateReconstructionResidualTolerance 1e-6;
+stateReconstructionEquationRelaxation 1;
+aitkenStateReconstruction true;
+aitkenMinFactor 0.2;
+aitkenMaxFactor 1.8;
+outerUResidualTolerance 5e-4;
+outerPResidualTolerance 5e-4;
+adaptivePressureCorrectors true;
+minPressureCorrectors 1;
+pressureCorrectorTolerance 1e-5;
