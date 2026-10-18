@@ -1,0 +1,1 @@
+"""Whole-domain coarse mesh-graph training and CFD inference."""

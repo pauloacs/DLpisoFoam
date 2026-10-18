@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+
+solver="${SOLVER:-DLpimpleFoam_oracle}"
+for program in blockMesh checkMesh "$solver"; do
+    command -v "$program" >/dev/null || { echo "Missing command: $program" >&2; exit 1; }
+done
+if [[ -d constant/polyMesh || -f log.solver ]]; then
+    echo 'Existing generated files found. Run bash Allclean before restarting.' >&2
+    exit 1
+fi
+
+run_logged()
+{
+    local logfile="$1"
+    shift
+    "$@" > "$logfile" 2>&1 || { tail -n 60 "$logfile" >&2; return 1; }
+}
+
+run_logged log.blockMesh blockMesh
+run_logged log.checkMesh checkMesh -allGeometry -allTopology
+run_logged log.solver "$solver"
+echo 'Finished. Compare the reference and oracle passes in log.solver.'

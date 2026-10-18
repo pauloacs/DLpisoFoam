@@ -1,4 +1,4 @@
-# DLpisoFoam, DLbuoyantPimpleFoam & DLbuoyantPimpleFoam_auto
+# DLpisoFoam, DLpimpleFoam_auto, DLbuoyantPimpleFoam & DLbuoyantPimpleFoam_auto
 
 **Deep Learning-Enhanced CFD Solvers for Accelerated Fluid Flow Simulations**
 
@@ -25,8 +25,11 @@
   - [Part 3: Running Your First CFD Simulation with the Surrogate Model](#part-3--running-your-first-cfd-simulation-with-the-surrogate-model)
     - [Part 3.1: Run the DLpisoFoam Test Case with the PRE-TRAINED Surrogate Model](#part-31-run-the-dlpisofoam-test-case-with-the-pre-trained-surrogate-model)
     - [Part 3.2: Run DLpisoFoam with YOUR trained Surrogate model](#part-32-run-dlpisofoam-with-your-trained-surrogate-model)
+- [AUTO Workflow: Sampling, Training and Simulation](#auto-workflow-sampling-training-and-simulation)
 - [Available CFD Solvers](#-available-cfd-solvers)
   - [DLpisoFoam](#dlpisofoam)
+  - [DLpimpleFoam_auto](#dlpimplefoam_auto)
+  - [DLpimpleFoam_oracle](#dlpimplefoam_oracle)
   - [DLbuoyantPimpleFoam](#dlbuoyantpimplefoam)
   - [DLbuoyantPimpleFoam_auto](#dlbuoyantpimplefoam_auto)
 - [Legacy Solvers](#-legacy-solvers)
@@ -36,14 +39,17 @@
 
 ## 🎯 Introduction
 
-This repository contains **machine learning-enhanced OpenFOAM solvers** that accelerate computational fluid dynamics (CFD) simulations by replacing the computationally expensive pressure Poisson equation solver with a deep learning surrogate model.
+This repository contains **machine learning-enhanced OpenFOAM solvers** that accelerate computational fluid dynamics (CFD) simulations using deep learning estimates of pressure and pressure-velocity corrections.
 
-**DLpisoFoam**, **DLbuoyantPimpleFoam**, and **DLbuoyantPimpleFoam_auto** are based on OpenFOAM v8 and implement the PISO/PIMPLE algorithms with integrated neural network surrogate models for improved pressure-velocity coupling. `DLbuoyantPimpleFoam_auto` is self-contained — it trains its own surrogate model on-the-fly during the simulation, requiring no pre-trained model or offline dataset generation.
+**DLpisoFoam**, **DLpimpleFoam_auto**, **DLbuoyantPimpleFoam**, and **DLbuoyantPimpleFoam_auto** are based on OpenFOAM v8 and implement the PISO/PIMPLE algorithms with integrated neural network surrogate models for improved pressure-velocity coupling. The AUTO workflows can train their own surrogate model during the simulation, requiring no pre-trained model or offline dataset generation.
 
 This is an **all-in-one repository** containing both surrogate models and CFD solvers, building upon the work from [Solving-Poisson's-Equation-through-DL-for-CFD-applications](https://github.com/pauloacs/Solving-Poisson-s-Equation-through-DL-for-CFD-apllications).
 
 
-### UPCOMING: AUTO-trainable ML-enhanced CFD Solvers (surrogate train and simulation in a single command)
+### Two Training Workflows
+
+- **Offline training and deployment:** generate datasets, train a surrogate, then run a CFD case with its model artifacts. The existing guide below covers this workflow.
+- **AUTO training:** run CFD to collect samples, train an initial surrogate, and activate it in the same simulation. See the [AUTO quick start](#auto-workflow-sampling-training-and-simulation) for the new isothermal PIMPLE examples.
 
 ---
 
@@ -62,6 +68,8 @@ This repository provides a complete workflow for accelerating CFD simulations wi
 2. **Train Surrogate Models**: Develop neural network models that learn to predict pressure corrections in unsteady CFD simulations (examples in `train_SM/`)
 3. **Deploy in Production**: Integrate trained models with custom OpenFOAM-based solvers for accelerated simulations (examples in `tutorials/`)
 
+Alternatively, **sample, train and simulate in one AUTO run** using `DLpimpleFoam_auto` or the thermal AUTO workflow. In the new PIMPLE integration, learned estimates initialize pressure and optionally velocity; conventional CFD correction and convergence checks remain in place.
+
 ---
 
 ## ✨ Key Features
@@ -71,6 +79,8 @@ This repository provides a complete workflow for accelerating CFD simulations wi
 - 🌡️ **Multiple physics**: Supports isothermal and thermal flows
 - 🔧 **OpenFOAM compatible**: Drop-in replacement for `pisoFoam` and `buoyantPimpleFoam`
 - 🤖 **Self-training**: `DLbuoyantPimpleFoam_auto` trains its surrogate model automatically during the simulation — no pre-trained model needed
+- **Isothermal AUTO PIMPLE**: `DLpimpleFoam_auto` supports gridded CNN shifters and mesh-graph shifters, with pressure-only or supported joint pressure/velocity prediction
+- **Controlled oracle comparisons**: `DLpimpleFoam_oracle` compares conventional CFD with idealized reference-field injection to study the attainable integration benefit
 - 🐳 **Docker ready**: Pre-built containers for easy deployment
 - 📊 **2D & 3D**: Surrogate models available for both 2D and 3D simulation cases
 
@@ -104,7 +114,9 @@ DLpisoFoam/
 ├── source/                        # Solver source code
 │   ├── DLpisoFoam/                 # Incompressible isothermal solver
 │   ├── DLbuoyantPimpleFoam/        # Thermal flow solver
-│   └── DLbuoyantPimpleFoam_auto/   # Self-training thermal flow solver
+│   ├── DLbuoyantPimpleFoam_auto_delta_delta/ # Thermal AUTO variant
+│   ├── DLpimpleFoam_auto/         # Self-training isothermal PIMPLE solver
+│   └── DLpimpleFoam_oracle/       # Reference-field integration diagnostic
 ├── pressure_SM/             # Surrogate models
 │   ├── 2D/                   # 2D models
 │   │   ├── train_and_eval/    # Training & evaluation scripts
@@ -112,7 +124,13 @@ DLpisoFoam/
 │   └── 3D/                   # 3D models
 │       ├── train_and_eval/    # Training & evaluation scripts
 │   │   └── CFD_usable/        # Interface for integration with CFD solver
-├── tutorials/                # Example test cases
+├── pressure_SM_gridded_shift/ # Gridded CNN shifter framework
+├── pressure_SM_mesh_graph/    # Mesh-graph shifter framework
+├── tutorials/                # Offline, AUTO and oracle example cases
+│   ├── DLpimpleFoam_auto/
+│   │   ├── gridded_shift/    # Pressure-only lattice shifter example
+│   │   └── graph_shift/      # Pressure-only and joint graph examples
+│   └── DLpimpleFoam_oracle/  # Pressure-only and joint oracle examples
 ├── gen_datasets/             # Dataset generation scripts
 ├── other_solvers/            # Legacy solver versions
 ├── Dockerfile                # Docker build configuration
@@ -128,6 +146,8 @@ This guide will walk you through:
 1. Setting up your environment (Docker or local)
 2. Training a surrogate model (SM) from scratch
 3. Running CFD simulations with the trained model
+
+For the self-training isothermal solver, complete environment setup and then skip the offline dataset/model preparation steps by following the [AUTO quick start](#auto-workflow-sampling-training-and-simulation).
 
 ---
 
@@ -182,7 +202,7 @@ python -m pip install -e .
 #### Step 3: Set up OpenFOAM environment
 ```bash
 source /opt/openfoam8/etc/bashrc  # Adjust path to your OpenFOAM installation
-./prep_env311.sh                   # Set Python/NumPy paths
+source prep_env311.sh             # Set Python/NumPy paths in the current shell
 ```
 
 **Note**: You may need to modify `prep_env311.sh` with paths to your conda environment:
@@ -309,6 +329,58 @@ postProcess -func 'mag(U)'
 ---
 
 
+## AUTO Workflow: Sampling, Training and Simulation
+
+`DLpimpleFoam_auto` starts with conventional CFD, writes selected training fields to HDF5, runs initial model training, and activates the surrogate without restarting the simulation. It can also reuse compatible trained artifacts with `train=False`.
+
+### Build and Run
+
+From the repository root, after activating the Python environment and sourcing OpenFOAM:
+
+```bash
+source prep_env311.sh
+python -m pip install -e '.[mesh_graph]' mpi4py
+wmake source/DLpimpleFoam_auto
+wmake source/DLpimpleFoam_oracle
+
+cd tutorials/DLpimpleFoam_auto/graph_shift/pressure_only
+bash Allrun
+```
+
+Use the project's scientific Python environment from `env_311.yml`; the gridded framework also needs its pandas, SciPy, scikit-learn, numba, matplotlib and tensorly dependencies. Embedded Python and the training subprocess must use the same compatible environment. Build from the current sources; older container images may not contain the latest AUTO modes. The executable remains `DLpimpleFoam_auto` for both frameworks and prediction modes.
+
+### Frameworks and Examples
+
+| Framework | Python Package | Compact Examples |
+| --- | --- | --- |
+| Gridded shifter | `pressure_SM_gridded_shift` | [Pressure-only CNN](tutorials/DLpimpleFoam_auto/gridded_shift/pressure_only) |
+| Graph shifter | `pressure_SM_mesh_graph` | [Pressure-only](tutorials/DLpimpleFoam_auto/graph_shift/pressure_only), [joint pressure/velocity](tutorials/DLpimpleFoam_auto/graph_shift/joint) |
+
+The gridded example transfers fields to one whole-domain regular lattice. The graph framework uses native CFD cell connectivity and face-connected aggregates instead of a lattice. Joint velocity prediction is currently demonstrated by the graph framework, not the gridded shifter.
+
+Both support pressure increment/residual targets (`dp` or `ddp`) when configured consistently. The joint graph model can predict `dU` or `ddU`; it returns the total reconstructed velocity increment for the solver to apply once. Boundary conditions, flux updates and normal PIMPLE correction remain part of the CFD solver.
+
+### Case Controls
+
+- **`python_module.py`:** framework selection (`training_backend='lattice'` or `'mesh_graph'`), selected inputs, model size, target variables, training settings, output weights, and `train=True/False`.
+- **`system/MLSamplingDict`:** warm-up, sampling cadence, initial training threshold, prediction integration, velocity extrapolation, and optional fixed-pressure reconstruction before normal PIMPLE.
+- **`system/fvSolution`:** linear solvers, equation relaxation, and normal PIMPLE convergence controls. Oracle-compatible integration also uses its momentum equation relaxation for reconstruction.
+
+`train=False` requires the case's matching model, normalization and geometry artifacts; it does not create a missing model. Changing the input set, target, graph coarsening or architecture requires compatible samples and retraining.
+
+The current graph AUTO workflow supports **initial training only**; incremental graph updates are not implemented, and the examples disable resampling after activation. This differs from the retraining-capable gridded/thermal workflows. Run the compact graph examples **serially**, not with `mpirun`.
+
+### Outputs and Interpretation
+
+`Allrun` builds and checks the small example mesh before running the solver. Logs show sampling, training, surrogate activation, reconstruction, PIMPLE work and step timings. Generated models, normalization files and training diagnostics are placed in `ML_data/`. Use `bash Allclean` before a fresh tutorial run; it deletes generated outputs and trained artifacts while retaining initial fields.
+
+The compact examples contain only small text inputs and train from scratch. They demonstrate integration, not mesh-independent accuracy or a guaranteed speedup. Evaluate total timestep cost, pressure iterations, outer iterations and physical errors at matched settings. The oracle uses reference information unavailable to a deployed model, so its results are an idealized diagnostic baseline, not an achieved ML performance claim.
+
+See the [tutorial guide](tutorials/README.md) for detailed commands, mode switches, loss options, prerequisites and cleanup behavior, and the [oracle examples](tutorials/DLpimpleFoam_oracle) for pressure-only and joint reference-injection comparisons.
+
+---
+
+
 ## 🔧 Available CFD Solvers
 
 ### DLpisoFoam
@@ -321,6 +393,30 @@ postProcess -func 'mag(U)'
 **Example applications:**
 - Flow over cylinders
 - Channel flows
+
+---
+
+### DLpimpleFoam_auto
+**For incompressible, isothermal flows with self-training PIMPLE acceleration**
+
+- Collects selected CFD fields, trains an initial surrogate, and activates it during the same run
+- Supports the `pressure_SM_gridded_shift` lattice framework and `pressure_SM_mesh_graph` graph framework
+- Predicts pressure increments/corrections; the graph backend also supports joint velocity increments/corrections
+- Applies learned estimates as initial guesses, with optional reconstruction and normal CFD convergence checks
+- Can reuse compatible saved models with `train=False`; initial graph training does not require pretrained weights
+
+**Start here:** [AUTO quick start](#auto-workflow-sampling-training-and-simulation) and [compact tutorials](tutorials/DLpimpleFoam_auto).
+
+---
+
+### DLpimpleFoam_oracle
+**Diagnostic reference solver for studying pressure-velocity initialization**
+
+- Runs a conventional reference pass and a second pass using reference pressure and optional velocity increments
+- Supports pressure-only and joint integration, with optional interpolation to assess transfer effects
+- Measures potential reductions in pressure/PIMPLE work; it is not a deployable surrogate and does not train a model
+
+**Examples:** [pressure-only oracle](tutorials/DLpimpleFoam_oracle/pressure_only) and [joint oracle](tutorials/DLpimpleFoam_oracle/joint).
 
 ---
 

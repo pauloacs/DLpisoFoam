@@ -1,0 +1,26 @@
+FoamFile
+{
+    version 2.0;
+    format ascii;
+    class dictionary;
+    object controlDict;
+}
+
+application DLpimpleFoam_oracle;
+startFrom startTime;
+startTime 0;
+stopAt endTime;
+endTime 0.06;
+deltaT 0.005;
+writeControl timeStep;
+writeInterval 12;
+purgeWrite 0;
+writeFormat ascii;
+writePrecision 10;
+writeCompression off;
+timeFormat general;
+timePrecision 8;
+runTimeModifiable false;
+adjustTimeStep no;
+maxCo 1;
+maxDeltaT 0.005;

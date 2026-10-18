@@ -1,0 +1,1 @@
+"""Mesh-native pressure surrogate derived from pressure_SM_mesh_graph."""

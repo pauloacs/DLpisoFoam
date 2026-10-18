@@ -105,7 +105,12 @@ int main(int argc, char *argv[])
 
             p_prev = p;
             delta_U_prev = delta_U;
+
+            clock_gettime(CLOCK_MONOTONIC, &tw1);
             #include "UEqn.H"
+            clock_gettime(CLOCK_MONOTONIC, &tw2);
+            posix_wall = 1000.0*tw2.tv_sec + 1e-6*tw2.tv_nsec - (1000.0*tw1.tv_sec + 1e-6*tw1.tv_nsec);
+            printf("U equation solve: %.2f ms\n", posix_wall);
 
             clock_gettime(CLOCK_MONOTONIC, &tw1); // POSIX
             // Talk to Python
@@ -116,11 +121,15 @@ int main(int argc, char *argv[])
                         
 		    // --- PISO loop
             int counter = 0;
+            clock_gettime(CLOCK_MONOTONIC, &tw1);
             while (piso.correct())
             {
                 #include "pEqn.H"
                 counter++;
             }
+            clock_gettime(CLOCK_MONOTONIC, &tw2);
+            posix_wall = 1000.0*tw2.tv_sec + 1e-6*tw2.tv_nsec - (1000.0*tw1.tv_sec + 1e-6*tw1.tv_nsec);
+            printf("Pressure PISO loop (%d iters): %.2f ms\n", counter, posix_wall);
             delta_p_CFD = p - p_prev;
 
         }
