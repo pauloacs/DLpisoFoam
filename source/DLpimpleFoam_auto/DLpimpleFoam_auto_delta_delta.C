@@ -426,6 +426,10 @@ int main(int argc, char *argv[])
     const scalar smPressureCorrectorTolerance = mlDict.lookupOrDefault<scalar>("smPressureCorrectorTolerance", 1e-5);
     Switch smUseInputPredictorState =
         mlDict.lookupOrDefault<Switch>("smUseInputPredictorState", true);
+    Switch smUseVelocityExtrapolation =
+        mlDict.lookupOrDefault<Switch>("smUseVelocityExtrapolation", false);
+    const scalar smVelocityExtrapolationAlpha =
+        mlDict.lookupOrDefault<scalar>("smVelocityExtrapolationAlpha", 1.0);
     label smStateReconstructionCorrectors =
         mlDict.lookupOrDefault<label>("smStateReconstructionCorrectors", 1);
     Switch smAdaptiveStateReconstruction =
@@ -467,6 +471,15 @@ int main(int argc, char *argv[])
             << "smUseInputPredictorState=false requires "
             << "postSMInjectionReconstruction=true." << exit(FatalError);
     }
+    if (!std::isfinite(smVelocityExtrapolationAlpha) || smVelocityExtrapolationAlpha < 0
+        || (smUseVelocityExtrapolation
+            && (LTS || predictDUOutput || predictDDUCorrOutput || smUseInputPredictorState || !postSMInjectionReconstruction)))
+    {
+        FatalErrorInFunction
+            << "Velocity extrapolation requires a finite nonnegative alpha, transient pressure-only SM, "
+            << "smUseInputPredictorState=false and postSMInjectionReconstruction=true."
+            << exit(FatalError);
+    }
     if (predictDUOutput && (predictDDUCorrOutput || smUseInputPredictorState || !postSMInjectionReconstruction))
     {
         FatalErrorInFunction
@@ -507,6 +520,8 @@ int main(int argc, char *argv[])
     Info<< "SM post-injection reconstruction="
         << postSMInjectionReconstruction
         << " predictVelocity=" << predictDUOutput
+        << " velocityExtrapolation=" << smUseVelocityExtrapolation
+        << " velocityExtrapolationAlpha=" << smVelocityExtrapolationAlpha
         << " pressureForceThenReconstruct=" << smPressureForceThenReconstruct
         << " oracleCompatible=" << smOracleCompatibleIntegration
         << " equationRelaxationSource=" << (smOracleCompatibleIntegration ? "fvSolution" : "MLSamplingDict")
@@ -693,13 +708,13 @@ int main(int argc, char *argv[])
     volVectorField jointDUSM
     (
         IOobject("dU_SM", runTime.timeName(), mesh, IOobject::NO_READ,
-            predictDUOutput ? IOobject::AUTO_WRITE : IOobject::NO_WRITE),
+            (predictDUOutput || smUseVelocityExtrapolation) ? IOobject::AUTO_WRITE : IOobject::NO_WRITE),
         U - U
     );
     volVectorField jointDUTruth
     (
         IOobject("dU_truth", runTime.timeName(), mesh, IOobject::NO_READ,
-            predictDUOutput ? IOobject::AUTO_WRITE : IOobject::NO_WRITE),
+            (predictDUOutput || smUseVelocityExtrapolation) ? IOobject::AUTO_WRITE : IOobject::NO_WRITE),
         U - U
     );
     bool smDiagnosticsActiveThisStep = false;
@@ -782,6 +797,8 @@ int main(int argc, char *argv[])
     {
         persistentPimple.checkOut();
     }
+    bool smHaveVelocityHistory = false;
+    scalar smPreviousCompletedDeltaT = 0.0;
     while (runTime.loop())
     {
         autoPtr<pimpleControl> stepPimple;
@@ -1010,11 +1027,31 @@ int main(int argc, char *argv[])
             
                 pSM = p_prev + dpML;
                 p = pSM;
-                if (predictDUOutput)
+                if (predictDUOutput || (smUseVelocityExtrapolation && smVelocityExtrapolationAlpha > 0 && smHaveVelocityHistory))
                 {
-                    U = U_time_prev + ddUStarML;
-                    Info<< "[SM JOINT] pre-constraint increment checks: UError="
-                        << gMax(mag(U.primitiveField() - U_time_prev.primitiveField() - ddUStarML.primitiveField()))
+                    volVectorField smAppliedVelocityIncrement
+                    (
+                        IOobject("smAppliedVelocityIncrement", runTime.timeName(), mesh,
+                            IOobject::NO_READ, IOobject::NO_WRITE, false),
+                        ddUStarML
+                    );
+                    if (smUseVelocityExtrapolation)
+                    {
+                        const scalar previousDeltaT = smPreviousCompletedDeltaT;
+                        const scalar currentDeltaT = runTime.deltaTValue();
+                        const bool validHistory = smHaveVelocityHistory && std::isfinite(previousDeltaT)
+                            && std::isfinite(currentDeltaT) && previousDeltaT > VSMALL && currentDeltaT > 0;
+                        const scalar factor = validHistory
+                            ? smVelocityExtrapolationAlpha*currentDeltaT/previousDeltaT : 0.0;
+                        smAppliedVelocityIncrement = factor*(dUStarPrev + dUCorrPrev);
+                        Info<< "[SM VELOCITY EXTRAPOLATION] alpha=" << smVelocityExtrapolationAlpha
+                            << " deltaT=" << currentDeltaT << " previousDeltaT=" << previousDeltaT
+                            << " history=" << validHistory << " factor=" << factor << nl;
+                    }
+                    U = U_time_prev + smAppliedVelocityIncrement;
+                    Info<< (predictDUOutput ? "[SM JOINT]" : "[SM VELOCITY EXTRAPOLATION]")
+                        << " pre-constraint increment checks: UError="
+                        << gMax(mag(U.primitiveField() - U_time_prev.primitiveField() - smAppliedVelocityIncrement.primitiveField()))
                         << " pError="
                         << gMax(mag(p.primitiveField() - p_prev.primitiveField() - dpML.primitiveField())) << nl;
                     U.correctBoundaryConditions();
@@ -1028,7 +1065,8 @@ int main(int argc, char *argv[])
                         adjustPhi(phi, U, p);
                         fvc::makeAbsolute(phi, U);
                     }
-                    Info<< "[SM JOINT] timestep-start U + predicted dU; max dU="
+                        Info<< (predictDUOutput ? "[SM JOINT] timestep-start U + predicted dU; max dU="
+                            : "[SM VELOCITY EXTRAPOLATION] timestep-start U + extrapolated dU; max dU=")
                         << gMax(mag(jointDUSM.primitiveField())) << nl;
                 }
 
@@ -1464,10 +1502,12 @@ int main(int argc, char *argv[])
         // ddUCorr = dUCorr - dUCorrPrev  (second difference — training target)
         dUCorr  = U - UStar;
         ddUCorr = dUCorr - dUCorrPrev;
-        if (predictDUOutput)
+        if (predictDUOutput || smUseVelocityExtrapolation)
         {
             jointDUTruth = U - U_time_prev;
         }
+        smHaveVelocityHistory = true;
+        smPreviousCompletedDeltaT = runTime.deltaTValue();
 
         // --- Sampling, writing, and ML training ---
         int retrainStatus = dataSampler.update();

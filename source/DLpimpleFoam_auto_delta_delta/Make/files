@@ -1,4 +1,0 @@
-DLpimpleFoam_auto_delta_delta.C
-MLSampling.C
-SurrogateModel.C
-EXE = $(FOAM_APPBIN)/DLpimpleFoam_auto_delta_delta

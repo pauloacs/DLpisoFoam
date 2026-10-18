@@ -14,7 +14,7 @@ backend = case_config.get('training_backend', 'lattice')
 if backend == 'mesh_graph':
     from pressure_SM_mesh_graph._3D.training import main
 elif backend == 'lattice':
-    from pressure_SM_delta_delta_shift._3D.auto_CFD.train_init import main
+    from pressure_SM_gridded_shift._3D.auto_CFD.train_init import main
 else:
     raise ValueError(f'Unknown training_backend: {backend}')
 

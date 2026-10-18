@@ -15,7 +15,7 @@ if backend == 'mesh_graph':
     raise NotImplementedError('Mesh-graph prototype supports initial training only; disable incremental updates.')
 if backend != 'lattice':
     raise ValueError(f'Unknown training_backend: {backend}')
-from pressure_SM_delta_delta_shift._3D.auto_CFD.train_update import add_new_features_and_train
+from pressure_SM_gridded_shift._3D.auto_CFD.train_update import add_new_features_and_train
 
 if __name__ == '__main__':
     add_new_features_and_train()

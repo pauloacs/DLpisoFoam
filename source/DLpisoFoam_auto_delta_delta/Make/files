@@ -1,4 +1,0 @@
-DLpisoFoam_auto_delta_delta.C
-MLSampling.C
-SurrogateModel.C
-EXE = $(FOAM_APPBIN)/DLpisoFoam_auto_delta_delta
