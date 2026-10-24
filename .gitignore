@@ -32,6 +32,18 @@ Thumbs.db
 
 # Ignore dataset files
 dataset*.hdf5
+**/ML_data*/
+
+# Generated OpenFOAM time directories and post-processing output
+**/[0-9]*.[0-9]*/
+**/postProcessing/
+**/processor*/
+**/log.*;
+
+# Generated comparison/diagnostic output
+**/all_log_comparison/
+**/log_comparison_*/
+**/full_resolution_comparison/
 
 train_SM_*
 !train_SM_example

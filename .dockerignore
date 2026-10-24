@@ -1,0 +1,25 @@
+.git/
+.git/**
+
+build/
+dist/
+*.egg-info/
+
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Local experiment results and generated CFD outputs
+testing_oct_2026/
+deprecated/
+**/polyMesh/
+**/processor*/
+**/postProcessing/
+**/ML_data/
+**/ML_data_*/
+**/SM_inspect/
+**/log.*
+**/RUN*.log
+**/TRAIN*.log
+**/LAUNCH*.log
+**/PAIR*.log
