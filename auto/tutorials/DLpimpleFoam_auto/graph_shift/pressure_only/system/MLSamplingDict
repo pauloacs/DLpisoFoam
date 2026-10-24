@@ -1,0 +1,30 @@
+FoamFile { version 2.0; format ascii; class dictionary; object MLSamplingDict; }
+warmUpSteps 2;
+burstSteps 6;
+burstInterval 1;
+regularInterval 1;
+retrainInterval 6;
+windowFrames 6;
+waitBeforeResampling 2147480000;
+
+postSMInjectionReconstruction true;
+smUseInputPredictorState false;
+smUseVelocityExtrapolation false;
+smVelocityExtrapolationAlpha 1.0;
+smPressureForceThenReconstruct false;
+smOracleCompatibleIntegration true;
+smStateReconstructionCorrectors 3;
+smAdaptiveStateReconstruction true;
+smMinStateReconstructionCorrectors 1;
+smStateReconstructionResidualTolerance 1e-6;
+smStateReconstructionEquationRelaxation 1;
+smAitkenStateReconstruction true;
+smAitkenMinFactor 0.2;
+smAitkenMaxFactor 1.8;
+smOuterUResidualTolerance 5e-4;
+smOuterPResidualTolerance 5e-4;
+smAdaptivePressureCorrectors true;
+smMinPressureCorrectors 1;
+smPressureCorrectorTolerance 1e-5;
+applySMPressureConsistencyCorrection false;
+applySMPredictedUCorrection false;

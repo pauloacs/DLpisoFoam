@@ -2,8 +2,7 @@
 FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Copy all files except generate_Data and train_SM directories
-#COPY --exclude=generate_Data --exclude=train_SM . /home/repo
+# Copy repository sources, grouped workflows, and Python packages.
 
 COPY env_311.yml /usr/bin/environment.yml
 COPY entrypoint_311.sh /usr/bin/entrypoint.sh
@@ -54,7 +53,8 @@ RUN mkdir -p /home/repo
 
 # Copy repository contents to /home/repo
 COPY . /home/repo
-RUN rm -rf /home/repo/other_solvers_2d
+RUN sed -i 's/\r$//' /usr/bin/entrypoint.sh /home/repo/prep_env311.sh
+RUN rm -rf /home/repo/deprecated/other_solvers_2d /home/repo/build /home/repo/pressure_SM.egg-info
 
 WORKDIR /home/repo/
 

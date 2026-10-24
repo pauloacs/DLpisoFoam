@@ -1,3 +1,0 @@
-buoyantPimpleFoam_write.C
-
-EXE = $(FOAM_USER_APPBIN)/buoyantPimpleFoam_write

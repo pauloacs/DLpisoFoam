@@ -1,3 +1,0 @@
-pisoFoam_write.C
-
-EXE = $(FOAM_APPBIN)/pisoFoam_write

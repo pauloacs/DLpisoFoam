@@ -1,0 +1,12 @@
+limitH
+{
+    type        limitFields;
+    fields
+    (
+        h
+        {
+            min     2.8e5;
+            max     3.4e5;
+        }
+    );
+}

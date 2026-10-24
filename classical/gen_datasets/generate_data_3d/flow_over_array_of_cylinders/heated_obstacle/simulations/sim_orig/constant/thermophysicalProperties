@@ -1,0 +1,56 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+    =========                 |
+    \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+     \\    /   O peration     | Website:  https://openfoam.org
+        \\  /    A nd           | Version:  8
+         \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+        version     2.0;
+        format      ascii;
+        class       dictionary;
+        location    "constant";
+        object      thermophysicalProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+thermoType
+{
+        type            heRhoThermo;
+        mixture         pureMixture;
+        transport       sutherland;        // ← Temperature-dependent viscosity
+        thermo          hConst;
+        equationOfState Boussinesq;        // ← Changed from rhoConst
+        specie          specie;
+        energy          sensibleEnthalpy;
+}
+
+pRef            100000;
+
+mixture
+{
+        specie
+        {
+                molWeight   18.0153;
+        }
+        equationOfState
+        {
+                rho0        998.2;            // Reference density (kg/m³)
+                T0          293.15;           // Reference temperature (K)
+                beta        2.07e-4;          // Thermal expansion coefficient (1/K)
+        }
+        thermodynamics
+        {
+                Cp          4182;
+                Hf          0;
+        }
+        transport
+        {
+                // Sutherland model adapted for water
+                // μ = As * sqrt(T) / (1 + Ts/T)
+                // Fitted for water 20-90°C
+                As          1.48e-06;         // Sutherland coefficient
+                Ts          120;              // Sutherland temperature
+        }
+}
