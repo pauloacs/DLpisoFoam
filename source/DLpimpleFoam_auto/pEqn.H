@@ -47,7 +47,75 @@ while (pimple.correctNonOrthogonal())
 
     pEqn.setReference(pRefCell, pRefValue);
 
-    pEqn.solve();
+    if (smDiagnosticsActiveThisStep && !smOperatorDiagnosticsDoneThisStep)
+    {
+        const scalar diagnosticVolume = gSum(mesh.V());
+        tmp<scalarField> smResidual = pEqn.residual();
+        smOperatorRmsSMThisStep = Foam::sqrt
+        (
+            gSum(mesh.V()*sqr(smResidual()))/diagnosticVolume
+        );
+
+        volScalarField pExtrapCandidate
+        (
+            IOobject
+            (
+                "pExtrapCandidate",
+                runTime.timeName(),
+                mesh,
+                IOobject::NO_READ,
+                IOobject::NO_WRITE,
+                false
+            ),
+            pExtrap
+        );
+        surfaceScalarField phiHbyAExtrap
+        (
+            IOobject
+            (
+                "phiHbyAExtrap",
+                runTime.timeName(),
+                mesh,
+                IOobject::NO_READ,
+                IOobject::NO_WRITE,
+                false
+            ),
+            phiHbyA
+        );
+        constrainPressure
+        (
+            pExtrapCandidate,
+            U,
+            phiHbyAExtrap,
+            rAtU(),
+            MRF
+        );
+
+        fvScalarMatrix extrapEqn
+        (
+            fvm::laplacian(rAtU(), pExtrapCandidate)
+         == fvc::div(phiHbyAExtrap)
+        );
+        extrapEqn.setReference(pRefCell, pRefValue);
+        tmp<scalarField> extrapResidual = extrapEqn.residual();
+        smOperatorRmsExtrapThisStep = Foam::sqrt
+        (
+            gSum(mesh.V()*sqr(extrapResidual()))/diagnosticVolume
+        );
+        smOperatorRMSImprovementThisStep = computeImprovementPercent
+        (
+            smOperatorRmsExtrapThisStep,
+            smOperatorRmsSMThisStep
+        );
+        smOperatorDiagnosticsDoneThisStep = true;
+    }
+
+    const SolverPerformance<scalar> pSolvePerformance = pEqn.solve();
+    if (smDiagnosticsActiveThisStep && !smFirstGamgResidualCapturedThisStep)
+    {
+        smFirstGamgInitialResidualThisStep = pSolvePerformance.initialResidual();
+        smFirstGamgResidualCapturedThisStep = true;
+    }
 
     if (pimple.finalNonOrthogonalIter())
     {

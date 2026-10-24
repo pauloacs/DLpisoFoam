@@ -6,6 +6,27 @@
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
+namespace
+{
+std::string shellQuote(const std::string& value)
+{
+    std::string quoted("'");
+    for (const char character : value)
+    {
+        if (character == '\'')
+        {
+            quoted += "'\\''";
+        }
+        else
+        {
+            quoted += character;
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+}
+
 DataSampler::DataSampler
 (
     const Foam::fvMesh& mesh,
@@ -420,25 +441,23 @@ void DataSampler::writeFieldData
 
     if (masterFile_ < 0)
     {
-        // Python always deletes data.h5 after each training run, so a file found
-        // here is stale (e.g. leftover from a crashed previous run).  Always
-        // start a fresh file to avoid "name already exists" collisions.
-        if (Foam::isFile(masterPath))
+        if (coordinatesWritten_ && Foam::isFile(masterPath))
         {
-            Foam::Info<< "  [DataSampler] Stale HDF5 file found — truncating: " << masterPath << Foam::nl;
+            Foam::Info<< "  [DataSampler] Reopening HDF5 file for continued sampling: " << masterPath << Foam::nl;
+            masterFile_ = H5Fopen(masterPath.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
         }
         else
         {
             Foam::Info<< "  [DataSampler] Creating new HDF5 file: " << masterPath << Foam::nl;
+            masterFile_ = H5Fcreate(masterPath.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+            coordinatesWritten_ = false;
         }
-        masterFile_ = H5Fcreate(masterPath.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
         if (masterFile_ < 0)
         {
             FatalErrorInFunction
-                << "Failed to create HDF5 file: " << masterPath
+                << "Failed to open HDF5 file: " << masterPath
                 << exit(FatalError);
         }
-        Foam::Info<< "  [DataSampler] HDF5 file ready, coordinates will be written" << Foam::nl;
     }
 
     // Write coordinates and boundaries only once
@@ -561,17 +580,32 @@ void DataSampler::writeFieldData
             writeRawField(name, 2, const_cast<hsize_t*>(dims), packed.data());
         };
 
+        // The solver passes UStar as DataSampler's U_ argument. Keep the
+        // legacy HDF5 dataset name "U", but its contents are predictor UStar.
         const Foam::vectorField& sampledU = U_.internalField();
         const Foam::vectorField& sampledDUStar = dUStar_.internalField();
         writeVector("U", sampledU);
         writeVector("dUStar", sampledDUStar);
+        // Uvals is ddUStar_: dUStar - dUStarPrev, not total dU's second difference.
         writeVector("ddUStar", Uvals);
         writeVectorDifference("ddUStarDiff", Uvals, ddUStarPrev_vals);
         writeVector("ddUCorr", ddUCorr_vals);
         writeVector("dUCorrPrev", dUCorrPrev_vals);
         writeVector("ddUCorrPrev", ddUCorrPrev_vals);
+        if (selectedFields_.count("ddUPrev"))
+        {
+            Foam::vectorField previousTotalSecondIncrement(ddUStarPrev_vals.size());
+            // Previous total ddU = ddUStarPrev + ddUCorrPrev.
+            forAll(previousTotalSecondIncrement, celli)
+            {
+                previousTotalSecondIncrement[celli] =
+                    ddUStarPrev_vals[celli] + ddUCorrPrev_vals[celli];
+            }
+            writeVector("ddUPrev", previousTotalSecondIncrement);
+        }
         if (selectedFields_.count("dU"))
         {
+            // dU = dUStar + dUCorr = Uf - U0.
             const Foam::vectorField totalIncrement
             (
                 sampledDUStar + ddUCorr_vals + dUCorrPrev_vals
@@ -580,6 +614,7 @@ void DataSampler::writeFieldData
         }
         if (selectedFields_.count("dUPrev"))
         {
+            // dUPrev = dUStarPrev + dUCorrPrev.
             const Foam::vectorField previousIncrement
             (
                 sampledDUStar - Uvals + dUCorrPrev_vals
@@ -1152,7 +1187,7 @@ int DataSampler::update()
                 << sampleCount_ << " samples)." << Foam::nl;
 
             std::string scriptPath = sourceDir_ + "/train_init.py";
-            std::string cmd = "python3 " + scriptPath + " --data_dir " + dataDir_;
+            std::string cmd = "python3 " + scriptPath + " --data_dir " + shellQuote(dataDir_);
             
             Foam::Info<< "  [DataSampler] Script path: " << scriptPath << Foam::nl;
             Foam::Info<< "  [DataSampler] Data dir: " << dataDir_ << Foam::nl;
@@ -1190,7 +1225,7 @@ int DataSampler::update()
 
             std::string scriptPath = sourceDir_ + "/train_update.py";
             std::string cmd = "python3 " + scriptPath
-                + " --data_dir " + dataDir_
+                + " --data_dir " + shellQuote(dataDir_)
                 + " --window_frames " + std::to_string(windowFrames_);
             
             Foam::Info<< "  [DataSampler] Script path: " << scriptPath << Foam::nl;

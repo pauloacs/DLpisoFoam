@@ -12,10 +12,12 @@ from python_module import __dict__ as case_config
 
 backend = case_config.get('training_backend', 'lattice')
 if backend == 'mesh_graph':
-    raise NotImplementedError('Mesh-graph prototype supports initial training only; disable incremental updates.')
-if backend != 'lattice':
+    from pressure_SM_mesh_graph._3D.training import main
+    if __name__ == '__main__':
+        main(sys.argv[1:] + ['--resume'])
+elif backend == 'lattice':
+    from pressure_SM_gridded_shift._3D.auto_CFD.train_update import add_new_features_and_train
+    if __name__ == '__main__':
+        add_new_features_and_train()
+else:
     raise ValueError(f'Unknown training_backend: {backend}')
-from pressure_SM_gridded_shift._3D.auto_CFD.train_update import add_new_features_and_train
-
-if __name__ == '__main__':
-    add_new_features_and_train()

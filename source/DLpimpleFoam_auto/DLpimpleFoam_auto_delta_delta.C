@@ -99,6 +99,8 @@ int main(int argc, char *argv[])
     bool predictDDUCorrOutput = false;
     bool predictDUOutput = false;
     bool verboseSM = true;  // default matches python_module.py's verbose=True
+    std::string dataFolder("ML_data");
+    int dataFolderPriority = 0;
     std::map<std::string, bool> pythonInputFlags;
     bool pythonModuleRead = false;
     {
@@ -152,6 +154,7 @@ int main(int argc, char *argv[])
 
                 std::string key = trim(cleanLine.substr(0, eqPos));
                 std::string value = trim(cleanLine.substr(eqPos + 1));
+                const std::string rawValue(value);
 
                 std::transform(
                     key.begin(),
@@ -165,6 +168,30 @@ int main(int argc, char *argv[])
                     value.begin(),
                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); }
                 );
+
+                if (key == "data_folder" || key == "ml_data_folder")
+                {
+                    const int priority = key == "data_folder" ? 2 : 1;
+                    if (priority > dataFolderPriority)
+                    {
+                        std::string parsedFolder = rawValue;
+                        if (parsedFolder.size() >= 2
+                            && ((parsedFolder.front() == '\'' && parsedFolder.back() == '\'')
+                                || (parsedFolder.front() == '"' && parsedFolder.back() == '"')))
+                        {
+                            parsedFolder = parsedFolder.substr(1, parsedFolder.size() - 2);
+                        }
+                        if (parsedFolder.empty())
+                        {
+                            FatalErrorInFunction
+                                << "python_module.py data_folder must not be empty."
+                                << exit(FatalError);
+                        }
+                        dataFolder = parsedFolder;
+                        dataFolderPriority = priority;
+                    }
+                    continue;
+                }
 
                 // First literal assignment wins; kwarg-forwarding lines are not booleans.
                 if
@@ -289,6 +316,8 @@ int main(int argc, char *argv[])
             pythonModuleFile.close();
         }
     }
+    Foam::Info<< "  [DLpimpleFoam] Using surrogate data folder: "
+              << dataFolder << Foam::nl;
 
     // Unreadable python_module.py: compute everything; a missing flag means disabled.
     const auto inputWanted = [&](const char* key) -> bool
@@ -456,47 +485,41 @@ int main(int argc, char *argv[])
         mlDict.lookupOrDefault<scalar>("smAitkenMaxFactor", 1.8);
 
     if (smOracleCompatibleIntegration
-        && (LTS || smUseInputPredictorState || !postSMInjectionReconstruction
+        && (LTS
             || smOuterUResidualTolerance <= 0 || smOuterPResidualTolerance <= 0
             || smMinPressureCorrectors < 1 || smPressureCorrectorTolerance <= 0))
     {
         FatalErrorInFunction
-            << "Oracle-compatible integration requires transient timestepping, restored input state, "
-            << "post-injection reconstruction and positive stopping tolerances."
+            << "Oracle-compatible integration requires transient timestepping "
+            << "and positive stopping tolerances."
             << exit(FatalError);
-    }
-    if (!smUseInputPredictorState && !postSMInjectionReconstruction)
-    {
-        FatalErrorInFunction
-            << "smUseInputPredictorState=false requires "
-            << "postSMInjectionReconstruction=true." << exit(FatalError);
     }
     if (!std::isfinite(smVelocityExtrapolationAlpha) || smVelocityExtrapolationAlpha < 0
         || (smUseVelocityExtrapolation
-            && (LTS || predictDUOutput || predictDDUCorrOutput || smUseInputPredictorState || !postSMInjectionReconstruction)))
+            && (LTS || predictDUOutput || predictDDUCorrOutput || smUseInputPredictorState)))
     {
         FatalErrorInFunction
             << "Velocity extrapolation requires a finite nonnegative alpha, transient pressure-only SM, "
-            << "smUseInputPredictorState=false and postSMInjectionReconstruction=true."
+            << "and smUseInputPredictorState=false."
             << exit(FatalError);
     }
-    if (predictDUOutput && (predictDDUCorrOutput || smUseInputPredictorState || !postSMInjectionReconstruction))
+    if (predictDUOutput && predictDDUCorrOutput)
     {
         FatalErrorInFunction
-            << "predict_dU_output requires predict_ddUCorr_output=False, "
-            << "smUseInputPredictorState=false and postSMInjectionReconstruction=true."
+            << "predict_dU_output requires predict_ddUCorr_output=False."
             << exit(FatalError);
     }
-    if (smStateReconstructionCorrectors < 1)
+    if (smStateReconstructionCorrectors < 0)
     {
         FatalErrorInFunction
-            << "smStateReconstructionCorrectors must be at least 1."
+            << "smStateReconstructionCorrectors must be nonnegative."
             << exit(FatalError);
     }
     if
     (
-        smMinStateReconstructionCorrectors < 1
-     || smMinStateReconstructionCorrectors > smStateReconstructionCorrectors
+          postSMInjectionReconstruction && smStateReconstructionCorrectors > 0
+      && (smMinStateReconstructionCorrectors < 1
+        || smMinStateReconstructionCorrectors > smStateReconstructionCorrectors)
     )
     {
         FatalErrorInFunction
@@ -534,6 +557,10 @@ int main(int argc, char *argv[])
         << " aitken=" << smAitkenStateReconstruction
         << " aitkenBounds=(" << smAitkenMinFactor
         << ' ' << smAitkenMaxFactor << ')' << nl;
+    if (!postSMInjectionReconstruction && smPressureForceThenReconstruct)
+    {
+        Info<< "[SM DIRECT] postSMInjectionReconstruction=false: pressure-force stage is disabled." << nl;
+    }
 
     std::set<std::string> sampleFields;
     if (pythonModuleRead && !pythonInputFlags.empty())
@@ -544,6 +571,7 @@ int main(int argc, char *argv[])
             {"add_u_input", "U"},
             {"add_dustar_input", "dUStar"},
             {"add_duprev_input", "dUPrev"},
+            {"add_dduprev_input", "ddUPrev"}, // Adding dduprev input
             {"add_ddustar_input", "ddUStar"},
             {"add_ddustardiff_input", "ddUStarDiff"},
             {"add_dpprev_input", "dpPrev"},
@@ -599,8 +627,10 @@ int main(int argc, char *argv[])
             << sampleFields.size() << Foam::nl;
     }
 
+    // DataSampler's historical U field is passed UStar here: it is the first
+    // predictor, not U_time_prev (U0) or the converged final U (Uf).
     DataSampler dataSampler(
-        mesh, UStar, dUStar, dp, ddUStar, ddUStarPrev, ddp, dpPrev, ddpPrev, grad_dpPrev, grad_pPrev, laplace_dpPrev, uDotGradDpPrev, gradDpPrevMag, p_prev, divUFirstPred, ddUCorr, dUCorrPrev, ddUCorrPrev, rAU_ML, HbyA_ML, divHbyA_ML, dHbyA_ML, dDivHbyA_ML, rAUGradDpPrev_ML, divRAUGradDpPrev_ML, pressureEqResidualp_ML, rAUGradpPrev_ML, divRAUGradpPrev_ML, "ML_data",
+        mesh, UStar, dUStar, dp, ddUStar, ddUStarPrev, ddp, dpPrev, ddpPrev, grad_dpPrev, grad_pPrev, laplace_dpPrev, uDotGradDpPrev, gradDpPrevMag, p_prev, divUFirstPred, ddUCorr, dUCorrPrev, ddUCorrPrev, rAU_ML, HbyA_ML, divHbyA_ML, dHbyA_ML, dDivHbyA_ML, rAUGradDpPrev_ML, divRAUGradDpPrev_ML, pressureEqResidualp_ML, rAUGradpPrev_ML, divRAUGradpPrev_ML, dataFolder,
         sourceScriptDir,
         train,
         warmUpSteps, burstSteps, burstInterval, regularInterval, retrainInterval, windowFrames,
@@ -839,6 +869,7 @@ int main(int argc, char *argv[])
         const auto pimpleWallStart = std::chrono::steady_clock::now();
         bool smInputOnlyStage = surrogateActive && !smUseInputPredictorState;
         bool smInputOnlyStageDone = false;
+        bool smRefreshInjectedPressurePatches = false;
         autoPtr<surfaceScalarField> smInputPhiStart;
         while (smInputOnlyStage || pimple.loop())
         {
@@ -1352,10 +1383,17 @@ int main(int argc, char *argv[])
                         }
                     }
 
-                    Info<< "[SM RECONSTRUCTION] completed with "
-                        << reconstructionCorrectorsUsed
-                        << " fixed-pressure correctors finalUResidual="
-                        << reconstructionResidual << nl;
+                    if (reconstructionCorrectorsUsed > 0)
+                    {
+                        Info<< "[SM RECONSTRUCTION] completed with "
+                            << reconstructionCorrectorsUsed
+                            << " fixed-pressure correctors finalUResidual="
+                            << reconstructionResidual << nl;
+                    }
+                    else
+                    {
+                        Info<< "[SM RECONSTRUCTION] zero fixed-pressure correctors; no reconstruction UEqn solve." << nl;
+                    }
 
                     // Exclude feature-generation and reconstruction solver
                     // records from PIMPLE residualControl. The configured U
@@ -1373,6 +1411,7 @@ int main(int argc, char *argv[])
                     {
                         smInputOnlyStage = false;
                         smInputOnlyStageDone = true;
+                        smRefreshInjectedPressurePatches = reconstructionCorrectorsUsed == 0 && !smPressureForceThenReconstruct;
                     }
 
                     // Normal PIMPLE always resumes with a fresh UEqn; the
@@ -1384,7 +1423,7 @@ int main(int argc, char *argv[])
                                         ).count();
                     continue;
                 }
-                else if (applySMPressureConsistencyCorrection)
+                else if (applySMPressureConsistencyCorrection && !smInputOnlyStage)
                 {
                     // Preserve the existing pressure-force and optional
                     // predicted-U correction mode unchanged.
@@ -1405,6 +1444,17 @@ int main(int argc, char *argv[])
                         adjustPhi(phi, U, p);
                         fvc::makeAbsolute(phi, U);
                     }
+                }
+                if (smInputOnlyStage)
+                {
+                    clearSMStageResiduals<vector>(mesh);
+                    clearSMStageResiduals<scalar>(mesh);
+                    smInputOnlyStage = false;
+                    smInputOnlyStageDone = true;
+                    smRefreshInjectedPressurePatches = true;
+                    Info<< "[SM DIRECT] inputs frozen, state injected and residual history cleared; "
+                        << "starting fresh normal PIMPLE outer corrector 1." << nl;
+                    continue;
                 }
             }
 

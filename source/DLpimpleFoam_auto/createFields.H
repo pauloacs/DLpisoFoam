@@ -408,6 +408,9 @@ volVectorField grad_dp
     dimensionedVector("grad_dp", dimensionSet(0,1,-2,0,0,0,0), vector::zero)
 );
 
+// U_time_prev is U0 for this timestep. UStar is the velocity after the first
+// predictor UEqn; dUStar = UStar - U0. ddUStar is only the predictor-increment
+// difference dUStar - dUStarPrev, not the final total-velocity ddU target.
 volVectorField UStarPrev
 (
     IOobject
@@ -506,7 +509,8 @@ volScalarField divUFirstPred
     dimensionedScalar("divUFirstPred", dimensionSet(0,0,-1,0,0,0,0), 0.0)
 );
 
-// Pressure-correction velocity increment: dUCorr = U - UStar  (velocity gained during pressure solve)
+// Pressure-correction increment: dUCorr = Uf - UStar. Thus total dU is
+// dUStar + dUCorr = Uf - U0; this correction-only field is not total dU.
 volVectorField dUCorr
 (
     IOobject

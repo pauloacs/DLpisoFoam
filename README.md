@@ -362,13 +362,30 @@ Both support pressure increment/residual targets (`dp` or `ddp`) when configured
 
 ### Case Controls
 
-- **`python_module.py`:** framework selection (`training_backend='lattice'` or `'mesh_graph'`), selected inputs, model size, target variables, training settings, output weights, and `train=True/False`.
+- **`python_module.py`:** framework selection (`training_backend='lattice'` or `'mesh_graph'`), selected inputs, model size, target variables, training settings, output weights, and `train=True/False`. `data_folder` selects this surrogate's samples, model, normalization and diagnostics directory (default `ML_data`); use a distinct OpenFOAM-valid path for each surrogate in a shared case. `ML_data_folder` remains a legacy alias.
 - **`system/MLSamplingDict`:** warm-up, sampling cadence, initial training threshold, prediction integration, velocity extrapolation, and optional fixed-pressure reconstruction before normal PIMPLE.
 - **`system/fvSolution`:** linear solvers, equation relaxation, and normal PIMPLE convergence controls. Oracle-compatible integration also uses its momentum equation relaxation for reconstruction.
 
 `train=False` requires the case's matching model, normalization and geometry artifacts; it does not create a missing model. Changing the input set, target, graph coarsening or architecture requires compatible samples and retraining.
 
-The current graph AUTO workflow supports **initial training only**; incremental graph updates are not implemented, and the examples disable resampling after activation. This differs from the retraining-capable gridded/thermal workflows. Run the compact graph examples **serially**, not with `mpirun`.
+The graph AUTO workflow supports initial training and **incremental retraining during the simulation**. Run graph cases **serially**, not with `mpirun`. Training is synchronous: CFD pauses while the trainer runs, then reloads the selected weights before the next timestep.
+
+To enable online updates, set `train=True` in the case Python module and configure `system/MLSamplingDict`, for example:
+
+```cpp
+regularInterval       2;
+retrainInterval       20;
+windowFrames          40;
+waitBeforeResampling  20;
+```
+
+After initial training, this waits 20 solver timesteps before resuming sampling, collects a sample every two timesteps, and triggers an update after 20 new samples. Each update uses the latest 40 available samples (`windowFrames` must be at least three). The original HDF5 samples are retained. The tutorial defaults still disable resampling with a very large `waitBeforeResampling`.
+
+Optional Python settings `retrain_epochs` and `retrain_lr` override `num_epochs` and `lr` for updates only. Updates warm-start from saved weights, preserve the original normalization, and require the same mesh, features, targets and architecture. Existing weights are retained unless validation improves on the current window; this is not a guarantee of fewer CFD iterations or better accuracy on earlier flow states. The optimizer is restarted for each update.
+
+Each update writes loss curves, validation diagnostics and a `run.json` to `ML_data/training_plots/<pressure-target>/retrain_NNN/`. `retraining_index.csv` summarizes every attempt, its sample window and validation/checkpoint outcome; an interrupted update remains marked `running` in its run record. Retraining always emits loss plots even when `plot_training=False`; the initial training outputs remain in the target directory root.
+
+Held-out pressure validation also writes `obstacle_pressure_error_by_distance.csv` and `obstacle_pressure_error_by_distance.png`, with volume-weighted pressure RMSE/MAE grouped by distance from the obstacle in local cell widths. The first three validation frames get native-cell signed/absolute error maps with the sampled obstacle boundary overlaid. Distance is measured to sampled obstacle-face centers; these are diagnostics only and do not alter training or account for solver boundary-condition corrections.
 
 ### Outputs and Interpretation
 
