@@ -557,13 +557,17 @@ If you use this work in your research, you can cite the papers that introduced i
 ```
 
 ```bibtex
-@unpublished{surrogateBasedPressureVelocity2024,
-  title = {Surrogate-Based Pressure–Velocity Coupling: Accelerating Incompressible CFD Flow Solvers with Machine Learning},
-  author = {Sousa, Paulo Araújo da Cunha and Afonso, Alexandre M. and Veiga Rodrigues, Carlos},
-  year = {2024},
-  note = {Preprint},
-  doi = {10.2139/ssrn.5364744},
-  url = {https://ssrn.com/abstract=5364744}
+@article{surrogateBasedPressureVelocity2026,
+title = {Surrogate-based pressure–velocity coupling: Accelerating incompressible CFD flow solvers with machine learning},
+journal = {Computers & Fluids},
+volume = {318},
+pages = {107216},
+year = {2026},
+issn = {0045-7930},
+doi = {https://doi.org/10.1016/j.compfluid.2026.107216},
+url = {https://www.sciencedirect.com/science/article/pii/S0045793026002586},
+author = {Paulo Sousa and Alexandre Afonso and Carlos Veiga Rodrigues},
+keywords = {Computational physics, CFD, Incompressible flows, PISO, Machine learning, Surrogate model},
 }
 ```
 ---
